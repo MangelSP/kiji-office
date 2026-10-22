@@ -3,3 +3,12 @@ node_modules/
 dist/
 src-tauri/target/
 .DS_Store
+core/dist/
+.kiji/
+logs
+*.log
+dist-ssr
+*.local
+.vscode/*
+!.vscode/extensions.json
+.idea

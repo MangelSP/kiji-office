@@ -1,0 +1,14 @@
+{
+  "name": "kiji-core",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "~6.0.3"
+  }
+}
