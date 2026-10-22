@@ -42,6 +42,8 @@ pelearse con la configuración.
 - **Roles** de los trabajadores: los agentes del kit `skills-claude-miguel` (programador, tester, explorador,
   modelador-2d, etc.), cada uno con su IA y modelo.
 
+Mocks de pantallas y personajes: https://claude.ai/artifact/Uqvq8EoHe1BrZfSVntCNAv
+
 ## Funcionalidades
 
 ### Entrega 0.1 — la oficina trabaja
@@ -63,12 +65,22 @@ pelearse con la configuración.
 9. Abrir o crear proyecto, con el asistente de `/nuevo-proyecto` como formulario.
 10. Herramientas MCP con un botón: Blender, Unity, Godot, Aseprite (catálogo del kit).
 11. Tope de gasto por agente y contador de costo en vivo.
+12. **Relevo automático entre IAs**: si una IA se queda sin tokens, llega a su límite de uso o a su tope de gasto,
+    el jefe pasa la tarea a otra IA configurada sin perder el hilo.
+    - Cada agente tiene una lista de relevo en orden (p. ej. Gemini → Claude Sonnet → OpenAI → Ollama local) con un
+      modelo equivalente por IA.
+    - El relevo hereda todo: el mismo worktree y rama, el plan, los archivos que posee la tarea, los cambios hechos
+      y un resumen del chat que escribe el jefe. Nada se reinicia.
+    - Antes de seguir, el nuevo agente confirma en una línea en qué punto va la tarea; el jefe la compara con el plan.
+    - Si se acaban todas las IAs de la lista, la tarea se pausa (no se pierde) y te avisa.
+    - El robot que se fue se queda dormido en su escritorio; el que llega toma su silla. Queda en el registro.
+    - Si el jefe (Claude) llega a su límite, su suplente de jefe toma el rol con el mismo resumen.
 
 ### Entrega 0.3 — listo para distribuir
 
-12. Personalizar robots: accesorios, colores, animaciones.
-13. Instaladores firmados (Apple Developer, certificado de Windows) para Windows, macOS y Linux.
-14. Actualización automática.
+13. Personalizar robots: accesorios, colores, animaciones.
+14. Instaladores firmados (Apple Developer, certificado de Windows) para Windows, macOS y Linux.
+15. Actualización automática.
 
 ### Después
 
@@ -84,6 +96,8 @@ Más escenarios, equipos compartidos (varias personas, misma oficina), voz, tien
 ## Riesgos
 
 - **Costo**: varias IAs en paralelo multiplican el gasto; el tope por agente (0.2) es importante.
+- **Relevo**: cada proveedor avisa del límite distinto (error 429, cuota agotada, mensaje del CLI); hay que
+  detectarlo por adaptador y no confundirlo con un fallo real de la tarea.
 - **Conflictos de código**: se evitan con worktrees y propiedad de archivos; probar con dos agentes editando
   módulos vecinos desde la 0.1.
 - **CLIs de terceros**: cada CLI cambia su formato de salida; aislar cada integración detrás de un adaptador.
