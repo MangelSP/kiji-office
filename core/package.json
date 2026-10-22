@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -b ."
+    "build": "tsc -b . && node -e \"require('fs').cpSync('src/db/schema.sql','dist/db/schema.sql')\""
   },
   "devDependencies": {
     "@types/node": "^22",
