@@ -1,7 +1,7 @@
 // Worktrees de git: uno por tarea, en `<repo>/.kiji/worktrees/<taskId>`, en la rama `kiji/<taskId>`.
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { assertSafeRef, runGit } from './run.js';
+import { assertSafeRef, runGit, runGitRaw } from './run.js';
 
 const TASK_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -46,7 +46,16 @@ export async function createWorktree(repo: string, taskId: string, base: string)
   const root = resolve(repo);
   await ensureKijiExcluded(root);
   const path = worktreePath(root, taskId);
-  await runGit(root, ['-C', root, 'worktree', 'add', '-b', branchName(taskId), path, base]);
+  const branch = branchName(taskId);
+  // Si la rama ya existía no es nuestra: no se borra aunque `worktree add` falle.
+  const existed = (await runGitRaw(root, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])).exitCode === 0;
+  try {
+    await runGit(root, ['-C', root, 'worktree', 'add', '-b', branch, path, base]);
+  } catch (e) {
+    // `worktree add` puede fallar tras crear la rama: se borra para no dejar `kiji/<id>` huérfana.
+    if (!existed) await runGitRaw(root, ['branch', '-D', branch]).catch(() => undefined);
+    throw e;
+  }
   return path;
 }
 

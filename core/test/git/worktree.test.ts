@@ -37,6 +37,18 @@ describe('createWorktree / removeWorktree', () => {
     expect(await listWorktrees(repo)).toHaveLength(1);
   });
 
+  it('si worktree add falla tras crear la rama, borra la rama kiji/<id>', async () => {
+    writeFileSync(join(repo, '.kiji'), 'estorba\n'); // un archivo donde debería ir el directorio .kiji
+    await expect(createWorktree(repo, 't1', 'main')).rejects.toThrow(/worktree add/);
+    expect(git(repo, 'branch', '--list', 'kiji/t1')).toBe('');
+  });
+
+  it('si la rama kiji/<id> ya existía y la creación falla, no la borra', async () => {
+    git(repo, 'branch', 'kiji/t1');
+    await expect(createWorktree(repo, 't1', 'main')).rejects.toThrow(/worktree add/);
+    expect(git(repo, 'branch', '--list', 'kiji/t1')).toContain('kiji/t1');
+  });
+
   it('removeWorktree sin deleteBranch conserva la rama', async () => {
     await createWorktree(repo, 't1', 'main');
     await removeWorktree(repo, 't1', { deleteBranch: false });

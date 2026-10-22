@@ -1,10 +1,14 @@
 // Integración: commit, rebase, tests, fast-forward merge y revert. Solo la hace el core a nombre del jefe.
-import { execFile, type ExecFileOptions } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { assertSafeRef, GitError, NO_SIGN, runGit, runGitRaw } from './run.js';
 
-/** Hace `add -A` y commit en el worktree. Devuelve el sha del commit, o `null` si no había cambios. */
+/**
+ * Hace `add -A` y commit en el worktree. Devuelve el sha del commit, o `null` si no había cambios.
+ * El mensaje no puede estar vacío (git lo rechazaría): se lanza un error claro antes de tocar nada.
+ */
 export async function commitAll(worktree: string, message: string): Promise<string | null> {
+  if (typeof message !== 'string' || message.trim() === '') throw new Error('el mensaje de commit no puede estar vacío');
   const cwd = resolve(worktree);
   await runGit(cwd, ['add', '-A']);
   const status = await runGit(cwd, ['status', '--porcelain', '--untracked-files=no']);
@@ -113,48 +117,76 @@ class TailBuffer {
   }
 }
 
+/** Mata el grupo de procesos del hijo (POSIX) o el árbol (Windows). Ignora `ESRCH`: ya no queda nadie. */
+function killTree(pid: number | undefined, fallback: () => void): void {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    // En Windows no hay grupos: `taskkill /T` mata el árbol completo.
+    execFile('taskkill', ['/T', '/F', '/PID', String(pid)], { windowsHide: true }, () => undefined);
+    return;
+  }
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ESRCH') fallback();
+  }
+}
+
+/** Tras el `exit` del hijo, tiempo máximo para vaciar lo que quede en los pipes antes de cortarlos. */
+const DRAIN_GRACE_MS = 1000;
+
 /**
  * Corre el comando de tests del proyecto en el worktree, sin shell (ver `splitCommand`), con tiempo máximo.
- * Nunca lanza por un fallo del comando: devuelve su `exitCode` y la salida. Al vencer el tiempo mata todo el
- * grupo de procesos (en POSIX) para no dejar hijos huérfanos.
+ * Nunca lanza por un fallo del comando: devuelve su `exitCode` y la salida.
+ *
+ * El hijo se lanza con `detached: true` (POSIX: líder de su propio grupo de procesos), así que al vencer el
+ * tiempo se mata todo el grupo (`kill(-pid)`), y también tras una salida normal por si quedan nietos en segundo
+ * plano reteniendo stdout/stderr. Se resuelve en `exit` (esperando como mucho `DRAIN_GRACE_MS` a que se vacíen
+ * los pipes) y se destruyen los streams, de modo que nunca se queda colgada por procesos huérfanos.
  */
 export function runTests(worktree: string, command: string, timeoutMs: number): Promise<TestRunResult> {
   const [file, ...args] = splitCommand(command);
   const tail = new TailBuffer(TEST_OUTPUT_LIMIT);
-  const posix = process.platform !== 'win32';
   return new Promise((resolvePromise) => {
     let timedOut = false;
-    const child = execFile(
-      file!,
-      args,
-      // `detached` lo acepta execFile en ejecución (lo pasa a spawn) pero no está en sus tipos.
-      { cwd: resolve(worktree), maxBuffer: 16 * 1024 * 1024, env: process.env, detached: posix, windowsHide: true } as ExecFileOptions,
-      (err) => {
-        clearTimeout(timer);
-        let exitCode = 0;
-        if (err) {
-          const code = (err as NodeJS.ErrnoException).code;
-          if (typeof code === 'number') exitCode = code;
-          else if (timedOut) exitCode = 124;
-          else if (code === 'ENOENT' || code === 'EACCES') {
-            exitCode = 127;
-            tail.push(Buffer.from(`no se pudo ejecutar "${file}": ${err.message}\n`));
-          } else exitCode = 1;
-        }
-        resolvePromise({ exitCode, output: tail.toString(), timedOut });
-      },
-    );
-    child.stdout?.on('data', (d: Buffer | string) => tail.push(Buffer.from(d)));
-    child.stderr?.on('data', (d: Buffer | string) => tail.push(Buffer.from(d)));
+    let exitCode: number | null = null; // null = aún sin código
+    let done = false;
+    let drainTimer: NodeJS.Timeout | undefined;
+    const child = spawn(file!, args, {
+      cwd: resolve(worktree),
+      env: process.env,
+      detached: true,
+      windowsHide: true, // en Windows `detached` abriría una consola
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      clearTimeout(drainTimer);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      resolvePromise({ exitCode: exitCode ?? 1, output: tail.toString(), timedOut });
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      try {
-        if (posix && child.pid) process.kill(-child.pid, 'SIGKILL');
-        else child.kill('SIGKILL');
-      } catch {
-        child.kill('SIGKILL');
-      }
+      killTree(child.pid, () => child.kill('SIGKILL'));
     }, timeoutMs);
+    child.stdout?.on('data', (d: Buffer | string) => tail.push(Buffer.from(d)));
+    child.stderr?.on('data', (d: Buffer | string) => tail.push(Buffer.from(d)));
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      // No se pudo lanzar (ENOENT, EACCES...): no habrá `exit`.
+      exitCode = err.code === 'ENOENT' || err.code === 'EACCES' ? 127 : 1;
+      tail.push(Buffer.from(`no se pudo ejecutar "${file}": ${err.message}\n`));
+      finish();
+    });
+    child.on('exit', (code) => {
+      exitCode = timedOut ? 124 : (code ?? 1);
+      // Mata a los nietos que sigan vivos (tests en segundo plano, workers) para que suelten los pipes.
+      if (process.platform !== 'win32') killTree(child.pid, () => undefined);
+      child.on('close', finish);
+      drainTimer = setTimeout(finish, DRAIN_GRACE_MS);
+    });
   });
 }
 
@@ -175,18 +207,7 @@ export interface MergeOptions {
 export async function mergeFfOnly(repo: string, branch: string, opts: MergeOptions = {}): Promise<MergeResult> {
   assertSafeRef(branch, 'rama');
   const cwd = resolve(repo);
-  const head = await runGitRaw(cwd, ['symbolic-ref', '--short', '-q', 'HEAD']);
-  const current = head.stdout.trim();
-  if (head.exitCode !== 0 || current === '') {
-    throw new Error('el repo principal está en HEAD desacoplado: debe estar en la rama base para integrar');
-  }
-  if (opts.expectedBase && current !== opts.expectedBase) {
-    throw new Error(`el repo principal está en "${current}" y debería estar en la rama base "${opts.expectedBase}"`);
-  }
-  const dirty = (await runGit(cwd, ['status', '--porcelain', '--untracked-files=no'])).trim();
-  if (dirty !== '') {
-    throw new Error(`el repo principal tiene cambios sin guardar; límpialo antes de integrar:\n${dirty}`);
-  }
+  const current = await assertMainRepoReady(cwd, opts.expectedBase, 'integrar');
   const beforeSha = (await runGit(cwd, ['rev-parse', 'HEAD'])).trim();
   const r = await runGitRaw(cwd, [...NO_SIGN, 'merge', '--ff-only', branch]);
   if (r.exitCode !== 0) {
@@ -206,13 +227,39 @@ export async function mergeFfOnly(repo: string, branch: string, opts: MergeOptio
 const SHA_RE = /^[0-9a-f]{7,64}$/;
 
 /**
- * Deshace una integración: `git revert --no-edit before..after` (crea un commit de revert por cada commit
- * del rango, el más nuevo primero). Si el revert entra en conflicto lo aborta y lanza el error.
- * Devuelve el sha de HEAD resultante.
+ * Comprueba que el repo principal está listo para que el core lo modifique: HEAD en una rama (no desacoplado),
+ * que sea `expectedBase` si se da, y sin cambios en archivos rastreados. Devuelve el nombre de la rama actual.
  */
-export async function revertRange(repo: string, beforeSha: string, afterSha: string): Promise<string> {
+async function assertMainRepoReady(cwd: string, expectedBase: string | undefined, action: string): Promise<string> {
+  const head = await runGitRaw(cwd, ['symbolic-ref', '--short', '-q', 'HEAD']);
+  const current = head.stdout.trim();
+  if (head.exitCode !== 0 || current === '') {
+    throw new Error(`el repo principal está en HEAD desacoplado: debe estar en la rama base para ${action}`);
+  }
+  if (expectedBase && current !== expectedBase) {
+    throw new Error(`el repo principal está en "${current}" y debería estar en la rama base "${expectedBase}"`);
+  }
+  const dirty = (await runGit(cwd, ['status', '--porcelain', '--untracked-files=no'])).trim();
+  if (dirty !== '') {
+    throw new Error(`el repo principal tiene cambios sin guardar; límpialo antes de ${action}:\n${dirty}`);
+  }
+  return current;
+}
+
+/**
+ * Deshace una integración: `git revert --no-edit before..after` (crea un commit de revert por cada commit
+ * del rango, el más nuevo primero). Antes de tocar nada exige las mismas condiciones que `mergeFfOnly`
+ * (HEAD en una rama, `expectedBase` si se da, árbol limpio) y que `afterSha` sea ancestro de HEAD.
+ * Si el revert entra en conflicto lo aborta y lanza el error. Devuelve el sha de HEAD resultante.
+ */
+export async function revertRange(repo: string, beforeSha: string, afterSha: string, opts: MergeOptions = {}): Promise<string> {
   if (!SHA_RE.test(beforeSha) || !SHA_RE.test(afterSha)) throw new Error('sha no válido para revertRange');
   const cwd = resolve(repo);
+  await assertMainRepoReady(cwd, opts.expectedBase, 'revertir');
+  const ancestor = await runGitRaw(cwd, ['merge-base', '--is-ancestor', afterSha, 'HEAD']);
+  if (ancestor.exitCode !== 0) {
+    throw new Error(`${afterSha} no es ancestro de HEAD en el repo principal: no se puede revertir`);
+  }
   if (beforeSha !== afterSha) {
     const r = await runGitRaw(cwd, [...NO_SIGN, 'revert', '--no-edit', `${beforeSha}..${afterSha}`]);
     if (r.exitCode !== 0) {

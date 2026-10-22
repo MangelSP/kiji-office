@@ -44,6 +44,16 @@ describe('commitAll', () => {
   });
 });
 
+describe('commitAll: mensaje vacío', () => {
+  it('lanza un error claro y no toca el índice', async () => {
+    const wt = await createWorktree(repo, 't1', 'main');
+    writeFileSync(join(wt, 'x.txt'), 'x\n');
+    await expect(commitAll(wt, '')).rejects.toThrow(/mensaje de commit no puede estar vacío/);
+    await expect(commitAll(wt, '   ')).rejects.toThrow(/vacío/);
+    expect(git(wt, 'status', '--porcelain')).toBe('?? x.txt'); // sin `add -A`
+  });
+});
+
 describe('rebaseOnto', () => {
   it('rebase sin conflicto', async () => {
     const wt = await createWorktree(repo, 't1', 'main');
@@ -141,6 +151,46 @@ describe('mergeFfOnly / revertRange', () => {
   });
 });
 
+describe('revertRange: comprobaciones previas', () => {
+  async function integrated(): Promise<{ beforeSha: string; afterSha: string }> {
+    const wt = await createWorktree(repo, 't1', 'main');
+    writeFileSync(join(wt, 'uno.txt'), 'uno\n');
+    await commitAll(wt, 'tarea');
+    return mergeFfOnly(repo, 'kiji/t1');
+  }
+
+  it('árbol sucio: error y no toca nada', async () => {
+    const { beforeSha, afterSha } = await integrated();
+    writeFileSync(join(repo, 'a.txt'), 'sucio\n');
+    await expect(revertRange(repo, beforeSha, afterSha)).rejects.toThrow(/cambios sin guardar/);
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(afterSha);
+    expect(readFileSync(join(repo, 'a.txt'), 'utf8')).toBe('sucio\n');
+  });
+
+  it('HEAD desacoplado: error y no toca nada', async () => {
+    const { beforeSha, afterSha } = await integrated();
+    git(repo, 'checkout', '--detach');
+    await expect(revertRange(repo, beforeSha, afterSha)).rejects.toThrow(/desacoplado/);
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(afterSha);
+  });
+
+  it('expectedBase distinta de la rama actual: error', async () => {
+    const { beforeSha, afterSha } = await integrated();
+    await expect(revertRange(repo, beforeSha, afterSha, { expectedBase: 'develop' })).rejects.toThrow(/rama base "develop"/);
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(afterSha);
+  });
+
+  it('afterSha que no es ancestro de HEAD: error y no toca nada', async () => {
+    const { beforeSha, afterSha } = await integrated();
+    const wt2 = await createWorktree(repo, 't2', 'main');
+    writeFileSync(join(wt2, 'dos.txt'), 'dos\n');
+    const otro = (await commitAll(wt2, 'tarea 2'))!; // en kiji/t2, no integrada en main
+    await expect(revertRange(repo, beforeSha, otro)).rejects.toThrow(/no es ancestro de HEAD/);
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(afterSha);
+    expect(git(repo, 'status', '--porcelain')).toBe('');
+  });
+});
+
 describe('splitCommand', () => {
   it('parte por espacios y respeta comillas', () => {
     expect(splitCommand('npm test')).toEqual(['npm', 'test']);
@@ -195,6 +245,57 @@ describe('runTests', () => {
     expect(r.timedOut).toBe(true);
     expect(r.exitCode).toBe(124);
     expect(Date.now() - t0).toBeLessThan(10_000);
+  });
+
+  // Nietos en segundo plano: el comando de tests puede dejar procesos (npm -> sh -> vitest -> workers).
+  // El primer `echo $$` imprime el pid del `sh`, que al lanzarse `detached` es también el id de su grupo.
+  describe.skipIf(process.platform === 'win32')('procesos hijos', () => {
+    let pgid: number | undefined;
+    afterEach(() => {
+      // Limpieza aunque el test falle: no se deben dejar `sleep` vivos.
+      if (pgid) {
+        try {
+          process.kill(-pgid, 'SIGKILL');
+        } catch {
+          /* ESRCH: ya no queda nadie */
+        }
+      }
+      pgid = undefined;
+    });
+
+    async function groupGone(id: number): Promise<boolean> {
+      for (let i = 0; i < 40; i++) {
+        try {
+          process.kill(-id, 0);
+        } catch (e) {
+          return (e as NodeJS.ErrnoException).code === 'ESRCH';
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return false;
+    }
+
+    it('al vencer el tiempo resuelve y no deja ningún proceso del grupo', async () => {
+      const t0 = Date.now();
+      const r = await runTests(repo, 'sh -c "echo $$; sleep 30 & sleep 30 & wait"', 1000);
+      pgid = Number(r.output.split('\n')[0]);
+      expect(Date.now() - t0).toBeLessThan(5000);
+      expect(r.timedOut).toBe(true);
+      expect(r.exitCode).toBe(124);
+      expect(Number.isInteger(pgid) && pgid > 1).toBe(true);
+      expect(await groupGone(pgid)).toBe(true);
+    });
+
+    it('tras una salida normal mata los nietos que quedaron en segundo plano', async () => {
+      const t0 = Date.now();
+      const r = await runTests(repo, 'sh -c "echo $$; sleep 30 & echo fin"', 20_000);
+      pgid = Number(r.output.split('\n')[0]);
+      expect(Date.now() - t0).toBeLessThan(5000);
+      expect(r.timedOut).toBe(false);
+      expect(r.exitCode).toBe(0);
+      expect(r.output).toContain('fin');
+      expect(await groupGone(pgid)).toBe(true);
+    });
   });
 
   it('recorta la salida a 64 KB conservando el final', async () => {
