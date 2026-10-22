@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "ias": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/BeehiveInnovations/pal-mcp-server.git", "pal-mcp-server"],
+      "env": {
+        "GEMINI_API_KEY": "${GEMINI_API_KEY:-}",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY:-}",
+        "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY:-}",
+        "CUSTOM_API_URL": "${CUSTOM_API_URL:-}",
+        "CUSTOM_MODEL_NAME": "${CUSTOM_MODEL_NAME:-}",
+        "DEFAULT_MODEL": "auto"
+      }
+    },
+    "navegador": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--headless"]
+    }
+  }
+}
