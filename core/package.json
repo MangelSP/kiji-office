@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -p ."
+    "build": "tsc -b ."
   },
   "devDependencies": {
     "@types/node": "^22",
