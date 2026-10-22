@@ -8,18 +8,6 @@ body {
   margin: 0;
 }
 
-.container {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 12px;
-  padding: 24px;
-  box-sizing: border-box;
-  text-align: center;
-}
-
 .marca {
   margin: 0;
   font-family: ui-monospace, Menlo, monospace;
@@ -31,10 +19,4 @@ body {
 h1 {
   margin: 0;
   font-size: 48px;
-}
-
-.sub {
-  margin: 0;
-  font-size: 18px;
-  color: #c9cbe0;
 }
