@@ -129,7 +129,7 @@ function Office({ projectId }: { projectId: string }) {
   return (
     <main className="office">
       <header className="office-head">
-        <p className="marca">KIJI OFFICE</p>
+        <p className="marca">KIJI OFFICE <span className="beta">BETA</span></p>
         <h1>
           {greeting}
         </h1>

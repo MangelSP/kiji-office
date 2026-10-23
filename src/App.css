@@ -28,3 +28,15 @@ h1 {
   text-align: center;
   color: #c9cbe0;
 }
+
+/* Fase del producto, junto a la marca. */
+.beta {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid #f4c542;
+  border-radius: 4px;
+  font-size: 0.6em;
+  letter-spacing: 1px;
+  vertical-align: middle;
+}

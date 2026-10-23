@@ -31,7 +31,7 @@ export default function SettingsScreen(props: SectionProps) {
   return (
     <main className="st-screen">
       <header className="st-head">
-        <p className="marca">KIJI OFFICE</p>
+        <p className="marca">KIJI OFFICE <span className="beta">BETA</span></p>
         <h1>Ajustes</h1>
         <button type="button" className="st-btn" onClick={props.onClose}>
           Cerrar

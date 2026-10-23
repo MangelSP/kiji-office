@@ -55,7 +55,7 @@ export default function Wizard({ onClose }: Props) {
   return (
     <div className="wz">
       <aside className="wz-side">
-        <p className="marca">KIJI OFFICE</p>
+        <p className="marca">KIJI OFFICE <span className="beta">BETA</span></p>
         <p className="wz-muted wz-small">Asistente de primera vez</p>
         <ol className="wz-steps" aria-label="Pasos del asistente">
           {STEPS.map((name, i) => {

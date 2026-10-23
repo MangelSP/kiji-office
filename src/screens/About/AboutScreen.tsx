@@ -54,7 +54,7 @@ export default function AboutScreen({ onClose }: { onClose?: () => void }) {
     <main className="ab-screen" aria-label="Acerca de Kiji Office">
       <header className="ab-head">
         <div>
-          <p className="marca">KIJI OFFICE</p>
+          <p className="marca">KIJI OFFICE <span className="beta">BETA</span></p>
           <h1>Acerca de</h1>
         </div>
         {onClose && (

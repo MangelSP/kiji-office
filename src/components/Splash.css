@@ -1,0 +1,79 @@
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  background: radial-gradient(circle at 50% 42%, #2a2550 0%, #1b1d2b 62%);
+  cursor: pointer;
+  transition: opacity 0.4s ease;
+}
+.splash-out { opacity: 0; pointer-events: none; }
+
+.splash-stage {
+  position: relative;
+  width: min(520px, 100%);
+  height: 300px;
+}
+/* Núcleo de IA: hoja de 8 fotogramas de 24x24, dibujada x6. */
+.splash-core {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  width: 144px;
+  height: 144px;
+  margin-left: -72px;
+  background-size: 1152px 144px;
+  image-rendering: pixelated;
+  animation: splash-core 1s steps(8) infinite, splash-float 2.4s ease-in-out infinite alternate;
+}
+@keyframes splash-core { to { background-position: -1152px 0; } }
+@keyframes splash-float { to { translate: 0 -6px; } }
+
+.splash-robot {
+  position: absolute;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  animation: splash-walk 1.4s cubic-bezier(0.3, 0.7, 0.4, 1) both;
+}
+.splash-robot canvas { image-rendering: pixelated; }
+/* Cada robot entra desde fuera y se queda en su sitio alrededor del núcleo, con un pequeño balanceo al andar. */
+.splash-robot-0 { left: calc(50% - 48px); --from: 0; animation-delay: 0.15s; z-index: 2; }
+.splash-robot-1 { left: calc(50% - 190px); --from: -260px; animation-delay: 0.45s; }
+.splash-robot-2 { left: calc(50% + 94px); --from: 260px; animation-delay: 0.75s; }
+.splash-robot-0 { animation-name: splash-drop; }
+@keyframes splash-walk {
+  0% { transform: translateX(var(--from)); opacity: 0; }
+  15% { opacity: 1; }
+  25%, 75% { rotate: -3deg; }
+  50% { rotate: 3deg; }
+  100% { transform: translateX(0); opacity: 1; rotate: 0deg; }
+}
+@keyframes splash-drop {
+  0% { transform: translateY(-40px); opacity: 0; }
+  70% { transform: translateY(4px); opacity: 1; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.splash-tag {
+  font: 11px ui-monospace, Menlo, monospace;
+  color: #c9cbe0;
+}
+
+.splash-marca { font-size: 22px; letter-spacing: 6px; }
+.splash-msg { margin: 0; color: #f1ece2; }
+.splash-hint { margin: 0; font-size: 12px; color: #8a8ca6; }
+
+@media (max-width: 480px) {
+  .splash-robot-1 { left: 4px; }
+  .splash-robot-2 { left: auto; right: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .splash-core, .splash-robot { animation: none; }
+}

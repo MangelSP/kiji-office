@@ -52,7 +52,7 @@ export default function Home() {
   return (
     <main className="home">
       <header className="hm-head">
-        <p className="marca">KIJI OFFICE</p>
+        <p className="marca">KIJI OFFICE <span className="beta">BETA</span></p>
         <h1>Home</h1>
         <button type="button" className="hm-btn hm-btn-primary" onClick={() => void openFolder()}>
           Abrir proyecto

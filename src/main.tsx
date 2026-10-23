@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import Splash from "./components/Splash";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
 // Solo desarrollo dentro de Tauri: errores de la UI al log de `tauri dev` (la consola del webview no se ve).
@@ -19,5 +20,6 @@ if (import.meta.env.DEV && isTauri()) {
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />
+    <Splash />
   </React.StrictMode>,
 );
