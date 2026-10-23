@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import CloseGuard from "./components/CloseGuard";
 import NoticeBar from "./components/NoticeBar";
+import ConnectionsScreen from "./screens/Connections/ConnectionsScreen";
 import Home from "./screens/Home/Home";
 import OfficeV0 from "./screens/Office/OfficeV0";
 import Wizard from "./screens/Wizard/Wizard";
@@ -15,6 +16,8 @@ function App() {
   const hasProject = useStore((s) => s.tabs.length > 0);
   const booted = useStore((s) => s.booted);
   const active = useStore((s) => s.activeProjectId);
+  const connectionsOpen = useStore((s) => s.connectionsOpen);
+  const setConnectionsOpen = useStore((s) => s.setConnectionsOpen);
   // El asistente se muestra la primera vez y, mientras no haya workspace abierto, hasta que se salte;
   // desde la barra de pestañas se reabre con el botón «Asistente».
   const [wizard, setWizard] = useState(() => !readWizardDone());
@@ -22,6 +25,8 @@ function App() {
 
   useEffect(() => connectStore(), []);
   useWorkspaceShortcuts();
+  // Cambiar de pestaña (también con atajos) saca de la pantalla Conexiones.
+  useEffect(() => setConnectionsOpen(false), [active, setConnectionsOpen]);
 
   // Solo en desarrollo: `?demo=1` carga dos workspaces de ejemplo para ver la interfaz sin core.
   useEffect(() => {
@@ -51,7 +56,7 @@ function App() {
       <WorkspaceTabs onWizard={() => setWizard(true)} />
       <NoticeBar />
       {/* Una sola oficina montada (una sola `Application` de PixiJS): al cambiar de pestaña se re-sincroniza. */}
-      {active ? <OfficeV0 projectId={active} /> : <Home />}
+      {connectionsOpen ? <ConnectionsScreen /> : active ? <OfficeV0 projectId={active} /> : <Home />}
     </>
   );
 }

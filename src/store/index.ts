@@ -14,6 +14,7 @@ import type {
 } from "../../shared/protocol";
 import { createAgentsSlice, type Agent, type AgentsSlice } from "./agents";
 import { createApprovalsSlice, type Approval, type ApprovalsSlice } from "./approvals";
+import { createConnectionsSlice, type ConnectionsSlice } from "./connections";
 import { createCoreSlice, type CoreSlice } from "./core";
 import { createEventsSlice, type EventsSlice } from "./events";
 import { createMetricsSlice, type MetricsSlice } from "./metrics";
@@ -37,7 +38,8 @@ export type AppState = CoreSlice &
   ApprovalsSlice &
   MetricsSlice &
   ProvidersSlice &
-  OfficeSlice;
+  OfficeSlice &
+  ConnectionsSlice;
 
 export const useStore = create<AppState>()((...a) => ({
   ...createCoreSlice(...a),
@@ -50,6 +52,7 @@ export const useStore = create<AppState>()((...a) => ({
   ...createMetricsSlice(...a),
   ...createProvidersSlice(...a),
   ...createOfficeSlice(...a),
+  ...createConnectionsSlice(...a),
 }));
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -79,13 +82,13 @@ export function applyEvent(event: CoreEvent) {
   const p = event.payload;
   let pid = projectIdOf(p);
   if (pid === null && event.name === "agent.status" && isObject(p)) pid = projectOfAgent(p.agent_id ?? p.id);
-  if (event.name !== "workspaces.changed") s.pushEvent(pid, event.name, p);
+  if (event.name !== "workspaces.changed" && event.name !== "connections.changed") s.pushEvent(pid, event.name, p);
   switch (event.name) {
     case "core.ready":
       s.setCoreStatus("connecting");
       // Tras un reinicio el core no recuerda los proyectos abiertos: se reabren y se recarga todo.
       void s.ping().then((ok) => {
-        if (ok) return useStore.getState().bootstrap();
+        if (ok) return useStore.getState().bootstrap().then(() => useStore.getState().refreshConnections());
       });
       break;
     case "core.crashed":
@@ -133,6 +136,9 @@ export function applyEvent(event: CoreEvent) {
     case "budget.reached":
       if (isObject(p) && typeof p.message === "string") s.setBudgetNotice(p as unknown as BudgetNotice);
       break;
+    case "connections.changed":
+      s.applyConnections(p);
+      break;
     case "workspaces.changed":
       if (isObject(p) && Array.isArray(p.workspaces)) s.applyOverview(p as unknown as WorkspaceOverview);
       break;
@@ -149,7 +155,10 @@ export function connectStore(): () => void {
       s.setBooted(true);
       return;
     }
-    if (await s.ping()) await s.bootstrap();
+    if (await s.ping()) {
+      await s.bootstrap();
+      void s.refreshConnections();
+    }
     s.setBooted(true);
   });
   return off;

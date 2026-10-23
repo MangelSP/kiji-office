@@ -1,5 +1,5 @@
 // Solo en desarrollo (`?demo=1`): dos workspaces de ejemplo con datos de overview, para ver la interfaz sin core.
-import type { ProjectListItem, ProviderStatus, WorkspaceOverview, WorkspaceSummary } from "../../shared/protocol";
+import type { ConnectionView, DiscoveredServer, ProjectListItem, ProviderStatus, WorkspaceOverview, WorkspaceSummary } from "../../shared/protocol";
 import { useStore } from ".";
 import type { Agent } from "./agents";
 
@@ -29,6 +29,34 @@ const DEMO_PROVIDERS: ProviderStatus[] = [
     models: [{ model: "sonnet", agents: ["demo-2"], liveRuns: 1, costTodayUsd: 0.42, limitedUntil: null }],
   },
   { id: "ollama", label: "Ollama", configured: false, state: "off", windows: [], models: [] },
+  {
+    id: "conn:demo-conn-1", label: "LM Studio", configured: true, state: "ok", windows: [],
+    models: [{ model: "qwen3-coder-30b", agents: ["demo-2"], liveRuns: 1, costTodayUsd: 0, limitedUntil: null }],
+  },
+  { id: "conn:demo-conn-2", label: "OpenRouter", configured: true, state: "ok", windows: [], models: [{ model: "meta-llama/llama-3.3-70b-instruct", agents: [], liveRuns: 0, costTodayUsd: 0.31, limitedUntil: null }] },
+];
+
+const DEMO_CONNECTIONS: ConnectionView[] = [
+  {
+    id: "demo-conn-1", name: "LM Studio", preset: "lmstudio", baseUrl: "http://localhost:1234/v1", auth: "none", hasSecret: false,
+    defaultModel: "qwen3-coder-30b", contextWindow: 32768, toolQuality: "ok", lastTestAt: now() - 600_000, lastTestOk: true,
+    agents: ["Ana"], prices: {},
+  },
+  {
+    id: "demo-conn-2", name: "OpenRouter", preset: "openrouter", baseUrl: "https://openrouter.ai/api/v1", auth: "bearer", hasSecret: true,
+    defaultModel: "meta-llama/llama-3.3-70b-instruct", contextWindow: 65536, toolQuality: "weak", lastTestAt: now() - 3_600_000, lastTestOk: true,
+    agents: [], prices: {},
+  },
+  {
+    id: "demo-conn-3", name: "Mi servidor", preset: "custom", baseUrl: "http://192.168.1.20:8000/v1", auth: "none", hasSecret: false,
+    defaultModel: null, contextWindow: 8192, toolQuality: "none", lastTestAt: now() - 86_400_000, lastTestOk: false,
+    agents: [], prices: {},
+  },
+];
+const DEMO_DISCOVERED: DiscoveredServer[] = [
+  { preset: "lmstudio", baseUrl: "http://localhost:1234/v1", models: ["qwen3-coder-30b", "gemma-3-12b", "llama-3.2-3b"], alreadyConnected: true },
+  { preset: "llamacpp", baseUrl: "http://localhost:8080/v1", models: ["qwen2.5-coder-7b"], alreadyConnected: false },
+  { preset: "ollama", baseUrl: "http://localhost:11434/v1", models: [], alreadyConnected: false, installedNotRunning: true },
 ];
 
 export const DEMO_WEB = "demo-web";
@@ -74,6 +102,8 @@ export function loadDemo() {
   s.applyProjects(projects);
   s.applyOverview(ov);
   s.applyLimits(DEMO_PROVIDERS);
+  s.applyConnections(DEMO_CONNECTIONS);
+  useStore.setState({ discovered: DEMO_DISCOVERED });
   s.setAgents(DEMO_WEB, AGENTS_WEB);
   s.setAgents(DEMO_APP, AGENTS_APP);
   s.upsertTask(DEMO_WEB, { id: "dt1", title: "Arreglar el login", status: "running", agent_id: "demo-2" });

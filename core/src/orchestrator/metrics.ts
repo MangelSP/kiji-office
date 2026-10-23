@@ -6,6 +6,7 @@ import type { AgentMetrics, RunMetrics } from '../../../shared/protocol.js';
 import { DEFAULT_CONTEXT_WINDOW } from '../adapters/claude.js';
 import type { AgentEvent } from '../adapters/types.js';
 import type { AgentRow, RunRow } from '../db/repos.js';
+import { runModelOf } from './connections.js';
 import { type Ctx, type Handler, type LiveRun, type RunUsageState, asParams, assertSameProject, str } from './context.js';
 import { scheduleWorkspacesNotify } from './workspaces.js';
 
@@ -23,8 +24,8 @@ export function newUsageState(model: string, contextWindow = DEFAULT_CONTEXT_WIN
   };
 }
 
-/** Modelo preferido de un agente (el que usa si no hay relevo). */
-export const preferredModel = (a: Pick<AgentRow, 'model'>): string => a.model ?? 'sonnet';
+/** Modelo preferido de un agente (el que usa si no hay relevo): alias de Claude o `conn:<id>/<modelo>` (0.2b). */
+export const preferredModel = (a: Pick<AgentRow, 'model' | 'connection_id'>): string => runModelOf(a);
 
 /** RunMetrics en vivo a partir del estado en memoria. */
 export function liveMetrics(live: LiveRun, isLive: boolean): RunMetrics {

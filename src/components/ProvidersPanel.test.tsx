@@ -81,6 +81,25 @@ describe("ProvidersPanel", () => {
     expect(screen.getByText(/Aún no disponible/)).toBeTruthy();
   });
 
+  it("una tarjeta por conexión: LED, nombre, runs vivos y 'gratis' si es local y no gasta", () => {
+    const lm: ProviderStatus = {
+      id: "conn:c1", label: "LM Studio", configured: true, state: "ok", windows: [],
+      models: [{ model: "qwen3-coder", agents: ["a2"], liveRuns: 2, costTodayUsd: 0, limitedUntil: null }],
+    };
+    const cloud: ProviderStatus = { ...lm, id: "conn:c2", label: "Groq", models: [{ model: "llama", agents: [], liveRuns: 0, costTodayUsd: 0, limitedUntil: null }] };
+    const view = (id: string, preset: "lmstudio" | "groq") => ({
+      id, name: id, preset, baseUrl: "", auth: "none" as const, hasSecret: false, defaultModel: null, contextWindow: 8192,
+      toolQuality: "ok" as const, lastTestAt: 1, lastTestOk: true, agents: [], prices: {},
+    });
+    useStore.setState({ providers: [lm, cloud], connections: [view("c1", "lmstudio"), view("c2", "groq")] });
+    render(<ProvidersPanel />);
+    const [a, b] = screen.getAllByRole("listitem").filter((li) => li.classList.contains("prov"));
+    expect(a!.textContent).toContain("LM Studio");
+    expect(a!.textContent).toContain("2 runs vivos · hoy gratis");
+    expect(within(a!).getByRole("img").getAttribute("aria-label")).toBe("funciona");
+    expect(b!.textContent).toContain("hoy $0.00");
+  });
+
   it("dibuja las barras en orden con su porcentaje y su cuenta atrás", () => {
     useStore.setState({ providers: [claude, ollama] });
     render(<ProvidersPanel />);

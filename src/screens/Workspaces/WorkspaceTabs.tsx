@@ -14,6 +14,8 @@ export default function WorkspaceTabs({ onWizard }: Props) {
   const active = useStore((s) => s.activeProjectId);
   const setActive = useStore((s) => s.setActiveProject);
   const reopenProject = useStore((s) => s.reopenProject);
+  const connectionsOpen = useStore((s) => s.connectionsOpen);
+  const setConnectionsOpen = useStore((s) => s.setConnectionsOpen);
   const openFolder = useOpenFolder();
   const { requestClose, dialog } = useCloseWorkspace();
   const [menu, setMenu] = useState(false);
@@ -45,7 +47,10 @@ export default function WorkspaceTabs({ onWizard }: Props) {
           className={`ws-tab ws-home${active === null ? " is-active" : ""}`}
           aria-selected={active === null}
           title="Home (Cmd/Ctrl+0)"
-          onClick={() => setActive(null)}
+          onClick={() => {
+            setConnectionsOpen(false);
+            setActive(null);
+          }}
         >
           ⌂ Home
         </button>
@@ -106,6 +111,15 @@ export default function WorkspaceTabs({ onWizard }: Props) {
         )}
       </div>
 
+      <button
+        type="button"
+        className={`ws-btn ws-conn${connectionsOpen ? " is-active" : ""}`}
+        aria-pressed={connectionsOpen}
+        title="Conexiones a otras IAs"
+        onClick={() => setConnectionsOpen(!connectionsOpen)}
+      >
+        Conexiones
+      </button>
       {onWizard && (
         <button type="button" className="ws-btn ws-wizard" onClick={onWizard}>
           Asistente
@@ -119,6 +133,7 @@ export default function WorkspaceTabs({ onWizard }: Props) {
 function Tab({ id, index, active, onClose }: { id: string; index: number; active: boolean; onClose: () => void }) {
   const item = useStore((s) => s.projects.find((p) => p.projectId === id));
   const setActive = useStore((s) => s.setActiveProject);
+  const setConnectionsOpen = useStore((s) => s.setConnectionsOpen);
   // ⚡: alguna tarea pausada por límite del proveedor o en cola por el tope de gasto.
   const limited = useStore(
     (s) =>
@@ -144,7 +159,10 @@ function Tab({ id, index, active, onClose }: { id: string; index: number; active
         aria-selected={active}
         aria-label={parts.length > 0 ? `${name}, ${parts.join(", ")}` : name}
         title={`${item.path}${shortcut}`}
-        onClick={() => setActive(id)}
+        onClick={() => {
+          setConnectionsOpen(false);
+          setActive(id);
+        }}
       >
         <span className="ws-dot" style={{ background: workspaceColor(item.color, id) }} aria-hidden="true" />
         <span className="ws-name">{name}</span>

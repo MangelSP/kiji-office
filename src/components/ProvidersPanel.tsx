@@ -1,7 +1,10 @@
 // Panel "IAs en vivo": una tarjeta por proveedor con su cupo, modelos y gasto de hoy;
 // historial de relevos y "Cambiar IA ahora" para las tareas que corren.
 import { useEffect, useState } from "react";
-import type { LimitWindow, ProviderStatus } from "../../shared/protocol";
+import type { ConnectionView, LimitWindow, ProviderStatus } from "../../shared/protocol";
+import Led from "../screens/Connections/Led";
+import { presetInfo } from "../screens/Connections/presets";
+import "../screens/Connections/Connections.css";
 import { useScoped } from "../store/scoped";
 import type { Agent } from "../store/agents";
 import { relayLine } from "../store/providers";
@@ -94,19 +97,23 @@ function WindowBar({ w, now }: { w: LimitWindow; now: number }) {
   );
 }
 
-function ProviderCard({ p, agents, now }: { p: ProviderStatus; agents: Agent[]; now: number }) {
+function ProviderCard({ p, agents, now, conn }: { p: ProviderStatus; agents: Agent[]; now: number; conn?: ConnectionView }) {
   const windows = [...p.windows].sort((a, b) => WINDOW_ORDER.indexOf(a.type) - WINDOW_ORDER.indexOf(b.type));
   const agentName = (id: string) => agents.find((a) => String(a.id) === id)?.name ?? id;
   const today = p.models.reduce((sum, m) => sum + m.costTodayUsd, 0);
   const live = p.models.reduce((sum, m) => sum + m.liveRuns, 0);
+  // Conexión local sin gasto: "gratis" (en vez de $0.00).
+  const isConn = p.id.startsWith("conn:");
+  const free = isConn && conn !== undefined && presetInfo(conn.preset).local;
+  const money = (n: number) => (n === 0 && free ? "gratis" : usd(n));
   return (
-    <li className="prov card" data-state={p.state}>
+    <li className="prov card" data-state={p.state} data-conn={isConn ? "" : undefined}>
       <div className="prov-head">
-        <span className={`light light-${p.state}`} aria-hidden="true" />
+        {conn ? <Led conn={conn} /> : <span className={`light light-${p.state}`} aria-hidden="true" />}
         <strong>{p.label}</strong>
         <span className="tag">{p.configured ? STATE_LABEL[p.state] : "No configurado"}</span>
         <span className="prov-total muted small">
-          {live > 0 ? `${live} ${live === 1 ? "run vivo" : "runs vivos"} · ` : ""}hoy {usd(today)}
+          {live > 0 ? `${live} ${live === 1 ? "run vivo" : "runs vivos"} · ` : ""}hoy {money(today)}
         </span>
       </div>
 
@@ -129,7 +136,7 @@ function ProviderCard({ p, agents, now }: { p: ProviderStatus; agents: Agent[]; 
                 {" "}
                 {m.agents.length > 0 ? m.agents.map(agentName).join(", ") : "sin agentes"}
                 {m.liveRuns > 0 ? ` · ${m.liveRuns} ${m.liveRuns === 1 ? "run vivo" : "runs vivos"}` : ""}
-                {` · hoy ${usd(m.costTodayUsd)}`}
+                {` · hoy ${money(m.costTodayUsd)}`}
                 {m.limitedUntil != null && m.limitedUntil > now ? ` · limitado ${formatCountdown(m.limitedUntil, now)}` : ""}
               </span>
             </li>
@@ -255,6 +262,7 @@ export default function ProvidersPanel() {
   const relays = useScoped((s) => s.relays);
   const agents = useScoped((s) => s.agents);
   const unavailable = useScoped((s) => s.unavailable["providers.status"]);
+  const connections = useScoped((s) => s.connections);
   const now = useNow();
 
   return (
@@ -267,7 +275,7 @@ export default function ProvidersPanel() {
       ) : (
         <ul className="plain">
           {providers.map((p) => (
-            <ProviderCard key={p.id} p={p} agents={agents} now={now} />
+            <ProviderCard key={p.id} p={p} agents={agents} now={now} conn={connections.find((c) => `conn:${c.id}` === p.id)} />
           ))}
         </ul>
       )}

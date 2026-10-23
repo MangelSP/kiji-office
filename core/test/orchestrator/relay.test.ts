@@ -481,3 +481,57 @@ describe('task.switch', () => {
     });
   });
 });
+
+
+describe('relevo hacia una conexión (0.2b, D18)', () => {
+  const addConn = () => h.orch.ctx.repos.connections.create({ name: 'LM', preset: 'lmstudio', baseUrl: 'http://127.0.0.1:1/v1', auth: 'none', defaultModel: 'qwen' });
+
+  it('five_hour con auto_relay y una conexión en la lista: relevo (no pausa), run nuevo en el mismo worktree con traspaso', async () => {
+    h = makeHarness();
+    await h.call('project.open', { path: repo });
+    const worker = (await h.call('agent.list')).find((a: any) => a.is_boss === 0);
+    const c = addConn();
+    const target = `conn:${c.id}/qwen3`;
+    await h.call('agent.update', { agentId: worker.id, relayOrder: ['opus', target] });
+    const t = await h.call('task.create', { title: 'Haz algo', description: 'Haz algo con a.ts', files: ['src/a.ts'], agent_id: worker.id });
+    await h.call('task.start', { id: t.id });
+    h.adapters[0]!.push(...modelLimit('five_hour'));
+    await h.waitFor(() => h.adapters.length === 2, 'run en la conexión');
+    await h.waitFor(() => h.adapters[1]!.spec !== null && task(t.id).status === 'running', 'running');
+
+    expect(h.factoryAgents[1]).toMatchObject({ connection_id: c.id, model: 'qwen3', provider: 'api' });
+    const spec = h.adapters[1]!.spec!;
+    expect(spec).toMatchObject({ model: 'qwen3', cwd: h.adapters[0]!.spec!.cwd });
+    expect(spec.resumeSessionId).toBeUndefined();
+    expect(spec.prompt).toMatch(/Retomas una tarea/);
+    expect(h.orch.ctx.resumeTimers.size).toBe(0);
+    const rows = relaysOf();
+    expect(rows[0]).toMatchObject({ from_model: 'sonnet', to_model: target, reason: 'limit' });
+    expect(h.orch.ctx.repos.runs.listByTask(t.id).map((r) => r.model)).toEqual(['sonnet', target]);
+    // el agente conserva su IA preferida
+    expect(h.orch.ctx.repos.agents.get(worker.id)).toMatchObject({ model: 'sonnet', connection_id: null });
+  });
+
+  it('five_hour sin conexión en la lista: sigue pausando', async () => {
+    const { t } = await setup();
+    h.adapters[0]!.push(...modelLimit('five_hour'));
+    await h.waitFor(() => task(t.id).status === 'paused_limit' && h.orch.ctx.live.size === 0, 'pausa');
+    expect(h.adapters).toHaveLength(1);
+  });
+
+  it('chooseRelayModel: la conexión no depende del cupo de Claude; una borrada se ignora', async () => {
+    h = makeHarness();
+    await h.call('project.open', { path: repo });
+    const worker = (await h.call('agent.list')).find((a: any) => a.is_boss === 0);
+    const c = addConn();
+    const target = `conn:${c.id}/m`;
+    await h.call('agent.update', { agentId: worker.id, relayOrder: [target] });
+    recordRate(h.orch.ctx, { status: 'rejected', rateLimitType: 'five_hour', resetsAt: inFuture(3600_000) });
+    const { chooseRelayModel } = await import('../../src/orchestrator/relay.js');
+    const agent = h.orch.ctx.repos.agents.get(worker.id)!;
+    expect(chooseRelayModel(h.orch.ctx, agent, 'sonnet')).toBe(target);
+    expect(chooseRelayModel(h.orch.ctx, agent, target)).toBeNull();
+    h.orch.ctx.repos.connections.delete(c.id);
+    expect(chooseRelayModel(h.orch.ctx, agent, 'sonnet')).toBeNull();
+  });
+});

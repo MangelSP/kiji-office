@@ -41,12 +41,37 @@ ALTER TABLE projects ADD COLUMN is_open INTEGER NOT NULL DEFAULT 0 CHECK (is_ope
 CREATE INDEX runs_started ON runs(started_at);
 `;
 
+// Migración 4 (0.2b, PLAN-0.2b.md parte 1, D15): conexiones (cualquier IA compatible con OpenAI) y agents.connection_id.
+// La clave NUNCA se guarda aquí: vive en el llavero (cuenta `conn:<id>`) y llega al core en memoria (`secrets.put`).
+// agents.api_base queda sin uso (se conserva por compatibilidad de la migración 1).
+const MIGRATION_4 = `
+CREATE TABLE connections (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  preset         TEXT NOT NULL,
+  kind           TEXT NOT NULL DEFAULT 'openai_compat' CHECK (kind IN ('openai_compat')),
+  base_url       TEXT NOT NULL,
+  auth           TEXT NOT NULL CHECK (auth IN ('none', 'bearer', 'x-api-key')),
+  has_secret     INTEGER NOT NULL DEFAULT 0 CHECK (has_secret IN (0, 1)),
+  default_model  TEXT,
+  context_window INTEGER NOT NULL DEFAULT 32768,
+  tool_quality   TEXT NOT NULL DEFAULT 'unknown' CHECK (tool_quality IN ('unknown', 'ok', 'weak', 'none')),
+  prices_json    TEXT NOT NULL DEFAULT '{}',
+  last_test_at   INTEGER,
+  last_test_ok   INTEGER,
+  created_at     INTEGER NOT NULL
+);
+ALTER TABLE agents ADD COLUMN connection_id TEXT REFERENCES connections(id) ON DELETE SET NULL;
+CREATE INDEX agents_connection ON agents(connection_id);
+`;
+
 // Migraciones en orden; la posición + 1 es el valor de user_version tras aplicarla.
 // Para cambiar el esquema en el futuro: añadir un elemento al final, nunca editar los anteriores.
 export const migrations: Array<(db: DatabaseSync) => void> = [
   (db) => db.exec(schemaSql()),
   (db) => db.exec(MIGRATION_2),
   (db) => db.exec(MIGRATION_3),
+  (db) => db.exec(MIGRATION_4),
 ];
 
 export function openDb(path: string): DatabaseSync {

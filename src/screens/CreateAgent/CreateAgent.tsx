@@ -2,8 +2,12 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { errorMessage } from "../../store/core";
 import { useScoped } from "../../store/scoped";
+import Led from "../Connections/Led";
+import "../Connections/Connections.css";
+import { toolQualityText } from "../Connections/presets";
+import { useConnectionModels } from "../Connections/useConnectionModels";
 import RobotPreview from "./RobotPreview";
-import { CLAUDE_MODELS, COLORS, NAME_MAX, PROVIDERS, ROLES, validateName } from "./options";
+import { CLAUDE_MODELS, COLORS, NAME_MAX, ROLES, validateName } from "./options";
 import "./CreateAgent.css";
 
 type Props = {
@@ -18,8 +22,11 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
   const call = useScoped((s) => s.call);
   const projectId = useScoped((s) => s.projectId);
   const refreshAgents = useScoped((s) => s.refreshAgents);
+  const connections = useScoped((s) => s.connections);
+  const refreshConnections = useScoped((s) => s.refreshConnections);
 
-  const [provider] = useState("claude"); // en 0.1 solo Claude; los demás están deshabilitados
+  // null = Claude (Agent SDK); si no, el id de una conexión (provider "api" en el core).
+  const [connectionId, setConnectionId] = useState<string | null>(null);
   const [model, setModel] = useState<string>("sonnet");
   const [role, setRole] = useState<string>(ROLES[0].id);
   const [name, setName] = useState("");
@@ -39,6 +46,24 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
   );
   const showNameError = touched && nameError !== null;
   const roleInfo = ROLES.find((r) => r.id === role) ?? ROLES[0];
+  const conn = connections.find((c) => c.id === connectionId) ?? null;
+  const provider = conn ? "api" : "claude";
+  const { models: connModels, loading: modelsLoading } = useConnectionModels(connectionId);
+  const connModelList = conn && conn.defaultModel && !connModels.includes(conn.defaultModel) ? [conn.defaultModel, ...connModels] : connModels;
+
+  const pickProvider = (id: string | null) => {
+    setConnectionId(id);
+    setModel(id === null ? "sonnet" : (connections.find((c) => c.id === id)?.defaultModel ?? ""));
+  };
+
+  useEffect(() => {
+    void refreshConnections();
+  }, [refreshConnections]);
+
+  // Con la lista cargada y sin modelo elegido (conexión sin modelo por defecto) se parte del primero.
+  useEffect(() => {
+    if (conn && model === "" && connModels.length > 0) setModel(connModels[0]!);
+  }, [conn, model, connModels]);
 
   useEffect(() => {
     nameRef.current?.focus();
@@ -63,7 +88,15 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
     setBusy(true);
     try {
       const finalName = name.trim();
-      await call("agent.create", { projectId, name: finalName, provider, model, role, color });
+      await call("agent.create", {
+        projectId,
+        name: finalName,
+        provider,
+        model,
+        role,
+        color,
+        ...(conn ? { connectionId: conn.id } : {}),
+      });
       await refreshAgents(); // el robot aparece en la oficina con su paleta
       onCreated?.(finalName);
       onClose();
@@ -85,7 +118,7 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
             <RobotPreview palette={color} />
             <p className="ca-preview-name">{name.trim() || "Sin nombre"}</p>
             <p className="muted small">
-              {roleInfo.label} · {provider} {model}
+              {roleInfo.label} · {conn ? conn.name : "Claude"} {model}
             </p>
           </aside>
 
@@ -93,27 +126,60 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
             <fieldset className="ca-field">
               <legend>IA</legend>
               <div className="ca-providers">
-                {PROVIDERS.map((p) => (
-                  <label key={p.id} className={`ca-provider${p.enabled ? "" : " is-disabled"}`}>
-                    <input type="radio" name="provider" value={p.id} checked={p.id === provider} disabled={!p.enabled} readOnly />
+                <label className="ca-provider">
+                  <input type="radio" name="provider" value="claude" checked={connectionId === null} onChange={() => pickProvider(null)} />
+                  <span>Claude</span>
+                </label>
+                {connections.map((c) => (
+                  <label key={c.id} className="ca-provider">
+                    <input type="radio" name="provider" value={c.id} checked={connectionId === c.id} onChange={() => pickProvider(c.id)} />
                     <span>
-                      {p.label}
-                      {p.note && <small> · {p.note}</small>}
+                      <Led conn={c} /> {c.name}
                     </span>
                   </label>
                 ))}
               </div>
+              {connections.length === 0 && <p className="muted small">Añade otras IAs (Ollama, LM Studio, OpenAI…) en Conexiones.</p>}
+              {conn?.toolQuality === "none" && (
+                <p className="ca-warn small" role="status">
+                  Esta IA {toolQualityText("none")}: este robot solo podrá responder consultas.
+                </p>
+              )}
+              {conn?.toolQuality === "weak" && (
+                <p className="ca-warn small" role="status">
+                  Esta IA {toolQualityText("weak")}.
+                </p>
+              )}
             </fieldset>
 
             <div className="ca-field">
               <label htmlFor={`${ids}-model`}>Modelo</label>
-              <select id={`${ids}-model`} value={model} onChange={(e) => setModel(e.target.value)}>
-                {CLAUDE_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label} — {m.note}
-                  </option>
-                ))}
-              </select>
+              {conn === null ? (
+                <select id={`${ids}-model`} value={model} onChange={(e) => setModel(e.target.value)}>
+                  {CLAUDE_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label} — {m.note}
+                    </option>
+                  ))}
+                </select>
+              ) : connModelList.length > 0 ? (
+                <select id={`${ids}-model`} value={model} onChange={(e) => setModel(e.target.value)}>
+                  {model !== "" && !connModelList.includes(model) && <option value={model}>{model}</option>}
+                  {connModelList.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  id={`${ids}-model`}
+                  value={model}
+                  spellCheck={false}
+                  placeholder={modelsLoading ? "Cargando modelos…" : "nombre del modelo"}
+                  onChange={(e) => setModel(e.target.value)}
+                />
+              )}
             </div>
 
             <div className="ca-field">

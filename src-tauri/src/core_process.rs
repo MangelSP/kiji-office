@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -25,6 +26,98 @@ fn lossy_lines(r: impl std::io::Read) -> impl Iterator<Item = String> {
         .split(b'\n')
         .map_while(Result::ok)
         .map(|b| String::from_utf8_lossy(&b).trim_end_matches('\r').to_string())
+}
+
+/// Contador de ids de las peticiones que origina Rust (`rust:<n>`).
+static RUST_REQ: AtomicU64 = AtomicU64::new(1);
+
+/// Línea NDJSON `secrets.put` (`value` None = borrar). Es la única que lleva el valor: no se registra nunca.
+fn put_line(n: u64, account: &str, value: Option<&str>) -> String {
+    serde_json::json!({
+        "id": format!("rust:{n}"), "type": "req", "method": "secrets.put",
+        "params": { "account": account, "value": value }
+    })
+    .to_string()
+}
+
+/// Escribe una línea + salto en el escritor dado (el stdin del core, o uno falso en tests).
+fn write_line<W: Write>(w: &mut W, line: &str) -> std::io::Result<()> {
+    w.write_all(line.as_bytes())?;
+    w.write_all(b"\n")?;
+    w.flush()
+}
+
+fn send_put<W: Write>(w: &mut W, account: &str, value: Option<&str>) -> std::io::Result<()> {
+    write_line(w, &put_line(RUST_REQ.fetch_add(1, Ordering::Relaxed), account, value))
+}
+
+/// ¿Es un mensaje que solo Rust puede enviar (id `rust:*` o método `secrets.put`)? Lo no parseable también se rechaza.
+fn is_reserved(line: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return true };
+    v["id"].as_str().is_some_and(|i| i.starts_with("rust:")) || v["method"].as_str() == Some("secrets.put")
+}
+
+/// Qué hacer con una línea de stdout del core.
+#[derive(Debug, PartialEq)]
+enum Route {
+    Forward,
+    Drop,
+    /// `secrets.request`: cuentas pedidas (se consumen en Rust, no llegan al webview).
+    SecretsRequest(Vec<String>),
+}
+
+fn route_line(line: &str) -> Route {
+    if !(line.contains("rust") || line.contains("secrets.request")) {
+        return Route::Forward;
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return Route::Forward };
+    if v["id"].as_str().is_some_and(|i| i.starts_with("rust:")) {
+        return Route::Drop;
+    }
+    if v["type"] == "event" && v["name"] == "secrets.request" {
+        let accounts = v["payload"]["accounts"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        return Route::SecretsRequest(accounts);
+    }
+    Route::Forward
+}
+
+/// Empuja (o borra, con None) un secreto en el core en marcha. Si no hay core, no hace nada: lo pedirá al arrancar.
+pub fn push_secret(state: &CoreState, account: &str, value: Option<&str>) {
+    let mut g = state.0.lock().unwrap();
+    if let Some(stdin) = g.stdin.as_mut() {
+        if let Err(e) = send_put(stdin, account, value) {
+            eprintln!("[core] no se pudo enviar el secreto de '{account}': {e}");
+        }
+    }
+}
+
+/// Responde a `secrets.request`: lee del llavero (fuera del Mutex, puede mostrar un aviso del SO) solo las
+/// cuentas válidas y las empuja al core de esta generación. Solo se registra el nombre de la cuenta.
+fn answer_secrets_request(app: &AppHandle, generation: u64, accounts: Vec<String>) {
+    let mut found: Vec<(String, String)> = Vec::new();
+    for account in accounts.into_iter().filter(|a| keyring::is_valid_account(a)) {
+        match keyring::read(&account) {
+            Ok(Some(v)) if !v.is_empty() => found.push((account, v)),
+            Ok(_) => {}
+            Err(e) => eprintln!("[core] {e}"),
+        }
+    }
+    let state = app.state::<CoreState>();
+    let mut g = state.0.lock().unwrap();
+    if g.generation != generation {
+        return;
+    }
+    let Some(stdin) = g.stdin.as_mut() else { return };
+    for (account, value) in &found {
+        if let Err(e) = send_put(stdin, account, Some(value)) {
+            eprintln!("[core] no se pudo enviar el secreto de '{account}': {e}");
+            return;
+        }
+    }
+    eprintln!("[core] {} secretos enviados al core", found.len());
 }
 
 #[derive(Default)]
@@ -116,6 +209,14 @@ fn spawn(app: &AppHandle, inner: &mut Inner) -> Result<(), String> {
         for line in lossy_lines(stdout) {
             if line.is_empty() {
                 continue;
+            }
+            match route_line(&line) {
+                Route::Drop => continue,
+                Route::SecretsRequest(accounts) => {
+                    answer_secrets_request(&app_out, generation, accounts);
+                    continue;
+                }
+                Route::Forward => {}
             }
             log_milestones(&line);
             let _ = app_out.emit("core:line", line);
@@ -229,12 +330,12 @@ pub async fn core_send(state: State<'_, CoreState>, line: String) -> Result<(), 
     if line.contains(['\r', '\n']) {
         return Err("la línea no puede contener saltos de línea".into());
     }
+    if is_reserved(line) {
+        return Err("mensaje reservado a Rust (id `rust:*` o `secrets.put`)".into());
+    }
     let mut g = state.0.lock().unwrap();
     let stdin = g.stdin.as_mut().ok_or("el core no está en marcha")?;
-    stdin
-        .write_all(line.as_bytes())
-        .and_then(|_| stdin.write_all(b"\n"))
-        .and_then(|_| stdin.flush())
+    write_line(stdin, line)
         .map_err(|e| format!("no se pudo escribir en el core: {e}"))
 }
 
@@ -246,4 +347,48 @@ pub async fn core_restart(app: AppHandle, state: State<'_, CoreState>) -> Result
     g.restarts = 0;
     stop(&mut g);
     spawn(&app, &mut g)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linea_secrets_put() {
+        let mut buf: Vec<u8> = Vec::new();
+        send_put(&mut buf, "conn:x", Some("sk-\"1\"")).unwrap();
+        send_put(&mut buf, "conn:x", None).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        let ls: Vec<serde_json::Value> = s.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(ls.len(), 2);
+        assert!(s.ends_with('\n'));
+        assert_eq!(ls[0]["type"], "req");
+        assert_eq!(ls[0]["method"], "secrets.put");
+        assert_eq!(ls[0]["params"]["account"], "conn:x");
+        assert_eq!(ls[0]["params"]["value"], "sk-\"1\"");
+        assert!(ls[1]["params"]["value"].is_null());
+        let id = |i: usize| ls[i]["id"].as_str().unwrap().strip_prefix("rust:").unwrap().parse::<u64>().unwrap();
+        assert!(id(1) > id(0));
+    }
+
+    #[test]
+    fn core_send_rechaza_reservados() {
+        assert!(is_reserved(r#"{"id":"rust:1","type":"req","method":"ping"}"#));
+        assert!(is_reserved(r#"{"id":"a","type":"req","method":"secrets.put","params":{}}"#));
+        assert!(is_reserved(r#"{"id":"\u0072ust:9","method":"x"}"#));
+        assert!(is_reserved("no es json"));
+        assert!(!is_reserved(r#"{"id":"web:1","type":"req","method":"ping"}"#));
+        assert!(!is_reserved(r#"{"id":"1","type":"req","method":"secrets.putx"}"#));
+    }
+
+    #[test]
+    fn filtro_de_lineas_del_core() {
+        assert_eq!(route_line(r#"{"id":"rust:3","type":"res","result":null}"#), Route::Drop);
+        assert_eq!(route_line(r#"{"id":"web:3","type":"res","result":"rust:"}"#), Route::Forward);
+        assert_eq!(route_line(r#"{"type":"event","name":"core.ready","payload":{}}"#), Route::Forward);
+        assert_eq!(
+            route_line(r#"{"type":"event","name":"secrets.request","payload":{"accounts":["openai","conn:a",7]}}"#),
+            Route::SecretsRequest(vec!["openai".into(), "conn:a".into()])
+        );
+    }
 }

@@ -77,11 +77,11 @@ describe('agent.create — color, modelo, rol y proveedor', () => {
     await expect(h.call('agent.create', { name: 'z4', provider: 'claude' })).resolves.toMatchObject({ role: 'programador' });
   });
 
-  it('proveedor: solo claude; los demás dan un error que menciona el paso 15/16', async () => {
+  it('proveedor: solo claude; los demás dan un error que pide connectionId (0.2b)', async () => {
     await expect(create({ name: 'p1', provider: 'codex' })).rejects.toThrow(/paso 15/);
-    await expect(create({ name: 'p2', provider: 'gemini' })).rejects.toThrow(/paso 16/);
-    await expect(create({ name: 'p3', provider: 'ollama' })).rejects.toThrow(/paso 16/);
-    await expect(create({ name: 'p4', provider: 'openai' })).rejects.toThrow(/paso 16/);
+    await expect(create({ name: 'p2', provider: 'gemini' })).rejects.toThrow(/connectionId/);
+    await expect(create({ name: 'p3', provider: 'ollama' })).rejects.toThrow(/connectionId/);
+    await expect(create({ name: 'p4', provider: 'openai' })).rejects.toThrow(/connectionId/);
     await expect(create({ name: 'p5', provider: 'foo' })).rejects.toThrow(/desconocido/);
     expect(await h.call('agent.list')).toHaveLength(2); // nada se guardó
   });

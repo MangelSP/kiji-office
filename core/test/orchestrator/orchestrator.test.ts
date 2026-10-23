@@ -99,8 +99,8 @@ describe('agent.create', () => {
     const a = await h.call('agent.create', { name: 'Pixel', provider: 'claude', model: 'haiku', role: 'tester', color: 'azul' });
     expect(a).toMatchObject({ name: 'Pixel', model: 'haiku', role: 'tester', color: 'azul', is_boss: 0 });
     await expect(h.call('agent.create', { name: 'X', provider: 'codex' })).rejects.toThrow(/paso 15/);
-    await expect(h.call('agent.create', { name: 'X', provider: 'api' })).rejects.toThrow(/paso 16/);
-    await expect(h.call('agent.create', { name: 'X', provider: 'ollama' })).rejects.toThrow(/paso 16/);
+    await expect(h.call('agent.create', { name: 'X', provider: 'api' })).rejects.toThrow(/connectionId/);
+    await expect(h.call('agent.create', { name: 'X', provider: 'ollama' })).rejects.toThrow(/connectionId/);
     await expect(h.call('agent.create', { name: 'X', provider: 'claude', role: 'jefe' })).rejects.toThrow(/jefe/);
   });
 

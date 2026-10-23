@@ -1,10 +1,13 @@
 // Subpestaña "Perfil": Identidad, Motor e Instrucciones. Guarda con `agent.update`.
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
-import type { AgentUpdateParams } from "../../../shared/protocol";
+import type { AgentUpdateParams, ConnectionView, RelayTarget } from "../../../shared/protocol";
 import type { Agent } from "../../store/agents";
 import { CLAUDE_MODELS, COLORS, NAME_MAX, validateName } from "../CreateAgent/options";
 import { ROLE_LABEL } from "./format";
 import { useStore } from "../../store";
+import Led from "../Connections/Led";
+import { useConnectionModels } from "../Connections/useConnectionModels";
+import "../Connections/Connections.css";
 import { useAgentsStore } from "./useAgentsStore";
 
 export const PERSONA_MAX = 4000;
@@ -15,7 +18,57 @@ const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.l
 
 function initialRelay(agent: Agent): string[] {
   if (Array.isArray(agent.relay_order) && agent.relay_order.length > 0) return agent.relay_order;
+  if (agent.connection_id) return []; // una conexión no tiene relevo por defecto
   return DEFAULT_RELAY.filter((m) => m !== agent.model);
+}
+
+const isConnTarget = (m: string) => /^conn:[^/]+\/.+/.test(m);
+
+/** "conn:<id>/qwen3" → "LM Studio / qwen3" (con el nombre de la conexión). */
+function relayLabel(m: string, nameOf: (id: string) => string): string {
+  const hit = /^conn:([^/]+)\/(.+)$/.exec(m);
+  return hit ? `${nameOf(hit[1]!)} / ${hit[2]}` : m;
+}
+
+/** Selector para añadir `conn:<id>/<modelo>` al orden de relevo. */
+function RelayAdder({ connections, relay, onAdd }: { connections: ConnectionView[]; relay: string[]; onAdd: (target: RelayTarget) => void }) {
+  const uid = useId();
+  const [connId, setConnId] = useState("");
+  const [model, setModel] = useState("");
+  const { models } = useConnectionModels(connId === "" ? null : connId);
+  if (connections.length === 0) return null;
+  const chosen = connId === "" ? null : connections.find((c) => c.id === connId);
+  const list = chosen?.defaultModel && !models.includes(chosen.defaultModel) ? [chosen.defaultModel, ...models] : models;
+  const value = model !== "" ? model : (chosen?.defaultModel ?? list[0] ?? "");
+  const target = connId !== "" && value !== "" ? (`conn:${connId}/${value}` as RelayTarget) : null;
+  const dup = target !== null && relay.includes(target);
+  return (
+    <div className="row ag-relay-add" role="group" aria-label="Añadir una conexión al relevo">
+      <select aria-label="Conexión de relevo" value={connId} id={`${uid}-rc`} onChange={(e) => { setConnId(e.target.value); setModel(""); }}>
+        <option value="">Añadir IA al relevo…</option>
+        {connections.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+      {chosen &&
+        (list.length > 0 ? (
+          <select aria-label="Modelo de relevo" value={value} onChange={(e) => setModel(e.target.value)}>
+            {list.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input aria-label="Modelo de relevo" value={model} placeholder="modelo" onChange={(e) => setModel(e.target.value)} />
+        ))}
+      <button type="button" className="btn" disabled={target === null || dup} onClick={() => target && onAdd(target)}>
+        Añadir al relevo
+      </button>
+    </div>
+  );
 }
 
 export default function AgentProfile({ agent }: { agent: Agent }) {
@@ -31,6 +84,7 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
       name: agent.name,
       color: agent.color && agent.color !== "claude" ? agent.color : "terracota",
       model: agent.model ?? "sonnet",
+      connectionId: agent.connection_id ?? null,
       persona: agent.persona ?? "",
       skills: agent.skills ?? [],
       relay: initialRelay(agent),
@@ -42,6 +96,10 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
   const [name, setName] = useState(orig.name);
   const [color, setColor] = useState(orig.color);
   const [model, setModel] = useState(orig.model);
+  const [connectionId, setConnectionId] = useState<string | null>(orig.connectionId);
+  const connections = useStore((s) => s.connections);
+  const refreshConnections = useStore((s) => s.refreshConnections);
+  const { models: connModels, loading: modelsLoading } = useConnectionModels(connectionId);
   const [persona, setPersona] = useState(orig.persona);
   const [chosen, setChosen] = useState<string[]>(orig.skills);
   const [relay, setRelay] = useState<string[]>(orig.relay);
@@ -53,7 +111,8 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
 
   useEffect(() => {
     void refreshSkills();
-  }, [refreshSkills]);
+    void refreshConnections();
+  }, [refreshSkills, refreshConnections]);
 
   const others = agents.filter((a) => String(a.id) !== String(agent.id)).map((a) => a.name);
   const nameError = name.trim() === orig.name ? null : validateName(name, others);
@@ -61,12 +120,21 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
   const visible = skills.filter((s) => q === "" || `${s.name} ${s.description}`.toLowerCase().includes(q));
   const knownNames = new Set(skills.map((s) => s.name));
   const orphans = chosen.filter((n) => !knownNames.has(n));
+  const conn = connections.find((c) => c.id === connectionId) ?? null;
+  const connNameOf = (id: string) => connections.find((c) => c.id === id)?.name ?? "conexión borrada";
+  const pickConnection = (id: string | null) => {
+    setConnectionId(id);
+    setModel(id === null ? "sonnet" : (connections.find((c) => c.id === id)?.defaultModel ?? ""));
+    setSaved(false);
+  };
+  const connList = model !== "" && !connModels.includes(model) ? [model, ...connModels] : connModels;
   const models = CLAUDE_MODELS.some((m) => m.id === model) ? CLAUDE_MODELS.map((m) => m.id as string) : [model, ...CLAUDE_MODELS.map((m) => m.id as string)];
 
   const patch: Omit<AgentUpdateParams, "agentId"> = {};
   if (name.trim() !== orig.name) patch.name = name.trim();
   if (color !== orig.color) patch.color = color;
-  if (model !== orig.model) patch.model = model;
+  if (connectionId !== orig.connectionId) patch.connectionId = connectionId;
+  if (model !== orig.model || connectionId !== orig.connectionId) patch.model = model;
   if (persona !== orig.persona) patch.persona = persona;
   if (!sameSet(chosen, orig.skills)) patch.skills = chosen;
   if (!same(relay, orig.relay)) patch.relayOrder = relay;
@@ -146,14 +214,55 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
       <fieldset className="ag-fieldset">
         <legend>Motor</legend>
         <div className="field">
-          <label htmlFor={`${uid}-model`}>Modelo</label>
-          <select id={`${uid}-model`} value={model} onChange={(e) => setModel(e.target.value)}>
-            {models.map((m) => (
-              <option key={m} value={m}>
-                {m}
+          <label htmlFor={`${uid}-ia`}>IA</label>
+          <select
+            id={`${uid}-ia`}
+            value={connectionId ?? ""}
+            disabled={Boolean(agent.is_boss)}
+            onChange={(e) => pickConnection(e.target.value === "" ? null : e.target.value)}
+          >
+            <option value="">Claude</option>
+            {connectionId !== null && !conn && <option value={connectionId}>{connNameOf(connectionId)}</option>}
+            {connections.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
               </option>
             ))}
           </select>
+          {conn && (
+            <p className="muted small">
+              <Led conn={conn} /> {conn.toolQuality === "none" ? "Esta IA solo responde consultas: el robot no podrá editar archivos." : conn.baseUrl}
+            </p>
+          )}
+          {agent.is_boss ? <p className="muted small">El jefe siempre usa Claude.</p> : null}
+        </div>
+        <div className="field">
+          <label htmlFor={`${uid}-model`}>Modelo</label>
+          {conn === null ? (
+            <select id={`${uid}-model`} value={model} onChange={(e) => setModel(e.target.value)}>
+              {models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          ) : connList.length > 0 ? (
+            <select id={`${uid}-model`} value={model} onChange={(e) => setModel(e.target.value)}>
+              {connList.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              id={`${uid}-model`}
+              value={model}
+              spellCheck={false}
+              placeholder={modelsLoading ? "Cargando modelos…" : "nombre del modelo"}
+              onChange={(e) => setModel(e.target.value)}
+            />
+          )}
         </div>
         <div className="field">
           <span id={`${uid}-relay`}>Orden de relevo</span>
@@ -164,7 +273,7 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
               {relay.map((m, i) => (
                 <li key={m}>
                   <span className="ag-relay-n">{i + 1}</span>
-                  <span className="ag-chip">{m}</span>
+                  <span className="ag-chip">{relayLabel(m, connNameOf)}</span>
                   <button type="button" className="btn btn-ghost" aria-label={`Subir ${m}`} disabled={i === 0} onClick={() => move(i, -1)}>
                     ↑
                   </button>
@@ -177,10 +286,16 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
                   >
                     ↓
                   </button>
+                  {isConnTarget(m) && (
+                    <button type="button" className="btn btn-ghost" aria-label={`Quitar ${m}`} onClick={() => setRelay((r) => r.filter((x) => x !== m))}>
+                      ×
+                    </button>
+                  )}
                 </li>
               ))}
             </ol>
           )}
+          <RelayAdder connections={connections} relay={relay} onAdd={(t) => setRelay((r) => [...r, t])} />
           <p className="muted small field-help">Si el modelo llega a su límite, sigue con el primero de la lista que esté libre.</p>
         </div>
         <label className="ag-switch-row">

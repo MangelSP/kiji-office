@@ -67,6 +67,14 @@ const goToKeys = async () => {
 };
 
 describe("claves", () => {
+  it("solo ofrece Anthropic y remite a Conexiones para el resto", async () => {
+    await goToKeys();
+    expect(screen.getAllByLabelText(/clave|Anthropic/i).length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText("OpenAI")).toBeNull();
+    expect(screen.queryByLabelText("Gemini (Google)")).toBeNull();
+    expect(screen.getByText(/Añade otras IAs \(OpenAI, Gemini, Ollama, LM Studio…\) después en Conexiones/)).toBeTruthy();
+  });
+
   it("el valor escrito no queda en el store, ni en el DOM, ni en logs tras guardar", async () => {
     const spies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
     await goToKeys();
@@ -95,15 +103,14 @@ describe("claves", () => {
   });
 
   it("borrar: quita la clave y reinicia el core", async () => {
-    keyring.openai = "sk-openai-abcdefgh1234";
+    keyring.anthropic = "sk-ant-abcdefgh1234";
     await goToKeys();
-    await waitFor(() => expect(screen.getByTestId("status-openai").textContent).toBe("guardada …1234"));
-    expect(screen.getByTestId("status-anthropic").textContent).toBe("sin clave");
+    await waitFor(() => expect(screen.getByTestId("status-anthropic").textContent).toBe("guardada …1234"));
 
-    const openaiBox = screen.getByLabelText("OpenAI").closest("form")!;
-    fireEvent.click(openaiBox.querySelector("button[type=button]")!);
-    await waitFor(() => expect(screen.getByTestId("status-openai").textContent).toBe("sin clave"));
-    expect(mocks.invoke).toHaveBeenCalledWith("secret_delete", { user: "openai" });
+    const box = screen.getByLabelText("Anthropic (Claude)").closest("form")!;
+    fireEvent.click(box.querySelector("button[type=button]")!);
+    await waitFor(() => expect(screen.getByTestId("status-anthropic").textContent).toBe("sin clave"));
+    expect(mocks.invoke).toHaveBeenCalledWith("secret_delete", { user: "anthropic" });
     expect(mocks.invoke).toHaveBeenCalledWith("core_restart");
   });
 
@@ -113,9 +120,9 @@ describe("claves", () => {
       if (cmd === "secret_set") throw "llavero no disponible: acceso denegado";
       return cmd === "secret_get" ? null : undefined;
     });
-    const input = screen.getByLabelText("Gemini (Google)") as HTMLInputElement;
+    const input = screen.getByLabelText("Anthropic (Claude)") as HTMLInputElement;
     fireEvent.change(input, { target: { value: SECRET } });
-    fireEvent.click(screen.getAllByRole("button", { name: "Guardar" })[2]!);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
     await screen.findByText(/No se pudo guardar: llavero no disponible/);
     expect(document.body.textContent).not.toContain(SECRET);
     expect(JSON.stringify(useStore.getState(), (_k, v) => (typeof v === "function" ? undefined : v))).not.toContain(SECRET);

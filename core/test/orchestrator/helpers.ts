@@ -2,6 +2,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AsyncQueue } from '../../src/adapters/queue.js';
+import type { AgentRow } from '../../src/db/repos.js';
 import type { AgentAdapter, AgentEvent, RunSpec } from '../../src/adapters/types.js';
 import { openDb } from '../../src/db/db.js';
 import { createOrchestrator, type Orchestrator, type OrchestratorOptions } from '../../src/orchestrator/index.js';
@@ -53,7 +54,10 @@ export interface Harness {
   orch: Orchestrator;
   emitted: Emitted[];
   adapters: FakeAdapter[];
-  call: (method: string, params?: unknown) => Promise<any>;
+  /** Fila de agente con la que se creó cada adaptador (en el mismo orden que `adapters`). */
+  factoryAgents: AgentRow[];
+  /** `reqId`: id de la petición (0.2b: `secrets.put` solo se acepta con "rust:*"). */
+  call: (method: string, params?: unknown, reqId?: string) => Promise<any>;
   /** Estados del robot (agent.status) en orden, sin repetidos consecutivos, de un agente. */
   robot: (agentId: string) => string[];
   /** Espera a que se cumpla la condición (mira cada 10 ms). */
@@ -61,19 +65,22 @@ export interface Harness {
 }
 
 export function makeHarness(
-  opts: { testTimeoutMs?: number; dbPath?: string } & Pick<OrchestratorOptions, 'skillsDir' | 'metricsNotifyMs' | 'metricsWriteMs' | 'providerDeps'> = {},
+  opts: { testTimeoutMs?: number; dbPath?: string } & Pick<OrchestratorOptions, 'skillsDir' | 'metricsNotifyMs' | 'metricsWriteMs' | 'providerDeps' | 'connectionDeps'> = {},
 ): Harness {
   const emitted: Emitted[] = [];
   const adapters: FakeAdapter[] = [];
+  const factoryAgents: AgentRow[] = [];
   const orch = createOrchestrator({
     db: openDb(opts.dbPath ?? ':memory:'),
     emit: (name, payload) => emitted.push({ name, payload: JSON.parse(JSON.stringify(payload)) }),
-    adapterFactory: () => {
+    adapterFactory: (agent) => {
+      factoryAgents.push(agent);
       const a = new FakeAdapter();
       adapters.push(a);
       return a;
     },
     testTimeoutMs: opts.testTimeoutMs,
+    connectionDeps: opts.connectionDeps,
     skillsDir: opts.skillsDir ?? '/nonexistent/kiji-skills', // nunca leer las skills reales de la persona que corre los tests
     metricsNotifyMs: opts.metricsNotifyMs,
     metricsWriteMs: opts.metricsWriteMs,
@@ -91,10 +98,11 @@ export function makeHarness(
     orch,
     emitted,
     adapters,
-    call: async (method, params) => {
+    factoryAgents,
+    call: async (method, params, reqId = 'ui:1') => {
       const h = orch.handlers[method];
       if (!h) throw new Error(`método sin handler: ${method}`);
-      return h(params);
+      return h(params, { id: reqId });
     },
     robot: (agentId) =>
       emitted.filter((e) => e.name === 'agent.status' && e.payload.agent_id === agentId).map((e) => e.payload.status),

@@ -8,7 +8,8 @@ import { createWorktree, branchName, changedFiles, diff } from '../git/worktree.
 import { denyPending, onPermissionRequest } from './approvals.js';
 import { type Ctx, type Handler, type LiveRun, asParams, assertSameProject, str } from './context.js';
 import { logEvent } from './events.js';
-import { applyUsage, finalizeMetrics, newUsageState, preferredModel, sessionBaseline, writeUsage } from './metrics.js';
+import { applyUsage, finalizeMetrics, newUsageState, sessionBaseline, writeUsage } from './metrics.js';
+import { parseConnTarget, runModelOf } from './connections.js';
 import { forkPoint, foreignFiles, revertFiles } from './ownership.js';
 import { contextWindowFor } from '../adapters/claude.js';
 import { recordRate, scheduleLimitsNotify } from './quota.js';
@@ -182,17 +183,25 @@ export function checkStartable(ctx: Ctx, taskId: string) {
 /** Arranca el run ya (sin pasar por la cola: para eso, `requestStart`). */
 export async function startTask(ctx: Ctx, taskId: string, opts: StartOptions = {}) {
   const { task, agent, project } = checkStartable(ctx, taskId);
-  const adapter = ctx.adapterFactory(agent); // falla antes de tocar nada si el proveedor no está soportado
-  const files = ctx.repos.taskFiles.list(task.id).map((f) => f.path);
+  const model = opts.model ?? runModelOf(agent);
+  // 0.2b: el destino puede ser una conexión (agente propio con conexión o relevo `conn:<id>/<modelo>`): el adaptador
+  // se crea con esa conexión y el modelo libre; `model` (live.model, runs.model) conserva la forma `conn:<id>/<modelo>`.
+  const target = parseConnTarget(model);
+  const conn = target ? ctx.repos.connections.get(target.connectionId) : undefined;
+  if (target && !conn) throw new Error('la conexión de este run ya no existe: elige otra IA para el agente');
   const readOnly = isReadOnlyTask(ctx, task.id); // consulta: sin archivos, sin worktree, trabaja en el repo principal
+  if (conn && conn.tool_quality === 'none' && !readOnly) {
+    throw new Error(`la conexión «${conn.name}» no sabe llamar a herramientas: solo sirve para consultas de solo lectura`);
+  }
+  const adapter = ctx.adapterFactory(target ? { ...agent, provider: 'api', connection_id: target.connectionId, model: target.model } : agent); // falla antes de tocar nada si el proveedor no está soportado
+  const files = ctx.repos.taskFiles.list(task.id).map((f) => f.path);
   const resumeHint = readResumeHint(ctx, task);
-  const model = opts.model ?? preferredModel(agent);
 
   // Reserva el hueco ya: dos `task.start` seguidos no pueden crear dos runs.
   const live: LiveRun = {
     taskId, runId: '', agentId: agent.id, projectId: project.id, adapter, worktree: '',
     pending: new Map(), stopping: false, ended: false, finishing: false, finished: Promise.resolve(),
-    model, sessionId: null, usage: newUsageState(model, contextWindowFor(model)), onEnded: null,
+    model, sessionId: null, usage: newUsageState(model, conn ? conn.context_window : contextWindowFor(model)), onEnded: null,
   };
   ctx.live.set(taskId, live);
   let running = false; // la tarea ya pasó a `running`
@@ -221,7 +230,7 @@ export async function startTask(ctx: Ctx, taskId: string, opts: StartOptions = {
     const spec: RunSpec = {
       runId: run.id,
       cwd: worktree,
-      model,
+      model: target ? target.model : model,
       systemPrompt: systemPromptFor(agent),
       prompt: buildPrompt(ctx, task, files, opts.resumeNote ?? (resumeSessionId !== undefined ? DEFAULT_RESUME_NOTE : undefined), opts.handover),
       allowedPaths: files,

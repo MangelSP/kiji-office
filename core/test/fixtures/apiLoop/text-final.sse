@@ -1,0 +1,12 @@
+: keep-alive
+
+data: {"id":"t","choices":[{"index":0,"delta":{"role":"assistant","content":"Listo, "},"finish_reason":null}]}
+
+data: {"id":"t","choices":[{"index":0,"delta":{"content":"todo hecho."},"finish_reason":null}]}
+
+data: {"id":"t","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"t","choices":[],"usage":{"prompt_tokens":50,"completion_tokens":5,"total_tokens":55}}
+
+data: [DONE]
+

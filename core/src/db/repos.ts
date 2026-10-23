@@ -30,6 +30,15 @@ export interface AgentRow {
   relay_order: string | null; created_at: number;
   // 0.2a (migración 2)
   persona: string; skills: string; auto_relay: 0 | 1;
+  // 0.2b (migración 4): NULL = Claude nativo (Agent SDK)
+  connection_id: string | null;
+}
+export type ConnectionAuthDb = 'none' | 'bearer' | 'x-api-key';
+export type ToolQualityDb = 'unknown' | 'ok' | 'weak' | 'none';
+export interface ConnectionRow {
+  id: string; name: string; preset: string; kind: 'openai_compat'; base_url: string; auth: ConnectionAuthDb;
+  has_secret: 0 | 1; default_model: string | null; context_window: number; tool_quality: ToolQualityDb;
+  prices_json: string; last_test_at: number | null; last_test_ok: 0 | 1 | null; created_at: number;
 }
 export interface ObjectiveRow {
   id: string; project_id: string; text: string; status: ObjectiveStatus; boss_session_id: string | null; created_at: number;
@@ -163,18 +172,19 @@ export function createRepos(db: DatabaseSync) {
   // --- agents ---
   const AGENT_FIELDS = [
     'name', 'provider', 'api_base', 'model', 'role', 'color', 'is_boss', 'relay_order', 'persona', 'skills', 'auto_relay',
+    'connection_id',
   ] as const;
   const agents = {
     create(a: {
       projectId: string; name: string; provider: Provider; apiBase?: string | null; model?: string | null;
-      role?: string | null; color?: string | null; isBoss?: boolean;
+      role?: string | null; color?: string | null; isBoss?: boolean; connectionId?: string | null;
     }): AgentRow {
       const id = newId();
       db.prepare(
-        `INSERT INTO agents (id, project_id, name, provider, api_base, model, role, color, is_boss, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO agents (id, project_id, name, provider, api_base, model, role, color, is_boss, connection_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(id, a.projectId, a.name, a.provider, a.apiBase ?? null, a.model ?? null, a.role ?? null,
-        a.color ?? null, a.isBoss ? 1 : 0, now());
+        a.color ?? null, a.isBoss ? 1 : 0, a.connectionId ?? null, now());
       return agents.get(id)!;
     },
     get: (id: string) => one<AgentRow>('SELECT * FROM agents WHERE id = ?', id),
@@ -187,6 +197,46 @@ export function createRepos(db: DatabaseSync) {
       patchRow(db, 'agents', id, patch, AGENT_FIELDS);
       return agents.get(id);
     },
+  };
+
+  // --- connections (0.2b) ---
+  const CONNECTION_FIELDS = [
+    'name', 'base_url', 'auth', 'has_secret', 'default_model', 'context_window', 'tool_quality', 'prices_json',
+    'last_test_at', 'last_test_ok',
+  ] as const;
+  const connections = {
+    create(c: {
+      name: string; preset: string; baseUrl: string; auth: ConnectionAuthDb; hasSecret?: boolean;
+      defaultModel?: string | null; contextWindow?: number; pricesJson?: string;
+    }): ConnectionRow {
+      const id = newId();
+      db.prepare(
+        `INSERT INTO connections (id, name, preset, base_url, auth, has_secret, default_model, context_window, prices_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(id, c.name, c.preset, c.baseUrl, c.auth, c.hasSecret ? 1 : 0, c.defaultModel ?? null,
+        c.contextWindow ?? 32768, c.pricesJson ?? '{}', now());
+      return connections.get(id)!;
+    },
+    get: (id: string) => one<ConnectionRow>('SELECT * FROM connections WHERE id = ?', id),
+    list: () => all<ConnectionRow>('SELECT * FROM connections ORDER BY created_at, rowid'),
+    /** patch usa nombres de columna (base_url, has_secret...). */
+    update(id: string, patch: Partial<Pick<ConnectionRow, (typeof CONNECTION_FIELDS)[number]>>): ConnectionRow | undefined {
+      patchRow(db, 'connections', id, patch, CONNECTION_FIELDS);
+      return connections.get(id);
+    },
+    /** Los agentes que la usan caen a NULL (Claude) por ON DELETE SET NULL; quien llama comprueba antes. */
+    delete(id: string): void {
+      db.prepare('DELETE FROM connections WHERE id = ?').run(id);
+    },
+    /** Nombres de los agentes (de todos los proyectos) que usan la conexión. */
+    agentNames: (id: string) =>
+      all<{ name: string }>('SELECT name FROM agents WHERE connection_id = ? ORDER BY created_at, rowid', id).map((r) => r.name),
+    /** Runs fallidos desde `since` de agentes con esta conexión o de relevos hacia ella (para el estado de la tarjeta). */
+    failedRunsSince: (id: string, since: number) =>
+      one<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM runs r JOIN agents a ON a.id = r.agent_id
+         WHERE r.status = 'failed' AND r.started_at >= ? AND (a.connection_id = ? OR r.model LIKE ?)`,
+        since, id, `conn:${id}/%`)!.n,
   };
 
   // --- task_files ---
@@ -491,7 +541,7 @@ export function createRepos(db: DatabaseSync) {
     },
   };
 
-  return { projects, agents, objectives, tasks, taskFiles, runs, messages, events, approvals, testRuns, integrations, relays, settings };
+  return { projects, agents, connections, objectives, tasks, taskFiles, runs, messages, events, approvals, testRuns, integrations, relays, settings };
 }
 
 export type Repos = ReturnType<typeof createRepos>;

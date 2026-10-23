@@ -1,15 +1,6 @@
 // Opciones del formulario "Crear agente". Los roles, colores y modelos deben coincidir con la lista blanca
 // de core/src/orchestrator/agents.ts (el core es quien manda; esto solo evita ofrecer valores que rechazaría).
 
-export type ProviderOption = { id: string; label: string; enabled: boolean; note?: string };
-
-export const PROVIDERS: ProviderOption[] = [
-  { id: "claude", label: "Claude", enabled: true },
-  { id: "openai", label: "OpenAI / Codex", enabled: false, note: "llega en 0.1 paso 15/16" },
-  { id: "gemini", label: "Gemini", enabled: false, note: "llega en 0.1 paso 15/16" },
-  { id: "ollama", label: "Ollama", enabled: false, note: "llega en 0.1 paso 15/16" },
-];
-
 export const CLAUDE_MODELS = [
   { id: "sonnet", label: "sonnet", note: "equilibrado: el de siempre" },
   { id: "opus", label: "opus", note: "el más capaz, más lento y caro" },

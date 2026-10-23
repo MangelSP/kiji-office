@@ -1,5 +1,7 @@
 // Llavero del sistema: único sitio donde viven las claves de API (nunca en archivos ni en logs).
+use crate::core_process::{self, CoreState};
 use keyring::{Entry, Error};
+use tauri::State;
 
 const SERVICE: &str = "kiji-office";
 
@@ -10,8 +12,28 @@ pub const ALLOWED: [(&str, &str); 3] = [
     ("gemini", "GEMINI_API_KEY"),
 ];
 
+/// `conn:<uuid v4 en minúsculas>` (8-4-4-4-12 hex, versión 4, variante 8/9/a/b). Sin crate regex: es estricta a mano.
+pub fn is_conn_account(user: &str) -> bool {
+    let Some(id) = user.strip_prefix("conn:") else { return false };
+    let b = id.as_bytes();
+    if b.len() != 36 {
+        return false;
+    }
+    b.iter().enumerate().all(|(i, c)| match i {
+        8 | 13 | 18 | 23 => *c == b'-',
+        14 => *c == b'4',
+        19 => matches!(c, b'8' | b'9' | b'a' | b'b'),
+        _ => matches!(c, b'0'..=b'9' | b'a'..=b'f'),
+    })
+}
+
+/// Cuenta fija permitida o conexión válida.
+pub fn is_valid_account(user: &str) -> bool {
+    ALLOWED.iter().any(|(u, _)| *u == user) || is_conn_account(user)
+}
+
 fn entry(user: &str) -> Result<Entry, String> {
-    if !ALLOWED.iter().any(|(u, _)| *u == user) {
+    if !is_valid_account(user) {
         return Err(format!("cuenta no permitida: {user}"));
     }
     Entry::new(SERVICE, user).map_err(|e| format!("llavero no disponible: {e}"))
@@ -28,10 +50,14 @@ pub fn read(user: &str) -> Result<Option<String>, String> {
 
 // Los comandos son async para que el acceso al llavero (puede mostrar un aviso del SO) no bloquee el hilo principal.
 #[tauri::command]
-pub async fn secret_set(user: String, value: String) -> Result<(), String> {
+pub async fn secret_set(state: State<'_, CoreState>, user: String, value: String) -> Result<(), String> {
     entry(&user)?
         .set_password(&value)
-        .map_err(|e| format!("no se pudo guardar '{user}': {e}"))
+        .map_err(|e| format!("no se pudo guardar '{user}': {e}"))?;
+    if is_conn_account(&user) {
+        core_process::push_secret(&state, &user, Some(&value));
+    }
+    Ok(())
 }
 
 /// Al webview solo le llega si la clave existe y sus últimos 4 caracteres ("…abcd"): el valor completo
@@ -49,11 +75,15 @@ fn mask(v: &str) -> String {
 
 /// Borrar algo que no existe no es un error.
 #[tauri::command]
-pub async fn secret_delete(user: String) -> Result<(), String> {
+pub async fn secret_delete(state: State<'_, CoreState>, user: String) -> Result<(), String> {
     match entry(&user)?.delete_credential() {
-        Ok(()) | Err(Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("no se pudo borrar '{user}': {e}")),
+        Ok(()) | Err(Error::NoEntry) => {}
+        Err(e) => return Err(format!("no se pudo borrar '{user}': {e}")),
     }
+    if is_conn_account(&user) {
+        core_process::push_secret(&state, &user, None);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -65,6 +95,30 @@ mod tests {
         assert_eq!(mask("sk-ant-1234567890abcd"), "…abcd");
         assert_eq!(mask("corta"), "…");
         assert_eq!(mask(""), "…");
+    }
+
+    #[test]
+    fn regex_de_cuentas_conn() {
+        let ok = "conn:3f2b8c1e-5a4d-4e7f-9b6a-0123456789ab";
+        assert!(is_conn_account(ok));
+        assert!(is_valid_account(ok));
+        assert!(is_valid_account("openai"));
+        for mal in [
+            "conn:",
+            "conn:3F2B8C1E-5A4D-4E7F-9B6A-0123456789AB", // mayúsculas
+            "conn:3f2b8c1e-5a4d-1e7f-9b6a-0123456789ab", // no es v4
+            "conn:3f2b8c1e-5a4d-4e7f-cb6a-0123456789ab", // variante inválida
+            "conn:3f2b8c1e-5a4d-4e7f-9b6a-0123456789abc", // larga
+            "conn:3f2b8c1e-5a4d-4e7f-9b6a-0123456789a",  // corta
+            "conn:3f2b8c1e5a4d4e7f9b6a0123456789ab",     // sin guiones
+            "conn:3f2b8c1e-5a4d-4e7f-9b6a-0123456789ab\n",
+            " conn:3f2b8c1e-5a4d-4e7f-9b6a-0123456789ab",
+            "conn:../3f2b8c1e-5a4d-4e7f-9b6a-0123456789",
+            "conn:ñf2b8c1e-5a4d-4e7f-9b6a-0123456789ab",
+        ] {
+            assert!(!is_valid_account(mal), "{mal:?}");
+            assert!(entry(mal).is_err());
+        }
     }
 
     #[test]

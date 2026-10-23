@@ -2,19 +2,20 @@
 // `createOrchestrator` no toca stdio: recibe la BD, el emisor de eventos y la fábrica de adaptadores (inyectable
 // para las pruebas), y devuelve los handlers que `core/src/index.ts` registra en el router.
 import type { DatabaseSync } from 'node:sqlite';
-import { ClaudeAdapter } from '../adapters/claude.js';
 import { createRepos } from '../db/repos.js';
 import { agentHandlers } from './agents.js';
 import { approvalHandlers } from './approvals.js';
 import type { AdapterFactory, Ctx, Handler } from './context.js';
 import { eventHandlers } from './events.js';
 import { METRICS_NOTIFY_MS, METRICS_WRITE_MS, metricsHandlers } from './metrics.js';
+import { type ConnectionDeps, autoCreateKeyConnections, connectionHandlers, createConnectionService, makeAdapterFactory } from './connections.js';
 import { type ProviderDeps, providerHandlers } from './providers.js';
 import { projectHandlers, recoverAllProjects } from './projects.js';
 import { loadLimitsSnapshot } from './quota.js';
 import { queueHandlers } from './queue.js';
 import { relayHandlers } from './relay.js';
 import { runHandlers, stopAll, whenIdle } from './runs.js';
+import { requestSecrets, secretsHandlers } from './secrets.js';
 import { settingsHandlers } from './settings.js';
 import { defaultSkillsDir, skillHandlers } from './skills.js';
 import { taskHandlers } from './tasks.js';
@@ -34,19 +35,16 @@ export interface OrchestratorOptions {
   /** Frecuencias máximas (ms) de `run.metrics` por run y de escritura de métricas en la BD (pruebas). */
   metricsNotifyMs?: number;
   metricsWriteMs?: number;
+  /** 0.2b: red de las conexiones (fetch, tiempos, puertos del descubrimiento): inyectable en las pruebas. */
+  connectionDeps?: ConnectionDeps;
 }
-
-export const defaultAdapterFactory: AdapterFactory = (agent) => {
-  if (agent.provider === 'claude') return new ClaudeAdapter(); // la clave de API llega por el entorno del proceso
-  throw new Error(`el proveedor "${agent.provider}" aún no está soportado (llega en los pasos 15 y 16)`);
-};
 
 export function createOrchestrator(opts: OrchestratorOptions) {
   const ctx: Ctx = {
     db: opts.db,
     repos: createRepos(opts.db),
     emit: opts.emit,
-    adapterFactory: opts.adapterFactory ?? defaultAdapterFactory,
+    adapterFactory: opts.adapterFactory ?? (() => { throw new Error('adapterFactory sin inicializar'); }),
     testTimeoutMs: opts.testTimeoutMs ?? 5 * 60_000,
     projects: new Map(),
     lastProjectId: null,
@@ -69,13 +67,23 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     workspacesTimer: null,
     workspacesLastNotify: 0,
     closed: false,
+    secrets: new Map(),
+    conn: null,
   };
+  // Por defecto: Claude, o ApiLoopAdapter cuando el agente tiene connection_id (0.2b).
+  if (!opts.adapterFactory) ctx.adapterFactory = makeAdapterFactory(ctx, opts.connectionDeps);
+  // Claves ya presentes en el entorno (las inyecta Rust al arrancar): conexiones openai/gemini automáticas (D17).
+  autoCreateKeyConnections(ctx, opts.providerDeps?.env ?? process.env);
+  const connService = createConnectionService(ctx, opts.connectionDeps);
+  ctx.conn = connService;
   loadLimitsSnapshot(ctx);
   recoverAllProjects(ctx); // un corte previo no deja tareas running ni aprobaciones pending fantasma, ni en proyectos cerrados
   const handlers: Record<string, Handler> = {
     ...projectHandlers(ctx),
     ...settingsHandlers(ctx),
     ...providerHandlers(ctx, opts.providerDeps),
+    ...connectionHandlers(ctx, connService),
+    ...secretsHandlers(ctx),
     ...agentHandlers(ctx),
     ...metricsHandlers(ctx),
     ...skillHandlers(ctx),
@@ -93,6 +101,8 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     whenIdle: () => whenIdle(ctx),
     /** Para los adaptadores en marcha (apagado del core). */
     shutdown: () => stopAll(ctx),
+    /** Pide a Rust las claves `conn:*` del llavero (evento `secrets.request`); `core/src/index.ts` lo llama tras `core.ready`. */
+    requestSecrets: () => requestSecrets(ctx),
     ctx,
   };
 }

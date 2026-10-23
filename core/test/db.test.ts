@@ -226,7 +226,7 @@ describe('migraciones', () => {
   it('abrir dos veces la misma BD no re-aplica nada y conserva los datos', () => {
     const file = join(dir, 'kiji.db');
     const db1 = openDb(file);
-    expect((db1.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3);
+    expect((db1.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4);
     expect((db1.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toBe('wal');
     expect((db1.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys).toBe(1);
     createRepos(db1).projects.create({ path: '/x', name: 'x' });
@@ -234,7 +234,7 @@ describe('migraciones', () => {
 
     // si re-aplicara schema.sql fallaría con "table projects already exists"
     const db2 = openDb(file);
-    expect((db2.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3);
+    expect((db2.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4);
     expect(createRepos(db2).projects.getByPath('/x')).toBeDefined();
     db2.close();
   });
@@ -253,7 +253,7 @@ describe('migraciones', () => {
     old.close();
 
     const db = openDb(file);
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4);
     const repos = createRepos(db);
     expect(repos.agents.get('a')).toMatchObject({ name: 'Vieja', persona: '', skills: '[]', auto_relay: 1, relay_order: null });
     expect(repos.runs.get('r')).toMatchObject({
@@ -286,7 +286,7 @@ describe('migraciones', () => {
     old.close();
 
     const db = openDb(file);
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4);
     const repos = createRepos(db);
     expect(repos.projects.get('p')).toMatchObject({
       name: 'x', base_branch: 'dev', test_command: 'npm test', scene: 'oficina', last_opened_at: null, color: null, is_open: 0,
@@ -298,5 +298,29 @@ describe('migraciones', () => {
 
     expect(repos.projects.update('p', { scene: 'casa', color: '#aabbcc' })).toMatchObject({ scene: 'casa', color: '#aabbcc' });
     expect(() => repos.projects.update('p', { scene: 'otra' as never })).toThrow(); // CHECK de la columna
+  });
+
+  it('migración 4: desde una BD v3 con agentes añade connections y agents.connection_id sin perder nada', () => {
+    const file = join(dir, 'v3.db');
+    const old = new DatabaseSync(file);
+    old.exec('PRAGMA foreign_keys = ON');
+    migrations[0]!(old); migrations[1]!(old); migrations[2]!(old);
+    old.exec('PRAGMA user_version = 3');
+    old.exec(`INSERT INTO projects (id, path, name, created_at) VALUES ('p', '/x', 'x', 1)`);
+    old.exec(`INSERT INTO agents (id, project_id, name, provider, model, created_at) VALUES ('a', 'p', 'Vieja', 'claude', 'opus', 1)`);
+    old.close();
+
+    const db = openDb(file);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4);
+    const repos = createRepos(db);
+    expect(repos.agents.get('a')).toMatchObject({ name: 'Vieja', model: 'opus', connection_id: null });
+    const c = repos.connections.create({ name: 'LM', preset: 'lmstudio', baseUrl: 'http://localhost:1234/v1', auth: 'none' });
+    expect(c).toMatchObject({ kind: 'openai_compat', has_secret: 0, context_window: 32768, tool_quality: 'unknown', prices_json: '{}', last_test_ok: null });
+    repos.agents.update('a', { provider: 'api', connection_id: c.id, model: 'qwen' });
+    expect(repos.connections.agentNames(c.id)).toEqual(['Vieja']);
+    expect(() => repos.connections.update(c.id, { tool_quality: 'raro' as never })).toThrow(); // CHECK
+    repos.connections.delete(c.id);
+    expect(repos.agents.get('a')!.connection_id).toBeNull(); // ON DELETE SET NULL
+    db.close();
   });
 });

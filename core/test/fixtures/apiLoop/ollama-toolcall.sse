@@ -1,0 +1,8 @@
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"qwen3","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"id":"call_ab12","index":0,"type":"function","function":{"name":"write_file","arguments":"{\"path\":\"hola.txt\",\"content\":\"hola\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"qwen3","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"qwen3","choices":[],"usage":{"prompt_tokens":120,"completion_tokens":18,"total_tokens":138}}
+
+data: [DONE]
+

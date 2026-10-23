@@ -8,6 +8,8 @@ export type Agent = {
   id: Id;
   name: string;
   provider?: string;
+  /** 0.2b: conexión del agente (provider "api"); null/ausente = Claude. */
+  connection_id?: string | null;
   model?: string;
   role?: string;
   /** Paleta del robot (terracota, azul, verde, crema; `claude` = terracota). */

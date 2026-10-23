@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }));
@@ -16,6 +16,7 @@ vi.mock("../../core/client", () => ({
 // PixiJS necesita WebGL: en jsdom la vista previa se sustituye por un marcador con la paleta.
 vi.mock("./RobotPreview", () => ({ default: ({ palette }: { palette: string }) => <div data-testid="preview" data-palette={palette} /> }));
 
+import { useStore } from "../../store";
 import { proj, resetStore, seed } from "../../store/testing";
 import CreateAgent from "./CreateAgent";
 import { validateName } from "./options";
@@ -26,11 +27,13 @@ const CLAU = { id: "a2", name: "Clau", provider: "claude", color: "terracota" };
 beforeEach(() => {
   mocks.request.mockReset();
   resetStore();
+  useStore.setState({ connections: [] });
   seed({ agents: [BOSS, CLAU] });
 });
 afterEach(cleanup);
 
 const nameInput = () => screen.getByLabelText("Nombre") as HTMLInputElement;
+const created = () => mocks.request.mock.calls.filter((c) => c[0] === "agent.create");
 const submit = () => fireEvent.click(screen.getByRole("button", { name: "Crear robot" }));
 
 describe("validateName", () => {
@@ -50,7 +53,7 @@ describe("CreateAgent", () => {
     submit();
     expect(screen.getByRole("alert").textContent).toMatch(/Ponle un nombre/);
     expect(nameInput().getAttribute("aria-invalid")).toBe("true");
-    expect(mocks.request).not.toHaveBeenCalled();
+    expect(created()).toHaveLength(0);
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -59,7 +62,7 @@ describe("CreateAgent", () => {
     fireEvent.change(nameInput(), { target: { value: "clau" } });
     submit();
     expect(screen.getByRole("alert").textContent).toMatch(/Ya hay un robot llamado "clau"/);
-    expect(mocks.request).not.toHaveBeenCalled();
+    expect(created()).toHaveLength(0);
   });
 
   it("el campo limita a 24 caracteres", () => {
@@ -67,14 +70,11 @@ describe("CreateAgent", () => {
     expect(nameInput().maxLength).toBe(24);
   });
 
-  it("solo Claude está habilitado; las demás IA llevan el aviso del paso 15/16; el rol jefe no se ofrece", () => {
+  it("sin conexiones solo hay Claude (y el aviso de Conexiones); el rol jefe no se ofrece", () => {
     render(<CreateAgent onClose={() => {}} />);
-    expect((screen.getByRole("radio", { name: /Claude/ }) as HTMLInputElement).disabled).toBe(false);
-    for (const n of [/OpenAI/, /Gemini/, /Ollama/]) {
-      const r = screen.getByRole("radio", { name: n }) as HTMLInputElement;
-      expect(r.disabled).toBe(true);
-      expect(r.closest("label")!.textContent).toContain("llega en 0.1 paso 15/16");
-    }
+    expect(screen.getAllByRole("radio")).toHaveLength(1);
+    expect((screen.getByRole("radio", { name: /Claude/ }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/en Conexiones/)).toBeTruthy();
     const roles = Array.from((screen.getByLabelText("Rol") as HTMLSelectElement).options).map((o) => o.value);
     expect(roles).toEqual(["programador", "tester", "explorador", "modelador-2d", "documentador", "revisor-critico"]);
     const models = Array.from((screen.getByLabelText("Modelo") as HTMLSelectElement).options).map((o) => o.value);
@@ -129,5 +129,43 @@ describe("CreateAgent", () => {
     submit();
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/ya hay un agente llamado "Zed"/));
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  describe("con conexiones", () => {
+    const LM = { id: "c1", name: "LM Studio", preset: "lmstudio", baseUrl: "http://localhost:1234/v1", auth: "none", hasSecret: false, defaultModel: "qwen3-coder", contextWindow: 8192, toolQuality: "ok", lastTestAt: 1, lastTestOk: true, agents: [], prices: {} };
+    const WEAK = { ...LM, id: "c2", name: "Solo charla", toolQuality: "none", defaultModel: null };
+
+    beforeEach(() => {
+      mocks.request.mockImplementation(async (method: string, params?: { id?: string }) => {
+        if (method === "connection.list") return [LM, WEAK];
+        if (method === "connection.models") return params?.id === "c1" ? ["qwen3-coder", "gemma-3"] : ["tiny"];
+        if (method === "agent.create") return { id: "a9", name: "Loc" };
+        if (method === "agent.list") return [BOSS, CLAU];
+        throw new Error(`inesperado: ${method}`);
+      });
+    });
+
+    it("lista Claude + cada conexión con LED; al elegir una carga sus modelos y envía connectionId", async () => {
+      render(<CreateAgent onClose={() => {}} />);
+      const radio = await screen.findByRole("radio", { name: /LM Studio/ });
+      expect(screen.getAllByRole("radio")).toHaveLength(3);
+      expect(within(radio.closest("label")!).getByRole("img").getAttribute("aria-label")).toBe("funciona");
+      fireEvent.click(radio);
+      await waitFor(() => expect(Array.from((screen.getByLabelText("Modelo") as HTMLSelectElement).options).map((o) => o.value)).toEqual(["qwen3-coder", "gemma-3"]));
+      expect((screen.getByLabelText("Modelo") as HTMLSelectElement).value).toBe("qwen3-coder");
+      expect(mocks.request).toHaveBeenCalledWith("connection.models", { id: "c1" });
+      fireEvent.change(screen.getByLabelText("Modelo"), { target: { value: "gemma-3" } });
+      fireEvent.change(nameInput(), { target: { value: "Loc" } });
+      submit();
+      await waitFor(() => expect(created()).toHaveLength(1));
+      expect(created()[0]![1]).toEqual({ projectId: "p1", name: "Loc", provider: "api", model: "gemma-3", role: "programador", color: "terracota", connectionId: "c1" });
+    });
+
+    it("toolQuality 'none': avisa de que el robot solo podrá responder consultas", async () => {
+      render(<CreateAgent onClose={() => {}} />);
+      expect(screen.queryByText(/solo podrá responder consultas/)).toBeNull();
+      fireEvent.click(await screen.findByRole("radio", { name: /Solo charla/ }));
+      expect(screen.getByText(/solo podrá responder consultas/)).toBeTruthy();
+    });
   });
 });

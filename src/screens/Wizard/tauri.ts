@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type CliInfo = { name: string; found: boolean; path?: string | null; version?: string | null };
-export type SecretUser = "anthropic" | "openai" | "gemini";
+export type SecretUser = "anthropic" | "openai" | "gemini" | `conn:${string}`;
 
 export const detectClis = () => invoke<CliInfo[]>("detect_clis");
 export const secretSet = (user: SecretUser, value: string) => invoke<void>("secret_set", { user, value });

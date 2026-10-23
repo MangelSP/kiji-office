@@ -7,6 +7,7 @@ import { query as sdkQuery, type Options } from '@anthropic-ai/claude-agent-sdk'
 import type { LimitWindow, ProviderStatus } from '../../../shared/protocol.js';
 import { type Ctx, type Handler, asParams, str } from './context.js';
 import { limitedUntilOf, modelFamily, modelLimitedUntil } from './quota.js';
+import { connectionCards } from './connections.js';
 import { ollamaUrl } from './settings.js';
 
 export type ProviderName = 'claude' | 'ollama' | 'openai' | 'gemini';
@@ -44,12 +45,14 @@ const WINDOW_ORDER = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_son
 const CLAUDE_MODEL_ALIASES = ['opus', 'sonnet', 'haiku'] as const;
 
 /** Valores sensibles a ocultar en cualquier texto que salga hacia la UI: las claves del entorno y todo lo que parezca una. */
-function redact(text: string, env: NodeJS.ProcessEnv): string {
+export function redact(text: string, env: NodeJS.ProcessEnv, secrets: Iterable<string> = []): string {
   let out = text;
   for (const name of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY']) {
     const v = env[name];
     if (v && v.length >= 4) out = out.split(v).join('***');
   }
+  // 0.2b: también las claves de conexiones que el core tiene en memoria (`ctx.secrets`).
+  for (const v of secrets) if (v.length >= 4) out = out.split(v).join('***');
   return out
     .replace(/\b(sk|AIza|ya29|gsk)[-_A-Za-z0-9]{12,}/g, '***')
     .replace(/Bearer\s+\S+/gi, 'Bearer ***')
@@ -67,13 +70,14 @@ async function getJson(
   timeoutMs: number,
   who: string,
   env: NodeJS.ProcessEnv,
+  secrets: Iterable<string> = [],
 ): Promise<{ res: Response } | { fail: TestResult }> {
   try {
     const res = await f(url, { method: 'GET', headers, signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
     return { res };
   } catch (e) {
     if (isTimeout(e)) return { fail: { ok: false, detail: `${who} no respondió en ${Math.round(timeoutMs / 1000)} s` } };
-    return { fail: { ok: false, detail: redact(`${who}: no se pudo conectar (${errText(e)})`, env) } };
+    return { fail: { ok: false, detail: redact(`${who}: no se pudo conectar (${errText(e)})`, env, secrets) } };
   }
 }
 
@@ -93,11 +97,12 @@ async function readModels(res: Response): Promise<number | null> {
 
 export function createProviderTester(ctx: Ctx, deps: ProviderDeps = {}) {
   const env = () => deps.env ?? process.env;
+  const red = (text: string): string => redact(text, env(), ctx.secrets.values());
   const doFetch = () => deps.fetch ?? fetch;
 
   async function testOllama(): Promise<TestResult> {
     const base = ollamaUrl(ctx);
-    const r = await getJson(doFetch(), `${base}/models`, {}, deps.ollamaTimeoutMs ?? 3000, 'Ollama', env());
+    const r = await getJson(doFetch(), `${base}/models`, {}, deps.ollamaTimeoutMs ?? 3000, 'Ollama', env(), ctx.secrets.values());
     if ('fail' in r) {
       if (r.fail.detail.includes('no se pudo conectar')) {
         return { ok: false, detail: `Ollama no responde en ${base}: ¿está instalado y en marcha? (instálalo desde ollama.com y ejecuta "ollama serve")` };
@@ -113,7 +118,7 @@ export function createProviderTester(ctx: Ctx, deps: ProviderDeps = {}) {
     const label = provider === 'openai' ? 'OpenAI' : 'Gemini';
     const key = env()[KEY_ENV[provider]];
     if (!key) return { ok: false, detail: `${label}: no hay clave configurada (guárdala en el paso 2 del asistente)` };
-    const r = await getJson(doFetch(), MODELS_URL[provider], { Authorization: `Bearer ${key}` }, deps.apiTimeoutMs ?? 5000, label, env());
+    const r = await getJson(doFetch(), MODELS_URL[provider], { Authorization: `Bearer ${key}` }, deps.apiTimeoutMs ?? 5000, label, env(), ctx.secrets.values());
     if ('fail' in r) return r.fail;
     const { res } = r;
     if (res.status === 401 || res.status === 403) return { ok: false, detail: `${label} rechazó la clave (HTTP ${res.status}): revísala` };
@@ -150,15 +155,15 @@ export function createProviderTester(ctx: Ctx, deps: ProviderDeps = {}) {
         if (msg.type !== 'result') continue;
         if (msg.subtype === 'success' && !msg.is_error) {
           const cost = typeof msg.total_cost_usd === 'number' ? ` (coste ${msg.total_cost_usd.toFixed(4)} USD)` : '';
-          return { ok: true, detail: redact(`Claude responde: "${String(msg.result ?? '').trim().slice(0, 40)}"${cost}`, env()) };
+          return { ok: true, detail: red(`Claude responde: "${String(msg.result ?? '').trim().slice(0, 40)}"${cost}`) };
         }
         const why = Array.isArray(msg.errors) && msg.errors.length > 0 ? msg.errors.map(String).join('; ') : String(msg.result ?? msg.subtype ?? 'error');
-        return { ok: false, detail: redact(`Claude falló: ${why}`, env()) };
+        return { ok: false, detail: red(`Claude falló: ${why}`) };
       }
       return { ok: false, detail: 'Claude terminó sin devolver resultado' };
     } catch (e) {
       if (abortController.signal.aborted) return { ok: false, detail: `Claude no respondió en ${Math.round(timeoutMs / 1000)} s` };
-      return { ok: false, detail: redact(`Claude falló: ${errText(e)}`, env()) };
+      return { ok: false, detail: red(`Claude falló: ${errText(e)}`) };
     } finally {
       clearTimeout(timer);
       try {
@@ -260,6 +265,7 @@ export function createProviderStatus(ctx: Ctx, deps: ProviderDeps = {}) {
       { id: 'ollama', label: 'Ollama', configured: up, state: up ? 'ok' : 'off', windows: [], models: [] },
       keyStatus('openai', 'OpenAI'),
       keyStatus('gemini', 'Gemini'),
+      ...connectionCards(ctx), // 0.2b: una tarjeta `conn:<id>` por conexión
     ];
   };
 }

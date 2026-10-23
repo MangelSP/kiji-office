@@ -7,7 +7,7 @@ import { emit, writeLine } from './bus.js';
 import { openDb } from './db/db.js';
 import { createOrchestrator } from './orchestrator/index.js';
 
-type Handler = (params: unknown) => unknown | Promise<unknown>;
+type Handler = (params: unknown, req?: { id: string }) => unknown | Promise<unknown>;
 
 /** Ruta de la BD: `--db <ruta>` o `--db=<ruta>`. Sin ella, memoria (los datos se pierden al salir). */
 function dbPathFromArgv(argv: string[]): string {
@@ -49,7 +49,7 @@ async function handle(line: string): Promise<void> {
     res.error = { code: 'unknown_method', message: `método desconocido: ${String(msg.method)}` };
   } else {
     try {
-      res.result = await handler(msg.params);
+      res.result = await handler(msg.params, { id: msg.id }); // `secrets.put` exige id "rust:*"
     } catch (err) {
       res.error = { code: 'handler_error', message: err instanceof Error ? err.message : String(err) };
     }
@@ -75,3 +75,5 @@ process.on('unhandledRejection', (err) => {
 });
 
 emit('core.ready', { version: '0.1.0' });
+// 0.2b: pide a Rust las claves `conn:*` del llavero (llegan por `secrets.put` con id "rust:*").
+orchestrator.requestSecrets();

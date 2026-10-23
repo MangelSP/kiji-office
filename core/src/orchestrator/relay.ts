@@ -10,12 +10,13 @@ import type { AgentRow, ProjectRow, RelayDbRow, TaskRow } from '../db/repos.js';
 import { runGitRaw } from '../git/run.js';
 import { type Ctx, type Handler, type LiveRun, asParams, assertSameProject, optionalProject, projectIdOf, str } from './context.js';
 import { CLAUDE_MODELS, relayOrderOf } from './agents.js';
+import { parseConnTarget } from './connections.js';
 import { logEvent } from './events.js';
 import { preferredModel } from './metrics.js';
 import { forkPoint } from './ownership.js';
 import { isModelWindow, modelFamily, modelLimitedUntil, scheduleLimitsNotify, windowTypeOf } from './quota.js';
 import { dequeue, pumpQueue, requestStart } from './queue.js';
-import { settledLive, stopTask } from './runs.js';
+import { type StartOptions, settledLive, stopTask } from './runs.js';
 import { checkAssignable, getTask, projectOfTask, transition } from './tasks.js';
 
 type LimitEvent = Extract<AgentEvent, { type: 'limit' }>;
@@ -31,6 +32,8 @@ const MAX_TIMER_MS = 2_000_000_000;
 
 const MODEL_LABEL: Record<string, string> = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' };
 export const modelLabel = (m: string): string => {
+  const t = parseConnTarget(m);
+  if (t) return t.model; // `conn:<id>/<modelo>`: el nombre del modelo
   const fam = modelFamily(m);
   return fam ? `${MODEL_LABEL[fam]}${m.toLowerCase().includes('[1m]') ? ' (1M)' : ''}` : m;
 };
@@ -76,10 +79,21 @@ export function recordRelay(
 // Elección de modelo y planificación tras un límite
 // ---------------------------------------------------------------------------
 
-/** Primer modelo de [propio, ...relay_order] que no sea el actual y no esté limitado; null si no hay ninguno. */
+/**
+ * Primer destino de [propio, ...relay_order] que no sea el actual y esté libre; null si no hay ninguno.
+ * Un alias de Claude cuenta como limitado si su modelo (o la cuenta) lo está. Un destino `conn:<id>/<modelo>` no
+ * depende del cupo de Claude: vale si la conexión existe y no es el modelo en curso (D18).
+ */
 export function chooseRelayModel(ctx: Ctx, agent: AgentRow, current: string): string | null {
   const candidates = [...new Set([preferredModel(agent), ...relayOrderOf(agent)])];
-  return candidates.find((m) => modelFamily(m) !== modelFamily(current) && modelLimitedUntil(ctx, m) === null) ?? null;
+  return (
+    candidates.find((m) => {
+      if (m === current) return false;
+      const t = parseConnTarget(m);
+      if (t) return ctx.repos.connections.get(t.connectionId) !== undefined;
+      return modelFamily(m) !== modelFamily(current) && modelLimitedUntil(ctx, m) === null;
+    }) ?? null
+  );
 }
 
 /**
@@ -89,9 +103,11 @@ export function chooseRelayModel(ctx: Ctx, agent: AgentRow, current: string): st
 export function planAfterRateLimit(ctx: Ctx, live: LiveRun, ev: LimitEvent): void {
   const agent = ctx.repos.agents.get(live.agentId);
   const type = windowTypeOf(ev.rateLimitType);
-  if (agent && agent.auto_relay === 1 && type !== null && isModelWindow(type)) {
+  if (agent && agent.auto_relay === 1 && type !== null) {
     const next = chooseRelayModel(ctx, agent, live.model);
-    if (next) {
+    // Límite de un modelo: cualquier destino libre. Límite de TODA la cuenta (5 h, 7 días...): solo una conexión
+    // tiene salida (los demás modelos de Claude comparten cuenta) y releva en vez de pausar (D18).
+    if (next && (isModelWindow(type) || parseConnTarget(next))) {
       live.onEnded = () => relayToModel(ctx, live, agent, next, ev);
       return;
     }
@@ -116,16 +132,15 @@ async function relayToModel(ctx: Ctx, live: LiveRun, agent: AgentRow, to: string
     });
   try {
     // Pasa por la cola global (con prioridad): si no hay hueco, el relevo se registra cuando arranca de verdad.
-    await requestStart(
-      ctx, task.id,
-      {
-        model: to,
-        resumeSessionId: ev.sessionId ?? live.sessionId,
-        resumeNote: `Continúa donde lo dejaste: se alcanzó el límite de uso de ${modelLabel(from)} y ahora trabajas con ${modelLabel(to)}. Mantén el mismo enfoque y no repitas lo ya hecho.`,
-      },
-      'relay',
-      { onStarted, onFailed },
-    );
+    // Destino conexión: no hay sesión del SDK que reanudar; run nuevo en el mismo worktree con el prompt de traspaso.
+    const start: StartOptions = parseConnTarget(to)
+      ? { model: to, resumeSessionId: null, handover: await buildHandover(ctx, getTask(ctx, task.id), projectOfTask(ctx, task), agent, agent) }
+      : {
+          model: to,
+          resumeSessionId: ev.sessionId ?? live.sessionId,
+          resumeNote: `Continúa donde lo dejaste: se alcanzó el límite de uso de ${modelLabel(from)} y ahora trabajas con ${modelLabel(to)}. Mantén el mismo enfoque y no repitas lo ya hecho.`,
+        };
+    await requestStart(ctx, task.id, start, 'relay', { onStarted, onFailed });
   } catch (err) {
     onFailed(err);
   }

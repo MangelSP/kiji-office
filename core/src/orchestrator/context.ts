@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { LimitWindow, LimitWindowType, ProviderStatus } from '../../../shared/protocol.js';
 import type { AgentAdapter } from '../adapters/types.js';
 import type { AgentRow, ProjectRow, Repos } from '../db/repos.js';
+import type { ConnectionService } from './connections.js';
 import type { StartOptions } from './runs.js';
 
 /** Consumo acumulado de un run en memoria (D8); la fila de `runs` se actualiza con límite de frecuencia. */
@@ -119,9 +120,22 @@ export interface Ctx {
   workspacesLastNotify: number;
   /** El core se está apagando: no se programan más avisos ni reanudaciones. */
   closed: boolean;
+  // --- 0.2b ---
+  /**
+   * Secretos en memoria por cuenta del llavero: `conn:<uuid>` (llegan por `secrets.put` desde Rust) y los alias
+   * `openai` / `gemini` (la clave que Rust ya inyectó por entorno). NUNCA salen de aquí: ni en eventos ni en respuestas.
+   */
+  secrets: Map<string, string>;
+  /** Servicio de conexiones (prueba, modelos, descubrimiento); lo asigna `connectionHandlers` en `createOrchestrator`. */
+  conn: ConnectionService | null;
 }
 
-export type Handler = (params: unknown) => unknown | Promise<unknown>;
+/** Datos de la petición que el router pasa al handler (solo `secrets.put` los usa). */
+export interface RequestMeta {
+  id: string;
+}
+
+export type Handler = (params: unknown, req?: RequestMeta) => unknown | Promise<unknown>;
 
 /** Lee un objeto de parámetros; lanza un error claro si no lo es. */
 export function asParams(params: unknown, method: string): Record<string, unknown> {

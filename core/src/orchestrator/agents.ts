@@ -1,6 +1,7 @@
 // Agentes: agent.list, agent.create y agent.update (en 0.1 solo Claude; el jefe se crea solo al abrir el proyecto).
-import type { AgentRow } from '../db/repos.js';
+import type { AgentRow, ConnectionRow } from '../db/repos.js';
 import { type Ctx, type Handler, asParams, assertSameProject, optionalProject, projectIdOf, requireProject, str } from './context.js';
+import { notifyConnections, parseConnTarget } from './connections.js';
 import { modelFamily } from './quota.js';
 import { loadSkills } from './skills.js';
 import { getRobotStatus } from './status.js';
@@ -31,8 +32,8 @@ export const defaultRelayOrder = (own: string | null): string[] =>
   ['opus', 'sonnet', 'haiku'].filter((m) => modelFamily(m) !== modelFamily(own ?? 'sonnet'));
 
 /** Orden de relevo efectivo de un agente (el guardado o el de por defecto). */
-export const relayOrderOf = (a: Pick<AgentRow, 'relay_order' | 'model'>): string[] =>
-  stringArray(a.relay_order) ?? defaultRelayOrder(a.model);
+export const relayOrderOf = (a: Pick<AgentRow, 'relay_order' | 'model'> & { connection_id?: string | null }): string[] =>
+  stringArray(a.relay_order) ?? (a.connection_id ? [] : defaultRelayOrder(a.model));
 
 /** Fila de agente tal como viaja a la UI: columnas de la BD (JSON ya parseado) + `status` del robot y `current_model`. */
 export function agentView(ctx: Ctx, a: AgentRow): AgentView {
@@ -67,6 +68,39 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], field: s
   return v as T;
 }
 
+const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+const MODEL_MAX = 200;
+
+/** Modelo libre de un agente con conexión: el dado o el de la conexión; se valida contra `connection.models` si responde. */
+async function connectionModel(ctx: Ctx, conn: ConnectionRow, raw: unknown, method: string): Promise<{ model: string; warning?: string }> {
+  let model: string;
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) {
+    if (!conn.default_model) throw new Error(`${method}: indica "model": la conexión «${conn.name}» no tiene modelo por defecto`);
+    model = conn.default_model;
+  } else {
+    if (typeof raw !== 'string') throw new Error(`${method}: "model" debe ser texto`);
+    model = raw.trim();
+  }
+  if (model.length > MODEL_MAX || CONTROL_RE.test(model)) throw new Error(`${method}: nombre de modelo no válido`);
+  try {
+    const warning = (await ctx.conn?.checkModel(conn, model)) ?? undefined;
+    return warning ? { model, warning } : { model };
+  } catch (e) {
+    throw new Error(`${method}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** Elemento de `relay_order`: alias de Claude o `conn:<uuid>/<modelo>` de una conexión que existe. */
+export function validateRelayTarget(ctx: Ctx, m: unknown): string {
+  if (typeof m === 'string' && (CLAUDE_MODELS as readonly string[]).includes(m)) return m;
+  const t = typeof m === 'string' ? parseConnTarget(m) : null;
+  if (!t || t.model.length > MODEL_MAX || CONTROL_RE.test(t.model)) {
+    throw new Error(`agent.update: modelo de relevo "${String(m)}" no válido (permitidos: ${CLAUDE_MODELS.join(', ')} o conn:<id>/<modelo>)`);
+  }
+  if (!ctx.repos.connections.get(t.connectionId)) throw new Error(`agent.update: la conexión de "${String(m)}" no existe`);
+  return m as string;
+}
+
 export function agentHandlers(ctx: Ctx): Record<string, Handler> {
   return {
     /** `{projectId?}` */
@@ -76,15 +110,20 @@ export function agentHandlers(ctx: Ctx): Record<string, Handler> {
       return ctx.repos.agents.list(project.id).map((a) => agentView(ctx, a));
     },
 
-    'agent.create': (params) => {
+    'agent.create': async (params) => {
       const p = asParams(params, 'agent.create');
       const project = requireProject(ctx, projectIdOf(p));
       const provider = str(p.provider, 'provider', 'agent.create');
-      if (provider === 'codex') throw new Error('agent.create: el proveedor "codex" llega en el paso 15; por ahora solo "claude"');
-      if (['api', 'ollama', 'gemini', 'openai'].includes(provider)) {
-        throw new Error(`agent.create: el proveedor "${provider}" llega en el paso 16; por ahora solo "claude"`);
+      if (provider === 'codex') throw new Error('agent.create: el proveedor "codex" llega en el paso 15; por ahora solo "claude" o una conexión');
+      // 0.2b: con `connectionId` el agente usa esa conexión (provider "api"); sin ella, Claude.
+      const connectionId = typeof p.connectionId === 'string' && p.connectionId !== '' ? p.connectionId : null;
+      if (p.connectionId !== undefined && p.connectionId !== null && connectionId === null) throw new Error('agent.create: "connectionId" debe ser un texto');
+      if (connectionId === null) {
+        if (['api', 'ollama', 'gemini', 'openai'].includes(provider)) throw new Error(`agent.create: con el proveedor "${provider}" indica "connectionId" (crea una conexión en Conexiones)`);
+        if (provider !== 'claude') throw new Error(`agent.create: proveedor desconocido "${provider}" (claude o una conexión)`);
       }
-      if (provider !== 'claude') throw new Error(`agent.create: proveedor desconocido "${provider}" (por ahora solo "claude")`);
+      const conn = connectionId === null ? null : ctx.repos.connections.get(connectionId);
+      if (connectionId !== null && !conn) throw new Error('agent.create: la conexión no existe');
 
       const name = str(p.name, 'name', 'agent.create').trim();
       if (name.length > AGENT_NAME_MAX) throw new Error(`agent.create: el nombre admite como máximo ${AGENT_NAME_MAX} caracteres`);
@@ -97,21 +136,29 @@ export function agentHandlers(ctx: Ctx): Record<string, Handler> {
         throw new Error('agent.create: el jefe se crea solo al abrir el proyecto y solo puede haber uno');
       }
       const role = oneOf(p.role, AGENT_ROLES, 'rol', 'programador');
-      const model = oneOf(p.model, CLAUDE_MODELS, 'modelo', 'sonnet');
+      let model: string;
+      let warning: string | undefined;
+      if (conn) {
+        ({ model, warning } = await connectionModel(ctx, conn, p.model, 'agent.create'));
+      } else {
+        model = oneOf(p.model, CLAUDE_MODELS, 'modelo', 'sonnet');
+      }
       const color = oneOf(p.color, AGENT_COLORS, 'color', 'terracota');
-      const view = agentView(ctx, ctx.repos.agents.create({ projectId: project.id, name, provider: 'claude', model, role, color }));
+      const row = ctx.repos.agents.create({ projectId: project.id, name, provider: conn ? 'api' : 'claude', model, role, color, connectionId: conn?.id ?? null });
+      const view = agentView(ctx, row);
       scheduleWorkspacesNotify(ctx);
-      return view;
+      return warning ? { ...view, warning } : view;
     },
 
     /** `{agentId, name?, model?, color?, persona?, skills?, relayOrder?, autoRelay?}`: perfil del agente (D12). */
-    'agent.update': (params) => {
+    'agent.update': async (params) => {
       const p = asParams(params, 'agent.update');
       const agent = ctx.repos.agents.get(str(p.agentId, 'agentId', 'agent.update'));
       if (!agent) throw new Error('agent.update: agente inexistente en este proyecto');
       assertSameProject(p, agent.project_id, 'agent.update');
       if (!ctx.projects.has(agent.project_id)) throw new Error('agent.update: el proyecto del agente no está abierto');
-      const patch: Partial<Pick<AgentRow, 'name' | 'model' | 'color' | 'persona' | 'skills' | 'relay_order' | 'auto_relay'>> = {};
+      const patch: Partial<Pick<AgentRow, 'name' | 'model' | 'color' | 'persona' | 'skills' | 'relay_order' | 'auto_relay' | 'provider' | 'connection_id'>> = {};
+      let warning: string | undefined;
 
       if (p.name !== undefined) {
         if (typeof p.name !== 'string' || p.name.trim() === '') throw new Error('agent.update: "name" debe ser un texto no vacío');
@@ -122,11 +169,39 @@ export function agentHandlers(ctx: Ctx): Record<string, Handler> {
         if (taken) throw new Error(`agent.update: ya hay un agente llamado "${name}" en este proyecto; elige otro nombre`);
         patch.name = name;
       }
-      if (p.model !== undefined) {
-        if (typeof p.model !== 'string' || !(CLAUDE_MODELS as readonly string[]).includes(p.model)) {
-          throw new Error(`agent.update: modelo "${String(p.model)}" no válido (permitidos: ${CLAUDE_MODELS.join(', ')})`);
+      // 0.2b: conexión del agente (null = Claude nativo). Con conexión, `model` es libre.
+      let conn: ConnectionRow | undefined = agent.connection_id ? ctx.repos.connections.get(agent.connection_id) : undefined;
+      if (p.connectionId !== undefined) {
+        if (p.connectionId !== null && typeof p.connectionId !== 'string') throw new Error('agent.update: "connectionId" debe ser un texto o null');
+        const nextId = p.connectionId === '' ? null : p.connectionId;
+        if (nextId !== agent.connection_id) {
+          if ([...ctx.live.values()].some((l) => l.agentId === agent.id)) throw new Error('agent.update: el agente está en marcha; cambia su IA cuando termine');
+          if (agent.is_boss === 1) throw new Error('agent.update: el jefe siempre usa Claude');
+          if (nextId === null) {
+            conn = undefined;
+            Object.assign(patch, { provider: 'claude', connection_id: null });
+            if (p.model === undefined) patch.model = 'sonnet'; // el modelo de la conexión no vale para Claude
+          } else {
+            conn = ctx.repos.connections.get(nextId);
+            if (!conn) throw new Error('agent.update: la conexión no existe');
+            Object.assign(patch, { provider: 'api', connection_id: nextId });
+            if (p.model === undefined) {
+              ({ model: patch.model, warning } = await connectionModel(ctx, conn, undefined, 'agent.update'));
+            }
+          }
         }
-        patch.model = p.model;
+      }
+      if (p.model !== undefined) {
+        if (conn) {
+          const r = await connectionModel(ctx, conn, p.model, 'agent.update');
+          patch.model = r.model;
+          warning = r.warning;
+        } else {
+          if (typeof p.model !== 'string' || !(CLAUDE_MODELS as readonly string[]).includes(p.model)) {
+            throw new Error(`agent.update: modelo "${String(p.model)}" no válido (permitidos: ${CLAUDE_MODELS.join(', ')})`);
+          }
+          patch.model = p.model;
+        }
       }
       if (p.color !== undefined) {
         if (typeof p.color !== 'string' || !(AGENT_COLORS as readonly string[]).includes(p.color)) {
@@ -155,11 +230,7 @@ export function agentHandlers(ctx: Ctx): Record<string, Handler> {
       if (p.relayOrder !== undefined) {
         if (!Array.isArray(p.relayOrder)) throw new Error('agent.update: "relayOrder" debe ser una lista de modelos');
         const order = p.relayOrder as unknown[];
-        for (const m of order) {
-          if (typeof m !== 'string' || !(CLAUDE_MODELS as readonly string[]).includes(m)) {
-            throw new Error(`agent.update: modelo de relevo "${String(m)}" no válido (permitidos: ${CLAUDE_MODELS.join(', ')})`);
-          }
-        }
+        for (const m of order) validateRelayTarget(ctx, m);
         if (new Set(order).size !== order.length) throw new Error('agent.update: "relayOrder" no admite modelos repetidos');
         patch.relay_order = JSON.stringify(order);
       }
@@ -172,7 +243,8 @@ export function agentHandlers(ctx: Ctx): Record<string, Handler> {
       const view = agentView(ctx, ctx.repos.agents.update(agent.id, patch)!);
       ctx.emit('agent.changed', view);
       scheduleWorkspacesNotify(ctx);
-      return view;
+      if (patch.connection_id !== undefined) notifyConnections(ctx); // cambian los "agentes que la usan"
+      return warning ? { ...view, warning } : view;
     },
   };
 }

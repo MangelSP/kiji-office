@@ -148,9 +148,16 @@
   font-size: 18px;
   padding: 0;
 }
-.ws-wizard {
+.ws-conn {
   align-self: center;
   margin-left: auto;
+}
+.ws-conn.is-active {
+  border-color: #f4c542;
+  color: #f4c542;
+}
+.ws-wizard {
+  align-self: center;
 }
 .ws-menu {
   position: absolute;

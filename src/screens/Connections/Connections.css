@@ -1,0 +1,195 @@
+/* Pantalla Conexiones. Paleta de la app: fondo #1b1d2b, texto #f1ece2, acento #f4c542. */
+.cx-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 16px;
+  box-sizing: border-box;
+  color: #f1ece2;
+}
+.cx-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.cx-head h1 {
+  margin: 0;
+  font-size: 22px;
+}
+.cx-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.cx-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 2px solid #3a3e56;
+}
+.cx-card p {
+  margin: 2px 0;
+}
+.cx-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cx-card-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cx-led {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  background: #8a8f98;
+  box-shadow: 0 0 0 2px #12131d;
+}
+.cx-led-ok {
+  background: #4cc38a;
+  box-shadow: 0 0 0 2px #12131d, 0 0 8px #4cc38a;
+}
+.cx-led-warn {
+  background: #f4c542;
+  box-shadow: 0 0 0 2px #12131d, 0 0 8px #f4c542;
+}
+.cx-led-off {
+  background: #8a8f98;
+}
+.cx-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 2px solid #12131d;
+  border-radius: 6px;
+  font-size: 18px;
+  color: #fff;
+}
+.cx-found {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cx-found p {
+  flex: 1;
+  margin: 0;
+}
+.cx-found-off {
+  border-style: dashed;
+}
+.cx-found code {
+  background: #12131d;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.cx-mini {
+  gap: 2px;
+  font-size: 13px;
+}
+.cx-ok {
+  color: #4cc38a;
+}
+.cx-bad {
+  color: #ff6b57;
+}
+.cx-warn {
+  color: #f4c542;
+}
+.cx-confirm {
+  padding: 8px;
+  border: 1px solid #f4c542;
+  border-radius: 6px;
+}
+.cx-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  background: #242738;
+  border: 1px solid #4a4f6d;
+  border-radius: 12px;
+}
+.cx-form h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.cx-steps {
+  display: flex;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  color: #8a8f98;
+}
+.cx-steps .is-on {
+  color: #f4c542;
+  font-weight: 700;
+}
+.cx-steps .is-done {
+  color: #4cc38a;
+}
+.cx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+.cx-field input,
+.cx-field select {
+  font: inherit;
+  padding: 6px 8px;
+  color: #f1ece2;
+  background: #1b1d2b;
+  border: 1px solid #4a4f6d;
+  border-radius: 6px;
+}
+.cx-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cx-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+}
+.cx-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  font: inherit;
+  color: #f1ece2;
+  background: #1b1d2b;
+  border: 2px solid #3a3e56;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cx-preset small {
+  color: #c9cbe0;
+  font-size: 11px;
+}
+.cx-preset.is-on {
+  border-color: #f4c542;
+}
+.cx-test {
+  padding: 10px;
+  background: #1b1d2b;
+  border: 1px solid #3a3e56;
+  border-radius: 8px;
+}
+.cx-actions {
+  justify-content: flex-end;
+}

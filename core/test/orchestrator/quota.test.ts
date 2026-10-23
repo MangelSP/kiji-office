@@ -139,7 +139,8 @@ describe('providers.status', () => {
     const calls: string[] = [];
     h = makeHarness({ providerDeps: { fetch: mkFetch(false, calls), env: { OPENAI_API_KEY: SECRET }, homeDir: '/nonexistent' } });
     const all = await status();
-    expect(all.map((p) => p.id)).toEqual(['claude', 'ollama', 'openai', 'gemini']);
+    expect(all.map((p) => p.id).filter((id) => !id.startsWith('conn:'))).toEqual(['claude', 'ollama', 'openai', 'gemini']);
+    expect(all.filter((p) => p.id.startsWith('conn:'))).toHaveLength(1); // 0.2b: la conexión openai automática
     expect(all.find((p) => p.id === 'openai')).toMatchObject({ configured: true, state: 'unknown', windows: [] });
     expect(all.find((p) => p.id === 'gemini')).toMatchObject({ configured: false, state: 'off' });
     expect(JSON.stringify(all)).not.toContain(SECRET);

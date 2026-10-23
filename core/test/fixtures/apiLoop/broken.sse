@@ -1,0 +1,10 @@
+data: {"id":"b","choices":[{"index":0,"delta":{"role":"assistant","content":"vamos"},"finish_reason":null}]}
+
+data: {"id":"b","choices":[{"index":0,"delta":{"conte
+
+data: {"id":"b","choices":[{"index":0,"delta":{"content":" bien"},"finish_reason":null}]}
+
+data: {"id":"b","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+
