@@ -6,6 +6,8 @@ import type { Agent } from "../store/agents";
 import type { AgentMetrics, RunMetrics } from "../store/metrics";
 import { contextSegments, fmtTokens, fmtUsd, isBoss, paletteHex, pct, SEGMENTS, statusInfo } from "../screens/Agents/format";
 import { useModelLabel } from "../screens/Connections/useModelLabel";
+import { useStore } from "../store";
+import { useProjectId } from "../store/scoped";
 import { useAgentsStore } from "../screens/Agents/useAgentsStore";
 import "./AgentStrip.css";
 
@@ -52,6 +54,8 @@ export default function AgentStrip({ selectedId, onSelect, layout = "strip", idP
   const metrics = useAgentsStore((s) => s.metricsByAgent);
   const liveRuns = useAgentsStore((s) => s.liveRuns);
   const refreshMetrics = useAgentsStore((s) => s.refreshMetrics);
+  const pid = useProjectId();
+  const autonomous = useStore((s) => s.manager[pid]?.policy?.enabled === true);
 
   const missing = agents.map((a) => String(a.id)).filter((id) => !metrics[id]).join("|");
   useEffect(() => {
@@ -91,6 +95,7 @@ export default function AgentStrip({ selectedId, onSelect, layout = "strip", idP
               agent={a}
               selected={id === selectedId}
               liveRun={Object.values(liveRuns).find((r) => String(r.agentId) === id && r.live)}
+              autonomous={autonomous && isBoss(a)}
               totals={metrics[id]}
               onSelect={(v) => onSelect(v === selectedId ? null : v)}
               tab={{ id: `${idPrefix}-tab-${id}`, panelId }}
@@ -108,6 +113,7 @@ export default function AgentStrip({ selectedId, onSelect, layout = "strip", idP
             agent={a}
             selected={selectedId !== null && String(a.id) === selectedId}
             liveRun={Object.values(liveRuns).find((r) => String(r.agentId) === String(a.id) && r.live)}
+            autonomous={autonomous && isBoss(a)}
             totals={metrics[String(a.id)]}
             onSelect={onSelect}
           />
@@ -121,12 +127,14 @@ function StripCard({
   agent,
   selected,
   liveRun,
+  autonomous,
   totals,
   onSelect,
   tab,
 }: {
   agent: Agent;
   selected: boolean;
+  autonomous?: boolean;
   liveRun: RunMetrics | undefined;
   totals: AgentMetrics | undefined;
   onSelect: (id: string | null) => void;
@@ -152,6 +160,11 @@ function StripCard({
         <span className="strip-top">
           <strong className="strip-name">{agent.name}</strong>
           <span className="ag-chip">{label(model)}</span>
+          {autonomous && (
+            <span className="strip-auto" title="El gerente autónomo está activo">
+              autónomo
+            </span>
+          )}
         </span>
         <span className="strip-status muted">
           <span className="ag-status-dot" style={{ background: st.dot }} aria-hidden="true" /> {st.label}

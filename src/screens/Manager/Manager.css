@@ -1,0 +1,358 @@
+/* Gerente autónomo, diario, memoria y objetivos. Mismo estilo que AgentTabs.css (#1b1d2b, #242738, acento #f4c542). */
+.mg {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mg-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.mg-switch,
+.mg-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mg-switch input,
+.mg-check input {
+  width: 22px;
+  height: 22px;
+  accent-color: #f4c542;
+}
+.mg-status-active {
+  background: #4cc38a;
+}
+.mg-status-thinking {
+  background: #5aa9f0;
+}
+.mg-status-halted {
+  background: #ff6b57;
+}
+.mg-status-off {
+  background: #c9cbe0;
+}
+.mg-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mg-step-title,
+.mg-label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #f4c542;
+}
+.mg-brains {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mg-brain {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+.mg-brain.is-on {
+  border-color: #f4c542;
+}
+.mg-brain input {
+  margin-top: 4px;
+  accent-color: #f4c542;
+}
+.mg-note {
+  display: block;
+  margin: 2px 0 0;
+}
+.mg-note.is-ok {
+  color: #4cc38a;
+}
+.mg-note.is-warn {
+  color: #ff9a45;
+}
+.mg input[type="range"] {
+  width: 100%;
+  accent-color: #f4c542;
+}
+.mg-slider-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #c9cbe0;
+}
+.mg-slider-labels .is-on {
+  color: #f4c542;
+  font-weight: 700;
+}
+.mg-levels {
+  margin-top: 8px;
+}
+.mg-level {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #2d3148;
+  font-size: 14px;
+}
+.mg-locked {
+  opacity: 0.8;
+}
+.mg-seg {
+  display: inline-flex;
+}
+.mg-seg-btn {
+  min-height: 36px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+  color: #f1ece2;
+  background: #2d3148;
+  border: 2px solid #4a4f6d;
+  border-radius: 0;
+  cursor: pointer;
+}
+.mg-seg-btn[aria-pressed="true"] {
+  color: #1b1d2b;
+  background: #f4c542;
+  border-color: #f4c542;
+  font-weight: 700;
+}
+.mg-seg-btn:focus-visible,
+.mg-switch input:focus-visible,
+.mg-check input:focus-visible,
+.mg input[type="range"]:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 2px;
+}
+.mg-limits,
+.mg-quiet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mg-quiet {
+  flex-direction: row;
+  gap: 16px;
+}
+.mg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+.mg-field.mg-check {
+  flex-direction: row;
+}
+.mg input[type="number"],
+.mg input[type="time"],
+.mg input[type="search"],
+.mg-add input,
+.mg-add select,
+.mg textarea {
+  min-height: 40px;
+  padding: 0 10px;
+  font: inherit;
+  color: #f1ece2;
+  background: #1b1d2b;
+  border: 1px solid #4a4f6d;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+.mg textarea {
+  padding: 8px 10px;
+  resize: vertical;
+}
+.mg input:focus-visible,
+.mg textarea:focus-visible,
+.mg-add select:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 2px;
+}
+.mg-errors {
+  margin: 0;
+  padding-left: 18px;
+  color: #ff9a8a;
+  font-size: 13px;
+}
+.mg-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.mg-facts dt {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #c9cbe0;
+}
+.mg-facts dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+.mg-summary {
+  gap: 2px;
+}
+.mg-talk {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Diario */
+.mg-tick-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.mg-tick-cost {
+  margin-left: auto;
+}
+.mg-tick-summary {
+  margin: 6px 0;
+}
+.mg-actions {
+  gap: 4px;
+}
+.mg-actions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+.mg-lv {
+  font-size: 14px;
+}
+
+/* Memoria */
+.mg-search {
+  width: 100%;
+}
+.mg-mem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mg-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mg-add input {
+  flex: 1;
+  min-width: 140px;
+}
+
+/* Objetivos */
+.mg-obj-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.mg-obj-active {
+  background: #5aa9f0;
+}
+.mg-obj-done {
+  background: #4cc38a;
+}
+.mg-obj-planning {
+  background: #f4c542;
+}
+.mg-bar {
+  height: 8px;
+  overflow: hidden;
+  background: #3a3e56;
+  border-radius: 4px;
+}
+.mg-bar > span {
+  display: block;
+  height: 100%;
+  background: #4cc38a;
+}
+
+/* Revisión e integración de tareas */
+.tr {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.tr-findings {
+  width: 100%;
+  min-height: 70px;
+  padding: 8px 10px;
+  font: inherit;
+  color: #f1ece2;
+  background: #1b1d2b;
+  border: 1px solid #4a4f6d;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+.tr-findings:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 2px;
+}
+.tr-phases {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.tr-phases li {
+  padding: 2px 10px;
+  border: 1px solid #4a4f6d;
+  border-radius: 999px;
+  color: #c9cbe0;
+}
+.tr-phases li.is-now {
+  color: #1b1d2b;
+  background: #f4c542;
+  border-color: #f4c542;
+  font-weight: 700;
+}
+.tr-phases li.is-past {
+  color: #4cc38a;
+  border-color: #4cc38a;
+}
+.tr-error {
+  padding: 8px 10px;
+  border-left: 3px solid #ff6b57;
+  background: #2a1d22;
+  border-radius: 6px;
+  font-size: 14px;
+}
+.tr-error p {
+  margin: 0 0 4px;
+}
+.tr-error ul {
+  margin: 4px 0;
+  padding-left: 18px;
+  font: 12px ui-monospace, Menlo, monospace;
+}
+.btn-danger {
+  color: #fff;
+  background: #c8412f;
+  border-color: #ff6b57;
+  font-weight: 600;
+}
+.btn-danger:hover:not(:disabled) {
+  background: #e0523f;
+}

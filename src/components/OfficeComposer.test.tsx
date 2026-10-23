@@ -135,6 +135,45 @@ describe("OfficeComposer", () => {
   });
 });
 
+describe("Objetivo para el jefe", () => {
+  it("el conmutador cambia a objetivo y Enter llama a objective.create sin crear tarea", async () => {
+    render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
+    const robot = screen.getByRole("button", { name: "Pedido a un robot" });
+    const obj = screen.getByRole("button", { name: "Objetivo para el jefe" });
+    expect(robot.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(obj);
+    expect(obj.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByRole("group", { name: "Para quién es el pedido" })).toBeNull();
+    expect(box().placeholder).toMatch(/qué quieres conseguir/);
+    type("Renovar el flujo de pago");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(calls("objective.create")).toHaveLength(1));
+    expect(calls("objective.create")[0][1]).toEqual({ projectId: "p1", text: "Renovar el flujo de pago" });
+    expect(calls("task.create")).toHaveLength(0);
+    await waitFor(() => expect(box().value).toBe(""));
+  });
+
+  it("el borrador del objetivo es independiente del de los robots", () => {
+    render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
+    type("para Clau");
+    fireEvent.click(screen.getByRole("button", { name: "Objetivo para el jefe" }));
+    expect(box().value).toBe("");
+    type("meta");
+    fireEvent.click(screen.getByRole("button", { name: "Pedido a un robot" }));
+    expect(box().value).toBe("para Clau");
+  });
+
+  it("si el core aún no tiene objective.create deja el borrador y avisa", async () => {
+    mocks.request.mockRejectedValue(Object.assign(new Error("x"), { code: "unknown_method" }));
+    render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Objetivo para el jefe" }));
+    type("meta");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(useStore.getState().notice).toContain("objective.create"));
+    expect(box().value).toBe("meta");
+  });
+});
+
 describe("isBusy", () => {
   it("ocupado por estado del robot o por tarea en curso", () => {
     expect(isBusy({ id: "a", status: "thinking" }, [])).toBe(true);

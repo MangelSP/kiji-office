@@ -246,4 +246,23 @@ describe("AgentTabs", () => {
     const cut = '{"id":9,"project_id":"p","task_id":"t1","agent_id":"a2","run_id":"r","kind":"tool","payload":{"name":"Grep","status":"start","input":{"pattern":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     expect(describeEntry({ seq: 1, at: 0, name: "event.appended", summary: cut })).toBe("Usa Grep");
   });
+
+  it("el jefe tiene Objetivos, Gerente, Diario y Memoria; un robot trabajador no", () => {
+    const { unmount } = render(<AgentTabs selectedId="a1" onSelect={vi.fn()} />);
+    const names = within(screen.getByRole("tablist", { name: "Secciones de Jefe" })).getAllByRole("tab").map((t) => t.textContent);
+    expect(names).toEqual(["Tareas", "Objetivos", "Gerente", "Diario", "Memoria", "Métricas", "Perfil", "Registro"]);
+    fireEvent.click(screen.getByRole("tab", { name: "Gerente" }));
+    expect(screen.getByRole("switch", { name: "Gerente autónomo" })).toBeTruthy();
+    unmount();
+    render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
+    const worker = within(screen.getByRole("tablist", { name: "Secciones de Clau" })).getAllByRole("tab").map((t) => t.textContent);
+    expect(worker).toEqual(["Tareas", "Métricas", "Perfil", "Registro"]);
+  });
+
+  it("la lista del jefe incluye las tareas de todos los robots, con botones de revisión", () => {
+    render(<AgentTabs selectedId="a1" onSelect={vi.fn()} />);
+    const card = screen.getByRole("listitem", { name: "Tarea Arreglar el login" });
+    expect(card.textContent).toContain("Clau");
+    expect(within(card).getByRole("button", { name: "Aprobar Arreglar el login" })).toBeTruthy();
+  });
 });

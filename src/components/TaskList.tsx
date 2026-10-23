@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Agent, Id } from "../store/agents";
 import { TASK_STATES, type Task } from "../store/tasks";
+import TaskReviewActions from "./TaskReviewActions";
 import "./components.css";
 
 const STATE_LABEL: Record<string, string> = {
@@ -112,6 +113,7 @@ export default function TaskList({
                         </button>
                       )}
                     </div>
+                    <TaskReviewActions task={t} />
                     {diffs[key] !== undefined && (
                       <pre className="pre" aria-label={`Diff de ${t.title}`}>
                         {diffs[key]}

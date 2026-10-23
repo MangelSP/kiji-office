@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import CloseGuard from "./components/CloseGuard";
+import { HaltedBanner } from "./components/StopAllButton";
 import NoticeBar from "./components/NoticeBar";
 import ConnectionsScreen from "./screens/Connections/ConnectionsScreen";
 import Home from "./screens/Home/Home";
@@ -54,6 +55,7 @@ function App() {
     <>
       <CloseGuard />
       <WorkspaceTabs onWizard={() => setWizard(true)} />
+      <HaltedBanner />
       <NoticeBar />
       {/* Una sola oficina montada (una sola `Application` de PixiJS): al cambiar de pestaña se re-sincroniza. */}
       {connectionsOpen ? <ConnectionsScreen /> : active ? <OfficeV0 projectId={active} /> : <Home />}

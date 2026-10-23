@@ -8,7 +8,8 @@ vi.mock("../core/client", () => ({
   CoreError: class CoreError extends Error {},
 }));
 
-import { resetStore, seed } from "../store/testing";
+import { useStore } from "../store";
+import { P, resetStore, seed } from "../store/testing";
 import { contextSegments } from "../screens/Agents/format";
 import AgentStrip from "./AgentStrip";
 
@@ -79,5 +80,20 @@ describe("AgentStrip", () => {
     expect(clau.className).not.toContain("is-boss");
     fireEvent.click(jefe);
     expect(onSelect).toHaveBeenCalledWith("a1");
+  });
+
+  it("la insignia «autónomo» sale solo en el jefe y solo con el gerente activo", () => {
+    const state = (enabled: boolean) =>
+      ({ [P]: { projectId: P, policy: { enabled, brain: { agentId: "a1" } }, halted: false, running: false, lastTick: null, todayCostUsd: 0 } }) as never;
+    const { rerender } = render(<AgentStrip selectedId={null} onSelect={vi.fn()} />);
+    expect(screen.queryByText("autónomo")).toBeNull();
+    useStore.setState({ manager: state(true) });
+    rerender(<AgentStrip selectedId={null} onSelect={vi.fn()} layout="vertical" />);
+    expect(screen.getAllByText("autónomo")).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: /^Jefe/ }).textContent).toContain("autónomo");
+    expect(screen.getByRole("tab", { name: /^Clau/ }).textContent).not.toContain("autónomo");
+    useStore.setState({ manager: state(false) });
+    rerender(<AgentStrip selectedId={null} onSelect={vi.fn()} />);
+    expect(screen.queryByText("autónomo")).toBeNull();
   });
 });

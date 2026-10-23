@@ -10,6 +10,8 @@ export type Approval = {
   tool?: string;
   input?: unknown;
   risk?: string;
+  /** 0.2d: tipo de petición. Si falta, se deduce de `tool` (`manager:*` = del gerente). */
+  kind?: "tool" | "question" | "integrate" | "manager";
 };
 
 export type ApprovalsSlice = {

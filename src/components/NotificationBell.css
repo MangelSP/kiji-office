@@ -1,0 +1,102 @@
+.bell {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.bell-btn {
+  position: relative;
+  min-height: 36px;
+}
+.bell-count {
+  margin-left: 4px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #1b1d2b;
+  background: #ff7a45;
+  border-radius: 999px;
+}
+.bell-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  width: 360px;
+  max-width: 90vw;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 8px;
+  background: #1b1d2b;
+  border: 2px solid #f4c542;
+  box-sizing: border-box;
+}
+.bell-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+}
+.bell-empty {
+  margin: 8px 0;
+  color: #c9cbe0;
+}
+.bell-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bell-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 8px;
+  font: inherit;
+  text-align: left;
+  color: #f1ece2;
+  background: #242738;
+  border: 1px solid #3a3e56;
+  cursor: pointer;
+}
+.bell-item:hover {
+  background: #2d3148;
+}
+.bell-item.is-unread {
+  border-left: 4px solid #f4c542;
+}
+.bell-item:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 1px;
+}
+.bell-level {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #c9cbe0;
+}
+.bell-level-ask {
+  color: #f4c542;
+}
+.bell-level-warn {
+  color: #ff9a45;
+}
+.bell-ws {
+  font-size: 12px;
+  color: #9ea2c0;
+}
+.bell-time {
+  font-size: 11px;
+  color: #9ea2c0;
+}
+.bell-title,
+.bell-body {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+.bell-body {
+  font-size: 13px;
+  color: #c9cbe0;
+}

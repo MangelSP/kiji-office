@@ -1,5 +1,7 @@
 // Barra superior de pestañas de workspace (como un navegador): Home, una pestaña por proyecto abierto y «+».
 import { useEffect, useRef, useState } from "react";
+import NotificationBell from "../../components/NotificationBell";
+import StopAllButton from "../../components/StopAllButton";
 import { useStore } from "../../store";
 import { workspaceColor } from "./color";
 import { useCloseWorkspace } from "./useCloseWorkspace";
@@ -120,6 +122,8 @@ export default function WorkspaceTabs({ onWizard }: Props) {
       >
         Conexiones
       </button>
+      <NotificationBell />
+      <StopAllButton />
       {onWizard && (
         <button type="button" className="ws-btn ws-wizard" onClick={onWizard}>
           Asistente

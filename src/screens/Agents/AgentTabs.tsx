@@ -9,6 +9,11 @@ import AgentProfile from "./AgentProfile";
 import AgentTasks from "./AgentTasks";
 import { fmtUsd, isBoss, paletteHex, ROLE_LABEL, statusInfo } from "./format";
 import { useAgentsStore } from "./useAgentsStore";
+import ManagerDiary from "../Manager/ManagerDiary";
+import ManagerSettings from "../Manager/ManagerSettings";
+import MemoryPanel from "../Manager/MemoryPanel";
+import ObjectivesList from "../Manager/ObjectivesList";
+import { useProjectId } from "../../store/scoped";
 import AgentStrip from "../../components/AgentStrip"; // también aporta .ag-chip y .ag-status-dot
 import "./AgentTabs.css";
 
@@ -18,7 +23,18 @@ const SUBTABS = [
   { id: "profile", label: "Perfil" },
   { id: "log", label: "Registro" },
 ] as const;
-type SubTab = (typeof SUBTABS)[number]["id"];
+/** Subpestañas propias del jefe (0.2d): objetivos y Gerente autónomo con su diario y su memoria. */
+const BOSS_SUBTABS = [
+  { id: "tasks", label: "Tareas" },
+  { id: "objectives", label: "Objetivos" },
+  { id: "manager", label: "Gerente" },
+  { id: "diary", label: "Diario" },
+  { id: "memory", label: "Memoria" },
+  { id: "metrics", label: "Métricas" },
+  { id: "profile", label: "Perfil" },
+  { id: "log", label: "Registro" },
+] as const;
+type SubTab = (typeof BOSS_SUBTABS)[number]["id"];
 
 type Props = { selectedId: string | null; onSelect: (id: string | null) => void };
 
@@ -109,8 +125,11 @@ function Overview({ agents, onSelect }: { agents: Agent[]; onSelect: (id: string
   );
 }
 
-function AgentView({ agent, sub, onSub }: { agent: Agent; sub: SubTab; onSub: (s: SubTab) => void }) {
+function AgentView({ agent, sub: wanted, onSub }: { agent: Agent; sub: SubTab; onSub: (s: SubTab) => void }) {
   const uid = useId();
+  const projectId = useProjectId();
+  const tabs: readonly { id: SubTab; label: string }[] = isBoss(agent) ? BOSS_SUBTABS : SUBTABS;
+  const sub = tabs.some((t) => t.id === wanted) ? wanted : "tasks";
   const id = String(agent.id);
   const { metrics, runs } = useAgentMetrics(id);
   const live = runs.find((r) => r.live);
@@ -148,7 +167,7 @@ function AgentView({ agent, sub, onSub }: { agent: Agent; sub: SubTab; onSub: (s
         aria-label={`Secciones de ${agent.name}`}
         onKeyDown={arrowNav}
       >
-        {SUBTABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
@@ -166,6 +185,10 @@ function AgentView({ agent, sub, onSub }: { agent: Agent; sub: SubTab; onSub: (s
       </div>
       <div role="tabpanel" id={`${uid}-panel`} aria-labelledby={`${uid}-${sub}`} className="ag-subpanel">
         {sub === "tasks" && <AgentTasks agent={agent} />}
+        {sub === "objectives" && <ObjectivesList projectId={projectId} />}
+        {sub === "manager" && <ManagerSettings projectId={projectId} />}
+        {sub === "diary" && <ManagerDiary projectId={projectId} />}
+        {sub === "memory" && <MemoryPanel projectId={projectId} />}
         {sub === "metrics" && <AgentMetricsView agent={agent} />}
         {sub === "profile" && <AgentProfile key={id} agent={agent} />}
         {sub === "log" && <AgentLog agent={agent} />}

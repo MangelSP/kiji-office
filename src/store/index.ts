@@ -6,6 +6,9 @@ import { core } from "../core/client";
 import type {
   BudgetNotice,
   Event as CoreEvent,
+  ManagerActionView,
+  NotifyEvent,
+  ObjectiveView,
   ProviderStatus,
   QueueChange,
   RelayRow,
@@ -17,6 +20,7 @@ import { createApprovalsSlice, type Approval, type ApprovalsSlice } from "./appr
 import { createConnectionsSlice, type ConnectionsSlice } from "./connections";
 import { createCoreSlice, type CoreSlice } from "./core";
 import { createEventsSlice, type EventsSlice } from "./events";
+import { createManagerSlice, type ManagerSlice } from "./manager";
 import { createMetricsSlice, type MetricsSlice } from "./metrics";
 import { createPartitionSlice, projectOf, type PartitionSlice } from "./partition";
 import {
@@ -39,7 +43,8 @@ export type AppState = CoreSlice &
   MetricsSlice &
   ProvidersSlice &
   OfficeSlice &
-  ConnectionsSlice;
+  ConnectionsSlice &
+  ManagerSlice;
 
 export const useStore = create<AppState>()((...a) => ({
   ...createCoreSlice(...a),
@@ -53,6 +58,7 @@ export const useStore = create<AppState>()((...a) => ({
   ...createProvidersSlice(...a),
   ...createOfficeSlice(...a),
   ...createConnectionsSlice(...a),
+  ...createManagerSlice(...a),
 }));
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -88,7 +94,12 @@ export function applyEvent(event: CoreEvent) {
       s.setCoreStatus("connecting");
       // Tras un reinicio el core no recuerda los proyectos abiertos: se reabren y se recarga todo.
       void s.ping().then((ok) => {
-        if (ok) return useStore.getState().bootstrap().then(() => useStore.getState().refreshConnections());
+        if (ok) {
+          return useStore
+            .getState()
+            .bootstrap()
+            .then(() => Promise.all([useStore.getState().refreshConnections(), useStore.getState().refreshNotifications()]));
+        }
       });
       break;
     case "core.crashed":
@@ -136,6 +147,24 @@ export function applyEvent(event: CoreEvent) {
     case "budget.reached":
       if (isObject(p) && typeof p.message === "string") s.setBudgetNotice(p as unknown as BudgetNotice);
       break;
+    case "objective.changed":
+      if (isObject(p) && typeof p.id === "string" && pid) s.applyObjective(p as unknown as ObjectiveView);
+      break;
+    case "integration.changed":
+      s.applyIntegration(p);
+      break;
+    case "manager.tick":
+      if (pid) s.applyManagerTick(pid, p);
+      break;
+    case "manager.action":
+      if (isObject(p) && pid && "tickId" in p) s.applyManagerAction(p as unknown as ManagerActionView);
+      break;
+    case "manager.halted":
+      s.applyHalted(p);
+      break;
+    case "notify":
+      if (isObject(p) && pid && typeof p.id === "number") s.applyNotify(p as unknown as NotifyEvent);
+      break;
     case "connections.changed":
       s.applyConnections(p);
       break;
@@ -158,6 +187,7 @@ export function connectStore(): () => void {
     if (await s.ping()) {
       await s.bootstrap();
       void s.refreshConnections();
+      void s.refreshNotifications();
     }
     s.setBooted(true);
   });

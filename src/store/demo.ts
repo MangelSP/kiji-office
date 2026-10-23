@@ -114,5 +114,74 @@ export function loadDemo() {
   s.noteActivity(DEMO_WEB, "demo-3", "status", { type: "done" });
   s.addApproval(DEMO_WEB, { id: "da1", agent_id: "demo-2", task_id: "dt1", tool: "Bash", input: { command: "npm test" }, risk: "medium" });
   s.noteActivity(DEMO_APP, "demo-5", "tool", { name: "Edit", input: { file_path: "lib/main.dart" } });
+  loadManagerDemo();
   s.setBooted(true);
+}
+
+/** Ejemplos de 0.2d: tareas en revisión/aprobadas/integradas, objetivos, gerente, diario, memoria y avisos. */
+function loadManagerDemo() {
+  const s = useStore.getState();
+  const m = (min: number) => now() - min * 60_000;
+  s.upsertTask(DEMO_WEB, { id: "dt3", title: "Añadir validación al formulario", status: "review", agent_id: "demo-3", files: ["src/form.ts"], result: "Validación hecha; faltan casos de borde." });
+  s.upsertTask(DEMO_WEB, { id: "dt4", title: "Cambiar el botón de pago", status: "approved", agent_id: "demo-2", files: ["src/pay.tsx"] });
+  s.upsertTask(DEMO_WEB, { id: "dt5", title: "Pantalla de ajustes", status: "integrated", agent_id: "demo-3", files: ["src/settings.tsx"] });
+  s.upsertTask(DEMO_WEB, { id: "dt6", title: "Ajustar el contraste", status: "changes", agent_id: "demo-2", files: ["src/theme.css"] });
+  s.upsertTask(DEMO_WEB, { id: "dt7", title: "Subir imágenes a la nube", status: "blocked", agent_id: "demo-3", files: ["src/upload.ts"] });
+  const integration = { id: "di1", projectId: DEMO_WEB, taskId: "dt5", beforeSha: "a1b2c3d", afterSha: "e4f5a6b", status: "applied" as const, detail: "", createdAt: m(50) };
+  useStore.setState({
+    objectives: {
+      [DEMO_WEB]: [
+        { id: "do1", projectId: DEMO_WEB, text: "Renovar el flujo de pago", status: "active", createdAt: m(120), tasksByStatus: { integrated: 1, approved: 1, review: 1, running: 1 } },
+        { id: "do2", projectId: DEMO_WEB, text: "Pantalla de ajustes accesible", status: "done", createdAt: m(900), tasksByStatus: { integrated: 3 } },
+        { id: "do3", projectId: DEMO_WEB, text: "Documentar la API", status: "planning", createdAt: m(5), tasksByStatus: {} },
+      ],
+    },
+    integrations: { [DEMO_WEB]: [integration] },
+    manager: {
+      [DEMO_WEB]: {
+        projectId: DEMO_WEB, halted: false, running: false, todayCostUsd: 2.35,
+        lastTick: { id: "dk1", projectId: DEMO_WEB, trigger: "task.changed", summary: "Arrancó la validación y pidió revisión", costUsd: 0.08, startedAt: m(4), endedAt: m(3) },
+        policy: {
+          enabled: true, brain: { agentId: "demo-1" },
+          levels: { plan: "auto", assign: "auto", start: "auto", retry: "auto", relay: "notify", integrate: "ask", spend: "ask" },
+          spendAskUsd: 5, dayBudgetUsd: 15, maxTickMinutes: 5, maxTicksPerHour: 20, quietHours: { from: "23:00", to: "08:00" }, askTimeoutMinutes: 60,
+        },
+      },
+    },
+    diary: {
+      [DEMO_WEB]: [
+        {
+          id: "dk1", projectId: DEMO_WEB, trigger: "task.changed", summary: "Arrancó la validación y pidió revisión", costUsd: 0.08, startedAt: m(4), endedAt: m(3),
+          actions: [
+            { id: 1, tickId: "dk1", projectId: DEMO_WEB, tool: "start_task", input: "{}", result: "Tarea dt3 en marcha", level: "auto", decidedBy: "policy", createdAt: m(4) },
+            { id: 2, tickId: "dk1", projectId: DEMO_WEB, tool: "request_integration", input: "{}", result: "Esperando tu respuesta", level: "ask", decidedBy: null, createdAt: m(3) },
+          ],
+        },
+        {
+          id: "dk0", projectId: DEMO_WEB, trigger: "objective.created", summary: "Planificó «Renovar el flujo de pago» en 4 tareas", costUsd: 0.21, startedAt: m(118), endedAt: m(116),
+          actions: [
+            { id: 3, tickId: "dk0", projectId: DEMO_WEB, tool: "create_tasks", input: "{}", result: "4 tareas creadas", level: "auto", decidedBy: "policy", createdAt: m(117) },
+            { id: 4, tickId: "dk0", projectId: DEMO_WEB, tool: "switch_model", input: "{}", result: "Ana pasa a Haiku", level: "notify", decidedBy: "policy", createdAt: m(117) },
+            { id: 5, tickId: "dk0", projectId: DEMO_WEB, tool: "continue_spending", input: "{}", result: "Sin respuesta: se dio por NO", level: "ask", decidedBy: "timeout", createdAt: m(60) },
+            { id: 6, tickId: "dk0", projectId: DEMO_WEB, tool: "request_integration", input: "{}", result: "Integrada", level: "ask", decidedBy: "user", createdAt: m(55) },
+          ],
+        },
+      ],
+    },
+    memory: {
+      [DEMO_WEB]: [
+        { id: 1, projectId: DEMO_WEB, kind: "fact", text: "El proyecto usa React 19 y vitest.", source: "manager", archived: false, createdAt: m(300) },
+        { id: 2, projectId: DEMO_WEB, kind: "decision", text: "Los pagos van con Stripe, no con PayPal.", source: "user", archived: false, createdAt: m(200) },
+        { id: 3, projectId: DEMO_WEB, kind: "preference", text: "Textos de la interfaz siempre en español.", source: "user", archived: false, createdAt: m(150) },
+        { id: 4, projectId: DEMO_WEB, kind: "todo", text: "Revisar los estilos del botón de pago.", source: "manager", archived: false, createdAt: m(30) },
+      ],
+    },
+    notifications: [
+      { id: 3, projectId: DEMO_WEB, level: "ask", title: "El gerente pregunta", body: "¿Integro «Cambiar el botón de pago»?", approvalId: "da2", readAt: null, createdAt: m(3) },
+      { id: 2, projectId: DEMO_APP, level: "warn", title: "Tope del día casi alcanzado", body: "Llevas 12,40 $ de 15 $.", approvalId: null, readAt: null, createdAt: m(40) },
+      { id: 1, projectId: DEMO_WEB, level: "info", title: "Tarea integrada", body: "«Pantalla de ajustes» ya está en main.", approvalId: null, readAt: m(30), createdAt: m(50) },
+    ],
+  });
+  s.addApproval(DEMO_WEB, { id: "da2", task_id: "dt4", tool: "manager:request_integration", kind: "integrate", input: { question: "¿Integro «Cambiar el botón de pago» en main?" } });
+  s.addApproval(DEMO_WEB, { id: "da3", tool: "manager:ask", kind: "question", input: { question: "El gasto de hoy pasó de 5 $. ¿Sigo con las tareas pendientes?", options: ["Sí, seguir hoy", "No, parar hasta mañana"] } });
 }

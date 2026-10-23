@@ -60,6 +60,19 @@ function Office({ projectId }: { projectId: string }) {
   const project = useStore((st) => st.projects.find((p) => p.projectId === projectId));
   const eventCount = useScoped((st) => st.events.length);
   const answerApproval = useScoped((st) => st.answerApproval);
+  const tasks = useScoped((st) => st.tasks);
+  const focus = useStore((st) => st.focusApproval);
+  const askTimeout = useStore((st) => st.manager[projectId]?.policy?.askTimeoutMinutes);
+  const refreshManager = useStore((st) => st.refreshManager);
+  const refreshObjectives = useStore((st) => st.refreshObjectives);
+  const refreshIntegrations = useStore((st) => st.refreshIntegrations);
+
+  // Estado del gerente, objetivos e integraciones del workspace (la insignia "autónomo" y las tarjetas lo necesitan).
+  useEffect(() => {
+    void refreshManager(projectId);
+    void refreshObjectives(projectId);
+    void refreshIntegrations(projectId);
+  }, [projectId, refreshManager, refreshObjectives, refreshIntegrations]);
   const narrow = useNarrow();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
@@ -83,6 +96,9 @@ function Office({ projectId }: { projectId: string }) {
           key={String(a.id)}
           approval={a}
           agentName={agentName(a.agent_id)}
+          taskTitle={tasks.find((t) => String(t.id) === String(a.task_id))?.title}
+          timeoutMinutes={askTimeout}
+          highlighted={focus?.projectId === projectId && focus.approvalId === String(a.id)}
           onAnswer={(allow) => answerApproval(a.id, allow)}
         />
       ))}

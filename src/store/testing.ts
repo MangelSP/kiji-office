@@ -17,6 +17,16 @@ export function resetStore(activeProjectId: string | null = P): void {
     budgetNotice: null,
     notice: null,
     unavailable: {},
+    manager: {},
+    objectives: {},
+    integrations: {},
+    integrationRuns: {},
+    diary: {},
+    memory: {},
+    notifications: [],
+    halted: false,
+    focusApproval: null,
+    connections: [],
   });
 }
 

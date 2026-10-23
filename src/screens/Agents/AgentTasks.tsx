@@ -1,6 +1,7 @@
 // Subpestaña "Tareas": una tarjeta por tarea con Pedido, Estado, Pasos y Respuesta.
 import { useState } from "react";
 import Markdown from "../../components/Markdown";
+import TaskReviewActions from "../../components/TaskReviewActions";
 import { accessLabel } from "../../components/TaskList";
 import type { Agent } from "../../store/agents";
 import type { Task } from "../../store/tasks";
@@ -32,18 +33,20 @@ const isFree = (a: Agent) => !a.status || a.status === "idle" || a.status === "d
 export default function AgentTasks({ agent }: { agent: Agent }) {
   const tasks = useAgentsStore((s) => s.tasks) as TaskView[];
   const agents = useAgentsStore((s) => s.agents);
-  const mine = tasks.filter((t) => String(t.agent_id) === String(agent.id));
-  if (mine.length === 0) return <p className="muted">{agent.name} no tiene tareas todavía.</p>;
+  // El jefe revisa e integra el trabajo de todos: su lista es la del proyecto entero.
+  const boss = isBoss(agent);
+  const mine = boss ? tasks : tasks.filter((t) => String(t.agent_id) === String(agent.id));
+  if (mine.length === 0) return <p className="muted">{boss ? "No hay tareas todavía." : `${agent.name} no tiene tareas todavía.`}</p>;
   return (
     <ul className="plain ag-tasks">
       {mine.map((t) => (
-        <TaskCard key={String(t.id)} task={t} agent={agent} others={agents.filter((a) => String(a.id) !== String(agent.id) && !isBoss(a) && isFree(a))} />
+        <TaskCard key={String(t.id)} task={t} agent={agent} owner={boss ? agents.find((a) => String(a.id) === String(t.agent_id))?.name : undefined} others={agents.filter((a) => String(a.id) !== String(agent.id) && !isBoss(a) && isFree(a))} />
       ))}
     </ul>
   );
 }
 
-function TaskCard({ task: t, agent, others }: { task: TaskView; agent: Agent; others: Agent[] }) {
+function TaskCard({ task: t, agent, others, owner }: { task: TaskView; agent: Agent; others: Agent[]; owner?: string }) {
   const startTask = useAgentsStore((s) => s.startTask);
   const loadDiff = useAgentsStore((s) => s.loadDiff);
   const switchTask = useAgentsStore((s) => s.switchTask);
@@ -100,6 +103,7 @@ function TaskCard({ task: t, agent, others }: { task: TaskView; agent: Agent; ot
             <span className="ag-badge ag-badge-queued">{queue.position > 0 ? `En cola #${queue.position}` : "En cola"}</span>
           )}
           {queue?.budget && <span className="ag-badge ag-badge-budget">bloqueada por tope de gasto</span>}
+          {owner && <span className="tag muted">{owner}</span>}
           {access && <span className="tag muted">{access}</span>}
           {model && <span className="ag-chip">{label(model)}</span>}
           {cost !== undefined && <span className="muted small">{fmtUsd(cost)}</span>}
@@ -155,6 +159,8 @@ function TaskCard({ task: t, agent, others }: { task: TaskView; agent: Agent; ot
           )}
         </section>
       )}
+
+      <TaskReviewActions task={t} />
 
       <div className="row ag-actions">
         {STARTABLE.has(t.status) && (
