@@ -96,7 +96,8 @@ export type MethodName =
   | 'board.move'
   // 0.4b: ajustes completos y estadísticas de modelos
   | 'settings.all'
-  | 'stats.models';
+  | 'stats.models'
+  | 'stats.overview';
 
 /** Eventos de 0.1 (sección 4) más los propios del servidor. */
 export type EventName =
@@ -655,3 +656,16 @@ export type ModelUsage = {
   agents: string[];
 };
 export type StatsModelsParams = { range: StatsRange; limit?: number };
+
+/** `stats.overview {}`: cifras del panel del Home (día local; "7 días" = hoy y los 6 anteriores). */
+export type StatsTokens = { in: number; out: number; cacheRead: number };
+export type StatsOverview = {
+  projects: { open: number; total: number; mostActive: string | null };
+  agents: { total: number; working: number; queued: number };
+  ais: { configured: number; ok: number; warning: number; limited: number };
+  cost: { today: number; last7: number; total: number; perDay7: number[] };
+  tokens: { today: StatsTokens; last7: StatsTokens };
+  /** Suma de ended_at - started_at de los runs (los vivos cuentan hasta ahora). */
+  workTimeMs: { today: number; last7: number };
+  manager: { ticksToday: number; costToday: number };
+};

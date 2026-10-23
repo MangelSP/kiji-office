@@ -9,6 +9,7 @@ import { useCloseWorkspace } from "../Workspaces/useCloseWorkspace";
 import { useOpenFolder } from "../Workspaces/useOpenFolder";
 import LimitsForm from "./LimitsForm";
 import ModelsUsed from "./ModelsUsed";
+import Panel from "./Panel";
 import WorkspaceCard from "./WorkspaceCard";
 import YourAIs from "./YourAIs";
 import "./Home.css";
@@ -35,23 +36,6 @@ function fromListItem(p: ProjectListItem): WorkspaceSummary {
   };
 }
 
-function Meter({ label, value, max }: { label: string; value: number; max: number }) {
-  const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
-  const level = pct >= 100 ? "high" : pct >= 80 ? "warn" : "ok";
-  return (
-    <div
-      className={`hm-meter is-${level}`}
-      role="progressbar"
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={pct}
-    >
-      <span style={{ width: `${pct}%` }} />
-    </div>
-  );
-}
-
 export default function Home() {
   const overview = useStore((s) => s.overview);
   const projects = useStore((s) => s.projects);
@@ -64,11 +48,6 @@ export default function Home() {
   const open = all.filter((w) => w.open);
   const recents = all.filter((w) => !w.open);
   const totals = overview?.totals;
-  const today = totals?.costTodayUsd ?? 0;
-  const budget = totals?.dailyBudgetUsd ?? 0;
-  const live = totals?.liveRuns ?? open.reduce((n, w) => n + w.liveRuns, 0);
-  const maxRuns = totals?.maxConcurrentRuns ?? 0;
-  const queued = totals?.queued ?? open.reduce((n, w) => n + w.queued, 0);
 
   return (
     <main className="home">
@@ -80,34 +59,7 @@ export default function Home() {
         </button>
       </header>
 
-      <section className="hm-totals" aria-label="Totales globales">
-        <div className="hm-stat">
-          <p className="hm-stat-label">Gasto de hoy</p>
-          <p className="hm-stat-value">
-            {fmtUsd(today)}
-            {budget > 0 && <span className="hm-stat-of"> / {fmtUsd(budget)}</span>}
-          </p>
-          {budget > 0 && <Meter label="Gasto de hoy frente al tope diario" value={today} max={budget} />}
-        </div>
-        <div className="hm-stat">
-          <p className="hm-stat-label">Runs vivos</p>
-          <p className="hm-stat-value">
-            {live}
-            {maxRuns > 0 && <span className="hm-stat-of"> / {maxRuns}</span>}
-          </p>
-          {maxRuns > 0 && <Meter label="Runs vivos frente al máximo" value={live} max={maxRuns} />}
-          {queued > 0 && <p className="hm-stat-note">⏳ {queued} en cola</p>}
-        </div>
-        <div className="hm-stat">
-          <p className="hm-stat-label">Workspaces abiertos</p>
-          <p className="hm-stat-value">{open.length}</p>
-        </div>
-        <div className="hm-stat hm-stat-action">
-          <button type="button" className="hm-link" aria-expanded={editing} onClick={() => setEditing((v) => !v)}>
-            Editar topes
-          </button>
-        </div>
-      </section>
+      <Panel totals={totals} open={open.length} editing={editing} onEditLimits={() => setEditing((v) => !v)} />
 
       {editing && totals && <LimitsForm totals={totals} onDone={() => setEditing(false)} />}
 
