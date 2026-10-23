@@ -18,6 +18,14 @@ export type OfficeAssets = {
   destroy: () => void;
 };
 
+// Sin workers: PixiJS los crea desde URLs blob:, que la CSP de la app (sin worker-src) bloquea en silencio
+// y la carga se queda esperando para siempre (oficina en negro dentro de Tauri).
+Assets.setPreferences({ preferWorkers: false });
+
+/** Por si una carga se cuelga igualmente: a los 5 s se usa el placeholder en vez de dejar la escena en negro. */
+const withTimeout = <T,>(p: Promise<T>, ms = 5000) =>
+  Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))]);
+
 const pngUrls = import.meta.glob("../assets/sprites/*.png", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
 const jsonData = import.meta.glob("../assets/sprites/*.json", { eager: true, import: "default" }) as Record<string, unknown>;
 
@@ -30,7 +38,7 @@ async function loadPng(name: string): Promise<Texture | null> {
   const url = pngs.get(name);
   if (!url) return null;
   try {
-    const tex = await Assets.load<Texture>(url);
+    const tex = await withTimeout(Assets.load<Texture>(url));
     tex.source.scaleMode = "nearest";
     return tex;
   } catch {
