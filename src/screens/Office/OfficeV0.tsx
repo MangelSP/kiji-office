@@ -4,11 +4,19 @@ import { open } from "@tauri-apps/plugin-dialog";
 import ApprovalCard from "../../components/ApprovalCard";
 import LogPanel from "../../components/LogPanel";
 import TaskList from "../../components/TaskList";
+import OfficeScene from "../../scenes/OfficeScene";
 import { connectStore, useStore } from "../../store";
 import "../../components/components.css";
 import "./OfficeV0.css";
 
 const NOMBRE = "Alexis";
+
+// Solo en desarrollo: `?demo=1` mete agentes de ejemplo para ver los robots sin core.
+const DEMO_AGENTS = [
+  { id: "demo-1", name: "Jefe", provider: "claude", color: "terracota", is_boss: 1, status: "thinking" },
+  { id: "demo-2", name: "Ana", provider: "openai", color: "azul", status: "needs_you" },
+  { id: "demo-3", name: "Nico", provider: "gemini", color: "verde", status: "done" },
+];
 
 function saludo(hora: number) {
   if (hora < 12) return "Buenos días";
@@ -28,8 +36,15 @@ export default function OfficeV0() {
   const [files, setFiles] = useState("");
   const [agentId, setAgentId] = useState("");
   const [creating, setCreating] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => connectStore(), []);
+
+  useEffect(() => {
+    if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("demo")) {
+      useStore.getState().setAgents(DEMO_AGENTS);
+    }
+  }, []);
 
   const abrirProyecto = async () => {
     try {
@@ -77,6 +92,15 @@ export default function OfficeV0() {
           </button>
         </div>
       )}
+
+      <section className="panel scene-panel" aria-label="Oficina">
+        <OfficeScene selectedId={selectedId} onSelect={setSelectedId} />
+        {selectedId && (
+          <p className="muted scene-selected">
+            Seleccionado: <strong>{agentName(selectedId) ?? selectedId}</strong>
+          </p>
+        )}
+      </section>
 
       <div className="office-grid">
         <div className="col">

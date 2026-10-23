@@ -9,6 +9,8 @@ export type Agent = {
   provider?: string;
   model?: string;
   role?: string;
+  /** Paleta del robot (terracota, azul, verde, crema; `claude` = terracota). */
+  color?: string | null;
   is_boss?: number | boolean;
   /** Estado del robot (`agent.status`): thinking, writing, needs_you, done... */
   status?: string;

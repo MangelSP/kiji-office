@@ -73,3 +73,20 @@
   border-radius: 8px;
   box-sizing: border-box;
 }
+
+.scene-panel {
+  margin-bottom: 16px;
+}
+.office-scene canvas {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  height: auto;
+  margin: 0 auto;
+  image-rendering: pixelated;
+  cursor: pointer;
+}
+.scene-selected {
+  margin: 8px 0 0;
+  text-align: center;
+}
