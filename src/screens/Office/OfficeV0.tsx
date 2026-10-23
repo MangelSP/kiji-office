@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import ApprovalCard from "../../components/ApprovalCard";
 import LogPanel from "../../components/LogPanel";
 import TaskList from "../../components/TaskList";
+import CreateAgent from "../CreateAgent/CreateAgent";
 import OfficeScene from "../../scenes/OfficeScene";
 import { connectStore, useStore } from "../../store";
 import "../../components/components.css";
@@ -37,6 +38,7 @@ export default function OfficeV0() {
   const [agentId, setAgentId] = useState("");
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showCreateAgent, setShowCreateAgent] = useState(false);
 
   useEffect(() => connectStore(), []);
 
@@ -113,7 +115,12 @@ export default function OfficeV0() {
           </section>
 
           <section className="panel" aria-labelledby="agents-title">
-            <h2 id="agents-title">Agentes</h2>
+            <div className="panel-head">
+              <h2 id="agents-title">Agentes</h2>
+              <button type="button" className="btn" onClick={() => setShowCreateAgent(true)}>
+                + Robot
+              </button>
+            </div>
             {s.unavailable["agent.list"] ? (
               <p className="muted">Aún no disponible: el core no implementa agent.list.</p>
             ) : s.agents.length === 0 ? (
@@ -194,6 +201,7 @@ export default function OfficeV0() {
           <LogPanel />
         </div>
       </div>
+      {showCreateAgent && <CreateAgent onClose={() => setShowCreateAgent(false)} />}
     </main>
   );
 }
