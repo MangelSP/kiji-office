@@ -11,10 +11,9 @@ import CreateAgent from "../CreateAgent/CreateAgent";
 import OfficeScene from "../../scenes/OfficeScene";
 import { useStore } from "../../store";
 import { ProjectContext, useScoped } from "../../store/scoped";
+import { useGreeting } from "./greeting";
 import "../../components/components.css";
 import "./OfficeV0.css";
-
-const NOMBRE = "Alexis";
 
 // Mismo ancho que el CSS: por debajo, una sola columna.
 const NARROW = "(max-width: 1099px)";
@@ -29,12 +28,6 @@ function useNarrow() {
     return () => mq.removeEventListener("change", on);
   }, []);
   return narrow;
-}
-
-function saludo(hora: number) {
-  if (hora < 12) return "Buenos días";
-  if (hora < 19) return "Buenas tardes";
-  return "Buenas noches";
 }
 
 function coreLabel(status: string, detail?: string) {
@@ -55,6 +48,7 @@ export default function OfficeV0({ projectId }: { projectId: string }) {
 function Office({ projectId }: { projectId: string }) {
   const agents = useScoped((st) => st.agents);
   const approvalsList = useScoped((st) => st.approvals);
+  const greeting = useGreeting();
   const coreStatus = useStore((st) => st.coreStatus);
   const coreDetail = useStore((st) => st.coreDetail);
   const unavailableAgentList = useStore((st) => st.unavailable["agent.list"]);
@@ -132,7 +126,7 @@ function Office({ projectId }: { projectId: string }) {
       <header className="office-head">
         <p className="marca">KIJI OFFICE</p>
         <h1>
-          ¡{saludo(new Date().getHours())}, {NOMBRE}!
+          {greeting}
         </h1>
         {project && <p className="office-project" title={project.path}>{project.name}</p>}
         <button type="button" className="btn" onClick={() => setShowCreateAgent(true)}>

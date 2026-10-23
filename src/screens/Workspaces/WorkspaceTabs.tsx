@@ -8,9 +8,9 @@ import { useCloseWorkspace } from "./useCloseWorkspace";
 import { useOpenFolder } from "./useOpenFolder";
 import "./Workspaces.css";
 
-type Props = { onWizard?: () => void; onAbout?: () => void; aboutOpen?: boolean };
+type Props = { onWizard?: () => void; onAbout?: () => void; aboutOpen?: boolean; onSettings?: () => void; settingsOpen?: boolean };
 
-export default function WorkspaceTabs({ onWizard, onAbout, aboutOpen }: Props) {
+export default function WorkspaceTabs({ onWizard, onAbout, aboutOpen, onSettings, settingsOpen }: Props) {
   const tabs = useStore((s) => s.tabs);
   const projects = useStore((s) => s.projects);
   const active = useStore((s) => s.activeProjectId);
@@ -122,6 +122,17 @@ export default function WorkspaceTabs({ onWizard, onAbout, aboutOpen }: Props) {
       >
         Conexiones
       </button>
+      {onSettings && (
+        <button
+          type="button"
+          className={`ws-btn ws-settings${settingsOpen ? " is-active" : ""}`}
+          aria-pressed={settingsOpen}
+          title="Ajustes (Cmd/Ctrl+,)"
+          onClick={onSettings}
+        >
+          ⚙ Ajustes
+        </button>
+      )}
       <NotificationBell />
       <StopAllButton />
       {onWizard && (

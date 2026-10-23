@@ -8,7 +8,9 @@ import { workspaceColor } from "../Workspaces/color";
 import { useCloseWorkspace } from "../Workspaces/useCloseWorkspace";
 import { useOpenFolder } from "../Workspaces/useOpenFolder";
 import LimitsForm from "./LimitsForm";
+import ModelsUsed from "./ModelsUsed";
 import WorkspaceCard from "./WorkspaceCard";
+import YourAIs from "./YourAIs";
 import "./Home.css";
 
 /** Tarjeta mínima cuando el core aún no ha mandado el resumen: solo con lo que trae `project.list`. */
@@ -108,6 +110,9 @@ export default function Home() {
       </section>
 
       {editing && totals && <LimitsForm totals={totals} onDone={() => setEditing(false)} />}
+
+      <YourAIs />
+      <ModelsUsed />
 
       {open.length === 0 && recents.length === 0 && (
         <section className="hm-empty" aria-label="Sin proyectos">

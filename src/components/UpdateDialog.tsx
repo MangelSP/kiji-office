@@ -3,6 +3,7 @@
 import { useEffect, useId, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useStore } from "../store";
+import { settingValue, useSettings } from "../store/settings";
 import "./CloseGuard.css";
 
 export type UpdateInfo = { available: boolean; version: string; notes: string | null; date: string | null };
@@ -110,12 +111,14 @@ export default function UpdateDialog({ update, onClose }: { update: UpdateInfo; 
 /** Al arrancar comprueba (1 vez al día) y, si hay versión nueva, deja un aviso discreto; nunca abre el diálogo. */
 export function UpdateAutoCheck() {
   const setNotice = useStore((s) => s.setNotice);
+  // Ajuste `update_auto_check` («0» = no comprobar solo; sin dato, sí).
+  const enabled = useSettings((s) => settingValue(s.specs, "update_auto_check") !== "0");
   useEffect(() => {
-    if (!isTauri() || !shouldAutoCheck()) return;
+    if (!enabled || !isTauri() || !shouldAutoCheck()) return;
     markChecked();
     checkForUpdate()
       .then((u) => u && setNotice(`Hay una versión nueva de Kiji Office (${u.version}). Instálala desde «Acerca de».`))
       .catch(() => {}); // sin red o sin publicar: en silencio; el botón manual explica el motivo
-  }, [setNotice]);
+  }, [setNotice, enabled]);
   return null;
 }

@@ -3,6 +3,7 @@ import type { ConnectionView, DiscoveredServer, ProjectListItem, ProviderStatus,
 import type { BoardColumn } from "../../shared/protocol";
 import { columnOfTask, nextColumn } from "../scenes/boardLogic";
 import { useStore } from ".";
+import { loadSettingsDemo } from "./settings";
 import { pushBoardMove } from "./boardMoves";
 import type { Agent } from "./agents";
 
@@ -106,6 +107,7 @@ export function loadDemo() {
   s.applyOverview(ov);
   s.applyLimits(DEMO_PROVIDERS);
   s.applyConnections(DEMO_CONNECTIONS);
+  loadSettingsDemo();
   useStore.setState({ discovered: DEMO_DISCOVERED });
   s.setAgents(DEMO_WEB, AGENTS_WEB);
   s.setAgents(DEMO_APP, AGENTS_APP);

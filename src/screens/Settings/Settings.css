@@ -1,0 +1,227 @@
+/* Pantalla Ajustes: oscuro, acento amarillo, chips pixel monoespaciados. */
+.st-screen {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+  box-sizing: border-box;
+  color: #f1ece2;
+}
+.st-head {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 20px;
+  margin-bottom: 16px;
+}
+.st-head h1 {
+  font-size: 28px;
+}
+.st-head .st-btn {
+  margin-left: auto;
+  align-self: center;
+}
+.st-layout {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.st-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: sticky;
+  top: 64px;
+}
+.st-nav-item {
+  min-height: 36px;
+  padding: 0 12px;
+  text-align: left;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: #c9cbe0;
+  background: #242738;
+  border: 2px solid #3a3e56;
+  border-radius: 0;
+  cursor: pointer;
+}
+.st-nav-item:hover {
+  background: #2d3148;
+}
+.st-nav-item.is-active {
+  color: #f4c542;
+  border-color: #f4c542;
+}
+.st-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: #242738;
+  border: 2px solid #3a3e56;
+  border-top: 6px solid #f4c542;
+  min-width: 0;
+}
+.st-body h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.st-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed #3a3e56;
+}
+.st-field:last-child {
+  border-bottom: none;
+}
+.st-field p {
+  margin: 0;
+}
+.st-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.st-field label,
+.st-label {
+  font-weight: 600;
+}
+.st-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.st-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.st-field input[type="text"],
+.st-field input[type="number"],
+.st-field input[type="time"],
+.st-field select {
+  min-height: 34px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  font: inherit;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: #f1ece2;
+  background: #15151a;
+  border: 2px solid #4a4f6d;
+  border-radius: 0;
+}
+.st-field input[type="text"] {
+  flex: 1 1 260px;
+  max-width: 460px;
+}
+.st-field input[type="number"] {
+  width: 120px;
+}
+.st-field input[aria-invalid="true"],
+.st-field select[aria-invalid="true"] {
+  border-color: #e5645a;
+}
+.st-btn,
+.st-reset {
+  min-height: 34px;
+  padding: 0 14px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: #f1ece2;
+  background: #2d3148;
+  border: 2px solid #4a4f6d;
+  border-radius: 0;
+  cursor: pointer;
+}
+.st-btn:hover:not(:disabled) {
+  background: #3a3e5c;
+}
+.st-btn-primary {
+  color: #1b1d2b;
+  background: #f4c542;
+  border-color: #f4c542;
+}
+.st-btn-primary:hover:not(:disabled) {
+  background: #ffd75e;
+}
+.st-reset {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: #c9cbe0;
+  background: transparent;
+}
+.st-btn:disabled,
+.st-reset:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.st-hint {
+  color: #c9cbe0;
+  font-size: 13px;
+}
+.st-suffix {
+  color: #c9cbe0;
+  font-size: 13px;
+}
+.st-error {
+  color: #ff8a80;
+  font-size: 13px;
+}
+.st-ok,
+.st-saved {
+  color: #4cc38a;
+  font-size: 13px;
+}
+.st-banner {
+  margin: 0;
+  padding: 10px 12px;
+  color: #f4c542;
+  border: 2px solid #f4c542;
+}
+.st-check,
+.st-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+}
+.st-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.st-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 6px 8px;
+  background: #1b1d2b;
+  border: 2px solid #3a3e56;
+}
+.st-list li .st-btn {
+  margin-left: auto;
+  min-height: 26px;
+}
+@media (max-width: 760px) {
+  .st-layout {
+    grid-template-columns: 1fr;
+  }
+  .st-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    position: static;
+  }
+}
+.st-field > .st-btn {
+  align-self: flex-start;
+}

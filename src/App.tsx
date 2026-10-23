@@ -5,6 +5,7 @@ import { HaltedBanner } from "./components/StopAllButton";
 import NoticeBar from "./components/NoticeBar";
 import AboutScreen from "./screens/About/AboutScreen";
 import ConnectionsScreen from "./screens/Connections/ConnectionsScreen";
+import SettingsScreen from "./screens/Settings/SettingsScreen";
 import Home from "./screens/Home/Home";
 import OfficeV0 from "./screens/Office/OfficeV0";
 import Wizard from "./screens/Wizard/Wizard";
@@ -13,6 +14,7 @@ import WorkspaceTabs from "./screens/Workspaces/WorkspaceTabs";
 import { useWorkspaceShortcuts } from "./screens/Workspaces/shortcuts";
 import { connectStore, useStore } from "./store";
 import { loadDemo } from "./store/demo";
+import { connectSettings, useSetting, useSettings } from "./store/settings";
 import "./App.css";
 
 function App() {
@@ -26,6 +28,10 @@ function App() {
   const [wizard, setWizard] = useState(() => !readWizardDone());
   const [skipped, setSkipped] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsStatus = useSettings((s) => s.status);
+  const loadSettings = useSettings((s) => s.load);
+  const startView = useSetting("start_view");
 
   useEffect(() => connectStore(), []);
   useWorkspaceShortcuts();
@@ -33,6 +39,37 @@ function App() {
   useEffect(() => setConnectionsOpen(false), [active, setConnectionsOpen]);
   // Acerca de se cierra al cambiar de pestaña o al abrir Conexiones.
   useEffect(() => setAboutOpen(false), [active, connectionsOpen]);
+  // Ajustes se cierra al cambiar de pestaña o al abrir Conexiones / Acerca de.
+  useEffect(() => setSettingsOpen(false), [active, connectionsOpen]);
+  useEffect(() => connectSettings(), []);
+  // Ajustes del core (nombre del saludo, vista al abrir...) en cuanto el arranque termina.
+  useEffect(() => {
+    if (booted && settingsStatus === "idle") void loadSettings();
+  }, [booted, settingsStatus, loadSettings]);
+  // «Vista al abrir: último workspace»: una sola vez, al arrancar, si no hay pestaña elegida.
+  const [startApplied, setStartApplied] = useState(false);
+  useEffect(() => {
+    if (startApplied || !booted || startView === undefined) return;
+    setStartApplied(true);
+    const s = useStore.getState();
+    if (startView === "last" && s.activeProjectId === null && s.tabs.length > 0) {
+      const open = s.projects.filter((p) => p.open).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0));
+      s.setActiveProject(open[0]?.projectId ?? s.tabs[s.tabs.length - 1]!);
+    }
+  }, [booted, startView, startApplied]);
+  // Cmd/Ctrl+, abre y cierra Ajustes.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key === ",") {
+        e.preventDefault();
+        setAboutOpen(false);
+        setConnectionsOpen(false);
+        setSettingsOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setConnectionsOpen]);
 
   // Solo en desarrollo: `?demo=1` carga dos workspaces de ejemplo para ver la interfaz sin core.
   useEffect(() => {
@@ -59,12 +96,29 @@ function App() {
   return (
     <>
       <CloseGuard />
-      <UpdateAutoCheck />
-      <WorkspaceTabs onWizard={() => setWizard(true)} onAbout={() => setAboutOpen((v) => !v)} aboutOpen={aboutOpen} />
+      {(settingsStatus === "ready" || settingsStatus === "unavailable") && <UpdateAutoCheck />}
+      <WorkspaceTabs onWizard={() => setWizard(true)} onAbout={() => {
+          setSettingsOpen(false);
+          setAboutOpen((v) => !v);
+        }}
+        aboutOpen={aboutOpen}
+        onSettings={() => {
+          setAboutOpen(false);
+          setConnectionsOpen(false);
+          setSettingsOpen((v) => !v);
+        }}
+        settingsOpen={settingsOpen}
+      />
       <HaltedBanner />
       <NoticeBar />
       {/* Una sola oficina montada (una sola `Application` de PixiJS): al cambiar de pestaña se re-sincroniza. */}
-      {aboutOpen ? <AboutScreen onClose={() => setAboutOpen(false)} /> : connectionsOpen ? <ConnectionsScreen /> : active ? <OfficeV0 projectId={active} /> : <Home />}
+      {settingsOpen ? (
+        <SettingsScreen
+          onClose={() => setSettingsOpen(false)}
+          onWizard={() => setWizard(true)}
+          onAbout={() => setAboutOpen(true)}
+        />
+      ) : aboutOpen ? <AboutScreen onClose={() => setAboutOpen(false)} /> : connectionsOpen ? <ConnectionsScreen /> : active ? <OfficeV0 projectId={active} /> : <Home />}
     </>
   );
 }
