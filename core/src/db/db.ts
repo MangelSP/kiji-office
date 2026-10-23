@@ -2,9 +2,13 @@
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
-// schema.sql se copia junto al .js compilado en `npm run build` (ver core/package.json),
-// así que esta misma ruta relativa vale para src/ (vitest) y para dist/.
-const schemaSql = (): string => readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
+// El bundle (core/esbuild.mjs) inyecta el contenido de schema.sql en __KIJI_SCHEMA_SQL__. Sin bundle (tsc, vitest)
+// se lee junto al .js compilado (`npm run build` lo copia, ver core/package.json) o desde src/.
+declare const __KIJI_SCHEMA_SQL__: string | undefined;
+const schemaSql = (): string =>
+  typeof __KIJI_SCHEMA_SQL__ === 'string'
+    ? __KIJI_SCHEMA_SQL__
+    : readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 
 // Migración 2 (0.2a, PLAN-0.2a.md): perfil del agente, métricas del run y tabla de relevos.
 // `agents.relay_order` ya existía desde la migración 1 (JSON string[]; null = orden por defecto).

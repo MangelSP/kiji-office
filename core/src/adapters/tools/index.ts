@@ -5,6 +5,7 @@ import { execFile, spawn } from 'node:child_process';
 import { closeSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { classifyCommand, classifyPath, isInsideCwd, isPathAllowed } from '../classify.js';
+import { foldCase, grepBinary, killTree, normalizeModelPath, shellCommand, spawnOptions } from './platform.js';
 
 export const MAX_TOOL_OUTPUT = 4000;
 export const COMMAND_TIMEOUT_MS = 60_000;
@@ -100,6 +101,8 @@ export async function runTool(
 
 async function run(name: ToolName, a: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   const { cwd } = ctx;
+  // En Windows las rutas del modelo pueden traer `\` o ser absolutas: se normalizan a relativas con '/'.
+  if (typeof a.path === 'string') a = { ...a, path: normalizeModelPath(a.path, cwd) };
   switch (name) {
     case 'read_file': {
       const p = str(a.path);
@@ -176,7 +179,7 @@ async function run(name: ToolName, a: Record<string, unknown>, ctx: ToolContext)
 /** null = se puede escribir; si no, el mensaje de denegación para el modelo. */
 async function writeGate(p: string, ctx: ToolContext): Promise<string | null> {
   if (!isInsideCwd(p, ctx.cwd)) return OUTSIDE(p);
-  if (!isPathAllowed(p, ctx.allowedPaths, ctx.cwd)) {
+  if (!isPathAllowed(foldCase(p), ctx.allowedPaths.map((e) => foldCase(normalizeModelPath(e, ctx.cwd))), ctx.cwd)) {
     const list = ctx.allowedPaths.join(', ') || '(ninguno)';
     return `No puedes modificar ${p}: no está entre tus archivos asignados. Archivos permitidos: ${list}.`;
   }
@@ -211,9 +214,15 @@ function looksBinary(abs: string): boolean {
  */
 function grep(pattern: string, start: string, cwd: string, signal: AbortSignal): Promise<ToolResult> {
   const args = ['-rnIE', '--null', ...SKIP_DIRS.map((d) => `--exclude-dir=${d}`), '--', pattern, start];
+  let bin: string;
+  try {
+    bin = grepBinary();
+  } catch (e) {
+    return Promise.resolve(fail((e as Error).message));
+  }
   return new Promise((resolve) => {
     execFile(
-      'grep',
+      bin,
       args,
       { cwd, timeout: GREP_TIMEOUT_MS, maxBuffer: 1024 * 1024, encoding: 'utf8', signal, env: { ...safeEnv(), LC_ALL: 'C' } },
       (err, stdout) => {
@@ -252,7 +261,13 @@ export function safeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv
 // classifyCommand analiza sintaxis de shell (pipes, &&, redirecciones), así que se ejecuta con `sh -c`.
 function execCommand(cmd: string, ctx: ToolContext, timeoutMs = COMMAND_TIMEOUT_MS): Promise<ToolResult> {
   return new Promise((resolve) => {
-    const child = spawn('/bin/sh', ['-c', cmd], { cwd: ctx.cwd, env: safeEnv(), detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let sh: [string, string[]];
+    try {
+      sh = shellCommand(cmd);
+    } catch (e) {
+      return resolve(fail((e as Error).message));
+    }
+    const child = spawn(sh[0], sh[1], { cwd: ctx.cwd, env: safeEnv(), ...spawnOptions(), stdio: ['ignore', 'pipe', 'pipe'] });
     let buf = '';
     let timedOut = false;
     const add = (d: Buffer) => {
@@ -260,18 +275,12 @@ function execCommand(cmd: string, ctx: ToolContext, timeoutMs = COMMAND_TIMEOUT_
     };
     child.stdout.on('data', add);
     child.stderr.on('data', add);
-    const killTree = () => {
-      try {
-        if (child.pid) process.kill(-child.pid, 'SIGKILL');
-      } catch {
-        child.kill('SIGKILL');
-      }
-    };
+    const kill = () => killTree(child);
     const timer = setTimeout(() => {
       timedOut = true;
-      killTree();
+      kill();
     }, timeoutMs);
-    const onAbort = () => killTree();
+    const onAbort = () => kill();
     ctx.signal.addEventListener('abort', onAbort, { once: true });
     const end = (r: ToolResult) => {
       clearTimeout(timer);

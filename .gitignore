@@ -16,3 +16,6 @@ src-tauri/gen/schemas
 
 # hoja de contacto del generador de sprites
 tools/sprites/out/
+
+# sidecar de Node descargado por tools/fetch-node.mjs
+src-tauri/binaries/

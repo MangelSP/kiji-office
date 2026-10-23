@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "build:core": "npm run build -w core",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "fetch:node": "node tools/fetch-node.mjs",
+    "bump": "node tools/bump-version.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

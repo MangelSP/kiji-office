@@ -5,10 +5,11 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -b . && node -e \"require('fs').cpSync('src/db/schema.sql','dist/db/schema.sql')\""
+    "build": "tsc -b . && node -e \"require('fs').cpSync('src/db/schema.sql','dist/db/schema.sql')\" && node esbuild.mjs"
   },
   "devDependencies": {
     "@types/node": "^22",
+    "esbuild": "^0.28.2",
     "typescript": "~6.0.3"
   },
   "dependencies": {

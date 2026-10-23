@@ -1,0 +1,40 @@
+/* Pantalla Acerca de. Paleta de la app: fondo #1b1d2b, texto #f1ece2, acento #f4c542. */
+.ab-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+  box-sizing: border-box;
+  color: #f1ece2;
+}
+.ab-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.ab-head h1 {
+  margin: 4px 0 0;
+  font-size: 24px;
+}
+.ab-screen h2 {
+  margin: 8px 0 0;
+  font-size: 16px;
+  color: #f4c542;
+}
+.ab-screen p {
+  margin: 0;
+}
+.ab-version {
+  font-size: 18px;
+}
+.ab-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ab-muted {
+  color: #c9cbe0;
+  font-size: 13px;
+}

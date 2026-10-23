@@ -8,9 +8,9 @@ import { useCloseWorkspace } from "./useCloseWorkspace";
 import { useOpenFolder } from "./useOpenFolder";
 import "./Workspaces.css";
 
-type Props = { onWizard?: () => void };
+type Props = { onWizard?: () => void; onAbout?: () => void; aboutOpen?: boolean };
 
-export default function WorkspaceTabs({ onWizard }: Props) {
+export default function WorkspaceTabs({ onWizard, onAbout, aboutOpen }: Props) {
   const tabs = useStore((s) => s.tabs);
   const projects = useStore((s) => s.projects);
   const active = useStore((s) => s.activeProjectId);
@@ -127,6 +127,11 @@ export default function WorkspaceTabs({ onWizard }: Props) {
       {onWizard && (
         <button type="button" className="ws-btn ws-wizard" onClick={onWizard}>
           Asistente
+        </button>
+      )}
+      {onAbout && (
+        <button type="button" className={`ws-btn ws-about${aboutOpen ? " is-active" : ""}`} aria-pressed={aboutOpen} onClick={onAbout}>
+          Acerca de
         </button>
       )}
       {dialog}

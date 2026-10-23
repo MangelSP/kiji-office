@@ -1,6 +1,7 @@
 // Integración: commit, rebase, tests, fast-forward merge y revert. Solo la hace el core a nombre del jefe.
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
+import { killTree, spawnOptions } from '../adapters/tools/platform.js';
 import { assertSafeRef, GitError, NO_SIGN, runGit, runGitRaw } from './run.js';
 
 /**
@@ -117,21 +118,6 @@ class TailBuffer {
   }
 }
 
-/** Mata el grupo de procesos del hijo (POSIX) o el árbol (Windows). Ignora `ESRCH`: ya no queda nadie. */
-function killTree(pid: number | undefined, fallback: () => void): void {
-  if (!pid) return;
-  if (process.platform === 'win32') {
-    // En Windows no hay grupos: `taskkill /T` mata el árbol completo.
-    execFile('taskkill', ['/T', '/F', '/PID', String(pid)], { windowsHide: true }, () => undefined);
-    return;
-  }
-  try {
-    process.kill(-pid, 'SIGKILL');
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ESRCH') fallback();
-  }
-}
-
 /** Tras el `exit` del hijo, tiempo máximo para vaciar lo que quede en los pipes antes de cortarlos. */
 const DRAIN_GRACE_MS = 1000;
 
@@ -155,8 +141,7 @@ export function runTests(worktree: string, command: string, timeoutMs: number): 
     const child = spawn(file!, args, {
       cwd: resolve(worktree),
       env: process.env,
-      detached: true,
-      windowsHide: true, // en Windows `detached` abriría una consola
+      ...spawnOptions(), // detached solo en Unix; windowsHide en Windows
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const finish = (): void => {
@@ -170,7 +155,7 @@ export function runTests(worktree: string, command: string, timeoutMs: number): 
     };
     const timer = setTimeout(() => {
       timedOut = true;
-      killTree(child.pid, () => child.kill('SIGKILL'));
+      killTree(child);
     }, timeoutMs);
     child.stdout?.on('data', (d: Buffer | string) => tail.push(Buffer.from(d)));
     child.stderr?.on('data', (d: Buffer | string) => tail.push(Buffer.from(d)));
@@ -183,7 +168,7 @@ export function runTests(worktree: string, command: string, timeoutMs: number): 
     child.on('exit', (code) => {
       exitCode = timedOut ? 124 : (code ?? 1);
       // Mata a los nietos que sigan vivos (tests en segundo plano, workers) para que suelten los pipes.
-      if (process.platform !== 'win32') killTree(child.pid, () => undefined);
+      if (process.platform !== 'win32') killTree(child);
       child.on('close', finish);
       drainTimer = setTimeout(finish, DRAIN_GRACE_MS);
     });
