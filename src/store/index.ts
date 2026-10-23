@@ -4,6 +4,7 @@
 import { create } from "zustand";
 import { core } from "../core/client";
 import type {
+  BoardMovedEvent,
   BudgetNotice,
   Event as CoreEvent,
   ManagerActionView,
@@ -15,7 +16,9 @@ import type {
   RunMetrics,
   WorkspaceOverview,
 } from "../../shared/protocol";
+import { pushBoardMove } from "./boardMoves";
 import { createAgentsSlice, type Agent, type AgentsSlice } from "./agents";
+import { createBoardSlice, type BoardSlice } from "./board";
 import { createApprovalsSlice, type Approval, type ApprovalsSlice } from "./approvals";
 import { createConnectionsSlice, type ConnectionsSlice } from "./connections";
 import { createCoreSlice, type CoreSlice } from "./core";
@@ -44,7 +47,8 @@ export type AppState = CoreSlice &
   ProvidersSlice &
   OfficeSlice &
   ConnectionsSlice &
-  ManagerSlice;
+  ManagerSlice &
+  BoardSlice;
 
 export const useStore = create<AppState>()((...a) => ({
   ...createCoreSlice(...a),
@@ -59,6 +63,7 @@ export const useStore = create<AppState>()((...a) => ({
   ...createOfficeSlice(...a),
   ...createConnectionsSlice(...a),
   ...createManagerSlice(...a),
+  ...createBoardSlice(...a),
 }));
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -113,6 +118,9 @@ export function applyEvent(event: CoreEvent) {
         const id = p.agent_id ?? p.id;
         if (id !== undefined) s.setAgentStatus(pid, id as Agent["id"], String(p.status));
       }
+      break;
+    case "board.moved":
+      if (pid && isObject(p) && typeof p.to === "string") pushBoardMove(pid, p as unknown as BoardMovedEvent);
       break;
     case "approval.requested":
       if (pid && isObject(p) && "id" in p) s.addApproval(pid, p as unknown as Approval);

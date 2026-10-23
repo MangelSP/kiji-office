@@ -1,5 +1,6 @@
 // Slice `tasks`: tareas del proyecto, agrupadas por estado en la interfaz.
 import type { StateCreator } from "zustand";
+import type { BoardColumn } from "../../shared/protocol";
 import type { Id } from "./agents";
 import { CoreError } from "../core/client";
 import { errorMessage, stripMethodPrefix } from "./core";
@@ -22,6 +23,8 @@ export type Task = {
   queued?: boolean;
   /** Posición en la cola, 1-based; null si no está en cola. */
   queue_position?: number | null;
+  /** Columna de la pizarra (0.4a); si el core aún no la manda, la escena la deriva del estado. */
+  board_column?: BoardColumn | null;
 };
 
 /** Consulta de solo lectura: sin archivos que modificar, así que no hay nada que integrar. */

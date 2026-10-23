@@ -5,6 +5,7 @@ import ApprovalCard from "../../components/ApprovalCard";
 import LogPanel from "../../components/LogPanel";
 import OfficeComposer from "../../components/OfficeComposer";
 import ProvidersPanel from "../../components/ProvidersPanel";
+import BoardView from "../Board/BoardView";
 import AgentTabs from "../Agents/AgentTabs";
 import CreateAgent from "../CreateAgent/CreateAgent";
 import OfficeScene from "../../scenes/OfficeScene";
@@ -77,6 +78,8 @@ function Office({ projectId }: { projectId: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [showBoard, setShowBoard] = useState(false);
+  const [focusTask, setFocusTask] = useState<string | null>(null);
 
   // Al cambiar de workspace se parte limpio: sin robot elegido ni diálogos del anterior.
   const [shownProject, setShownProject] = useState(projectId);
@@ -84,7 +87,26 @@ function Office({ projectId }: { projectId: string }) {
     setShownProject(projectId);
     setSelectedId(null);
     setShowCreateAgent(false);
+    setShowBoard(false);
   }
+
+  // Desde la pizarra: se vuelve a la oficina, se elige el robot (el jefe si la tarea no tiene) y se enseña la tarjeta.
+  const openTask = (agentId: string | null, task: { id: string | number; title: string }) => {
+    const boss = agents.find((a) => a.is_boss === true || a.is_boss === 1);
+    setSelectedId(agentId ?? (boss ? String(boss.id) : null));
+    setFocusTask(task.title);
+    setShowBoard(false);
+  };
+  useEffect(() => {
+    if (focusTask === null || showBoard) return;
+    const el = Array.from(document.querySelectorAll<HTMLElement>(".office-agent [aria-label]")).find(
+      (e) => e.getAttribute("aria-label") === `Tarea ${focusTask}`,
+    );
+    el?.scrollIntoView?.({ block: "center" });
+    setFocusTask(null);
+  }, [focusTask, showBoard, selectedId, tasks]);
+  // La escena (otro paso) expondrá `onBoardClick`; se pasa por spread para compilar antes de que exista.
+  const sceneBoard = { onBoardClick: () => setShowBoard(true) };
 
   const agentName = (id?: string | number) => agents.find((a) => String(a.id) === String(id))?.name;
 
@@ -116,9 +138,14 @@ function Office({ projectId }: { projectId: string }) {
         <button type="button" className="btn" onClick={() => setShowCreateAgent(true)}>
           + Robot
         </button>
+        <button type="button" className="btn" aria-pressed={showBoard} onClick={() => setShowBoard((v) => !v)}>
+          Pizarra
+        </button>
         <p className="core-status">core: {coreLabel(coreStatus, coreDetail)}</p>
       </header>
 
+      {showBoard && <BoardView onOpenTask={openTask} onClose={() => setShowBoard(false)} />}
+      <div hidden={showBoard}>
       {narrow && approvals}
 
       {/* Arriba: la oficina (con su caja de pedido) y, a su derecha, las tarjetas de robots con el detalle del elegido. */}
@@ -126,7 +153,7 @@ function Office({ projectId }: { projectId: string }) {
         <div className="office-left">
           <section className="panel scene-panel" aria-label="Oficina">
             <div className="scene-stage">
-              <OfficeScene projectId={projectId} selectedId={selectedId} onSelect={setSelectedId} />
+              <OfficeScene projectId={projectId} selectedId={selectedId} onSelect={setSelectedId} {...sceneBoard} />
               <OfficeComposer selectedId={selectedId} onSelect={setSelectedId} />
             </div>
           </section>
@@ -157,6 +184,7 @@ function Office({ projectId }: { projectId: string }) {
             </button>
           )}
         </div>
+      </div>
       </div>
       {showCreateAgent && <CreateAgent onClose={() => setShowCreateAgent(false)} />}
     </main>

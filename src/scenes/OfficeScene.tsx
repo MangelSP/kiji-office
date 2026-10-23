@@ -4,9 +4,12 @@ import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
 import { Application, Container, Graphics, Sprite, TextureStyle, type Texture } from "pixi.js";
 import { useStore } from "../store";
 import type { Agent } from "../store/agents";
+import type { BoardColumn } from "../../shared/protocol";
 import { projectOf } from "../store/partition";
-import { bubbleText, bubbleVisible, stackBubbles, type BubbleSlot } from "./bubbleText";
-import { assignSlots, type OfficeData, OFFICE_H, OFFICE_W, pickRobot, ROBOT_H, SCALE, sheetKey } from "./officeLayout";
+import { BoardView } from "./BoardView";
+import { tasksByColumn } from "./boardLogic";
+import { bubbleText, bubbleVisible, prefersReducedMotion, stackBubbles, type BubbleSlot } from "./bubbleText";
+import { assignSlots, type OfficeData, OFFICE_H, OFFICE_W, pickRobot, type Point, ROBOT_H, SCALE, sheetKey } from "./officeLayout";
 import { drawPlaceholderBackground, drawPlaceholderFront } from "./placeholders";
 import { RobotSprite } from "./RobotSprite";
 import { loadOfficeAssets, type OfficeAssets } from "./spriteAssets";
@@ -27,6 +30,8 @@ type Props = {
   /** Clic en un robot. */
   onSelect?: (agentId: string) => void;
   selectedId?: string | null;
+  /** Clic en la pizarra de la escena (la UI abre la vista Pizarra). */
+  onBoardClick?: () => void;
 };
 
 /** Cada cuánto se recalculan los globos (ms). */
@@ -42,7 +47,13 @@ class SceneController {
   private lastBubbleUpdate = -Infinity;
   private selectedId: string | null = null;
   private unsubscribe: () => void;
+  private board: BoardView;
+  /** Tareas cuya nota aún no ha pegado el robot: siguen dibujadas en su columna de origen. */
+  private holds = new Map<string, BoardColumn>();
+  private lastSeq = 0;
+  private reduced = prefersReducedMotion();
   onSelect?: (id: string) => void;
+  onBoardClick?: () => void;
 
   constructor(
     private app: Application,
@@ -60,17 +71,62 @@ class SceneController {
       return g;
     };
     world.addChild(layer(assets.background, drawPlaceholderBackground));
+    this.board = new BoardView(assets.office.board.rect);
+    world.addChild(this.board.view);
     world.addChild(this.robotsLayer);
     world.addChild(layer(assets.front, drawPlaceholderFront));
     app.stage.addChild(world, this.labelsLayer, this.bubblesLayer);
 
     app.ticker.add(this.tick);
     app.canvas.addEventListener("pointerdown", this.onPointerDown);
+    app.canvas.addEventListener("pointermove", this.onPointerMove);
     this.sync(projectOf(useStore.getState(), projectId).agents);
+    this.resetBoard();
     this.unsubscribe = useStore.subscribe((s, prev) => {
-      const agents = projectOf(s, this.projectId).agents;
-      if (agents !== projectOf(prev, this.projectId).agents) this.sync(agents);
+      const cur = projectOf(s, this.projectId);
+      const old = projectOf(prev, this.projectId);
+      if (cur.agents !== old.agents) this.sync(cur.agents);
+      if (cur.tasks !== old.tasks) this.renderBoard();
+      if (cur.boardMoves !== old.boardMoves) this.consumeMoves();
     });
+  }
+
+  private resetBoard() {
+    this.holds.clear();
+    this.lastSeq = Math.max(0, ...projectOf(useStore.getState(), this.projectId).boardMoves.map((m) => m.seq));
+    this.renderBoard();
+  }
+
+  private renderBoard() {
+    this.board.render(tasksByColumn(projectOf(useStore.getState(), this.projectId).tasks, this.holds));
+  }
+
+  /** `board.moved` nuevos: el robot de la tarea (o el jefe) camina a la pizarra y pega la nota. */
+  private consumeMoves() {
+    const p = projectOf(useStore.getState(), this.projectId);
+    for (const m of p.boardMoves) {
+      if (m.seq <= this.lastSeq) continue;
+      this.lastSeq = m.seq;
+      const robot =
+        (m.agentId != null ? this.robots.get(String(m.agentId)) : undefined) ??
+        this.robots.get(String(p.agents.find((a) => a.is_boss)?.id));
+      const paste = () => {
+        this.holds.delete(m.taskId);
+        this.renderBoard();
+        const now = performance.now();
+        if (this.reduced) this.board.flash(now);
+        else this.board.popColumn(m.to, now);
+      };
+      if (!robot) {
+        paste();
+        continue;
+      }
+      if (!this.reduced && m.from && !this.holds.has(m.taskId)) {
+        this.holds.set(m.taskId, m.from);
+        this.renderBoard();
+      }
+      robot.enqueueTrip({ board: this.assets.office.board.stand, onPaste: paste });
+    }
   }
 
   /** Cambia de workspace: quita los robots y globos del anterior y dibuja los del nuevo. */
@@ -81,6 +137,7 @@ class SceneController {
     for (const b of this.bubbles.values()) b.destroy();
     this.bubbles.clear();
     this.sync(projectOf(useStore.getState(), projectId).agents);
+    this.resetBoard();
   }
 
   /** Crea/mueve/borra robots según los agentes; solo llama a `setState` cuando cambia el estado. */
@@ -116,24 +173,42 @@ class SceneController {
     for (const r of this.robots.values()) r.setSelected(r.id === id);
   }
 
-  robotAt = (clientX: number, clientY: number): string | null => {
+  /** Coordenadas de pantalla → px lógicos de la oficina. */
+  private toLogical(clientX: number, clientY: number): Point | null {
     const rect = this.app.canvas.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return null;
-    const px = ((clientX - rect.left) / rect.width) * OFFICE_W;
-    const py = ((clientY - rect.top) / rect.height) * OFFICE_H;
-    return pickRobot([...this.robots.values()], px, py);
+    return { x: ((clientX - rect.left) / rect.width) * OFFICE_W, y: ((clientY - rect.top) / rect.height) * OFFICE_H };
+  }
+
+  robotAt = (clientX: number, clientY: number): string | null => {
+    const p = this.toLogical(clientX, clientY);
+    return p ? pickRobot([...this.robots.values()], p.x, p.y) : null;
   };
 
   private onPointerDown = (e: PointerEvent) => {
     const id = this.robotAt(e.clientX, e.clientY);
-    if (id) this.onSelect?.(id);
+    if (id) return this.onSelect?.(id);
+    const p = this.toLogical(e.clientX, e.clientY);
+    if (p && this.board.contains(p.x, p.y)) this.onBoardClick?.();
+  };
+
+  private onPointerMove = (e: PointerEvent) => {
+    const p = this.toLogical(e.clientX, e.clientY);
+    const over = !!p && !this.robotAt(e.clientX, e.clientY) && this.board.contains(p.x, p.y);
+    this.app.canvas.style.cursor = over && this.onBoardClick ? "pointer" : "";
   };
 
   private tick = () => {
     const now = performance.now();
-    for (const r of this.robots.values()) r.tick(now);
+    let walking = false;
+    for (const r of this.robots.values()) {
+      r.tick(now);
+      walking ||= r.busy;
+    }
+    this.board.tick(now);
     for (const b of this.bubbles.values()) b.tick(now);
-    if (now - this.lastBubbleUpdate >= BUBBLE_REFRESH_MS) {
+    // Mientras alguien camina los globos se recolocan en cada fotograma para seguirle.
+    if (walking || now - this.lastBubbleUpdate >= BUBBLE_REFRESH_MS) {
       this.lastBubbleUpdate = now;
       this.updateBubbles(now);
     }
@@ -177,15 +252,16 @@ class SceneController {
     this.robots.clear();
     for (const b of this.bubbles.values()) b.destroy();
     this.bubbles.clear();
+    this.board.destroy();
     this.assets.destroy();
   }
 }
 
-export default function OfficeScene({ ref, projectId, onSelect, selectedId = null }: Props) {
+export default function OfficeScene({ ref, projectId, onSelect, onBoardClick, selectedId = null }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const ctrl = useRef<SceneController | null>(null);
-  const latest = useRef({ onSelect, selectedId, projectId });
-  latest.current = { onSelect, selectedId, projectId };
+  const latest = useRef({ onSelect, onBoardClick, selectedId, projectId });
+  latest.current = { onSelect, onBoardClick, selectedId, projectId };
 
   useImperativeHandle(ref, () => ({ robotAt: (x, y) => ctrl.current?.robotAt(x, y) ?? null }), []);
 
@@ -223,6 +299,7 @@ export default function OfficeScene({ ref, projectId, onSelect, selectedId = nul
       host.current?.appendChild(app.canvas);
       const c = new SceneController(app, assets, latest.current.projectId);
       c.onSelect = (id) => latest.current.onSelect?.(id);
+      c.onBoardClick = () => latest.current.onBoardClick?.();
       c.setSelected(latest.current.selectedId);
       ctrl.current = c;
     })();

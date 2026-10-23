@@ -1,6 +1,9 @@
 // Solo en desarrollo (`?demo=1`): dos workspaces de ejemplo con datos de overview, para ver la interfaz sin core.
 import type { ConnectionView, DiscoveredServer, ProjectListItem, ProviderStatus, WorkspaceOverview, WorkspaceSummary } from "../../shared/protocol";
+import type { BoardColumn } from "../../shared/protocol";
+import { columnOfTask, nextColumn } from "../scenes/boardLogic";
 import { useStore } from ".";
+import { pushBoardMove } from "./boardMoves";
 import type { Agent } from "./agents";
 
 const now = () => Date.now();
@@ -108,6 +111,7 @@ export function loadDemo() {
   s.setAgents(DEMO_APP, AGENTS_APP);
   s.upsertTask(DEMO_WEB, { id: "dt1", title: "Arreglar el login", status: "running", agent_id: "demo-2" });
   s.upsertTask(DEMO_WEB, { id: "dt2", title: "Migrar estilos", status: "assigned", agent_id: "demo-3", queued: true, queue_position: 1 });
+  loadBoardDemo(DEMO_WEB);
   s.applyQueue({ projectId: DEMO_WEB, taskId: "dt2", queued: true, position: 1, blockedBy: "slots" });
   s.noteActivity(DEMO_WEB, "demo-1", "tool", { name: "Read", input: { file_path: "src/store/index.ts" } });
   s.noteActivity(DEMO_WEB, "demo-2", "permission", { decision: "pending" });
@@ -115,7 +119,27 @@ export function loadDemo() {
   s.addApproval(DEMO_WEB, { id: "da1", agent_id: "demo-2", task_id: "dt1", tool: "Bash", input: { command: "npm test" }, risk: "medium" });
   s.noteActivity(DEMO_APP, "demo-5", "tool", { name: "Edit", input: { file_path: "lib/main.dart" } });
   loadManagerDemo();
+  startBoardDemo();
   s.setBooted(true);
+}
+
+let boardDemoTimer: ReturnType<typeof setInterval> | null = null;
+const BOARD_DEMO_MS = 6000;
+
+/** Cada 6 s mueve una tarea de ejemplo a la siguiente columna (con `board.moved`) para ver la caminata del robot. */
+function startBoardDemo() {
+  if (boardDemoTimer) clearInterval(boardDemoTimer);
+  let n = 0;
+  boardDemoTimer = setInterval(() => {
+    const { tasks } = useStore.getState().byProject[DEMO_WEB] ?? { tasks: [] };
+    const movable = tasks.filter((t) => t.agent_id != null);
+    if (movable.length === 0) return;
+    const t = movable[n++ % movable.length];
+    const from: BoardColumn = columnOfTask(t);
+    const to = nextColumn(from);
+    useStore.getState().upsertTask(DEMO_WEB, { ...t, board_column: to });
+    pushBoardMove(DEMO_WEB, { projectId: DEMO_WEB, taskId: String(t.id), agentId: String(t.agent_id), from, to, auto: true });
+  }, BOARD_DEMO_MS);
 }
 
 /** Ejemplos de 0.2d: tareas en revisión/aprobadas/integradas, objetivos, gerente, diario, memoria y avisos. */
@@ -184,4 +208,28 @@ function loadManagerDemo() {
   });
   s.addApproval(DEMO_WEB, { id: "da2", task_id: "dt4", tool: "manager:request_integration", kind: "integrate", input: { question: "¿Integro «Cambiar el botón de pago» en main?" } });
   s.addApproval(DEMO_WEB, { id: "da3", tool: "manager:ask", kind: "question", input: { question: "El gasto de hoy pasó de 5 $. ¿Sigo con las tareas pendientes?", options: ["Sí, seguir hoy", "No, parar hasta mañana"] } });
+}
+
+/** Tareas repartidas por las 10 columnas de la pizarra. */
+function loadBoardDemo(pid: string) {
+  const s = useStore.getState();
+  const rows: [string, string, string, string, string | null, 0 | 1, Record<string, unknown>?][] = [
+    ["b1", "Idea: modo claro", "todo", "refinement", null, 0],
+    ["b2", "Página de ajustes", "assigned", "refined", "demo-3", 0],
+    ["b3", "Arreglar el login", "running", "doing_dev", "demo-2", 0, { model: "sonnet", cost_usd: 0.42 }],
+    ["b4", "Migrar estilos", "review", "committed", "demo-3", 0, { model: "haiku", cost_usd: 0.08 }],
+    ["b5", "Revisar rutas", "running", "doing_qa", "demo-1", 1, { model: "opus", cost_usd: 1.2 }],
+    ["b6", "Tests rotos en cart", "changes", "bug", "demo-2", 0, { model: "sonnet", cost_usd: 0.3 }],
+    ["b7", "Corregir el carrito", "running", "fix", "demo-2", 0, { model: "sonnet", cost_usd: 0.55 }],
+    ["b8", "Nuevo selector de fecha", "approved", "functional", "demo-3", 0, { model: "haiku", cost_usd: 0.12 }],
+    ["b9", "Cabecera responsive", "integrated", "done", "demo-2", 0, { model: "sonnet", cost_usd: 0.9 }],
+    ["b10", "Logo nuevo", "integrated", "done_prod", "demo-3", 1, { model: "haiku", cost_usd: 0.05 }],
+    ["b11", "Subir imágenes", "blocked", "refined", "demo-2", 0],
+    ["b12", "Exportar CSV", "failed", "doing_dev", "demo-3", 0, { model: "haiku", cost_usd: 0.2 }],
+    ["b13", "Notificaciones push", "paused_limit", "doing_dev", "demo-2", 0, { model: "sonnet", cost_usd: 0.6 }],
+  ];
+  for (const [id, title, status, board_column, agent, manual, extra] of rows) {
+    const board_flag = status === "blocked" || status === "failed" || status === "paused_limit" ? status : null;
+    s.upsertTask(pid, { id, title, status, agent_id: agent, board_column, board_manual: manual, board_flag, ...extra } as never);
+  }
 }

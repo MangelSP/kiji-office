@@ -5,6 +5,7 @@ import type { StateCreator } from "zustand";
 import type { AgentMetrics, QueueChange, RelayRow, RunMetrics, ToolStep } from "../../shared/protocol";
 import type { Agent } from "./agents";
 import type { Approval } from "./approvals";
+import type { BoardMoveItem } from "./boardMoves";
 import type { LogEntry } from "./events";
 import type { AppState } from "./index";
 import type { AgentActivity, OfficeDraft } from "./providers";
@@ -29,6 +30,8 @@ export type ProjectData = {
   drafts: Record<string, OfficeDraft>;
   /** Tareas en cola global (clave = id de la tarea): posición y motivo de la espera. */
   queue: Record<string, QueueChange>;
+  /** Animaciones de la pizarra pendientes de ver en la escena (`board.moved`, máx. 50). */
+  boardMoves: BoardMoveItem[];
 };
 
 /** Partición vacía y compartida: los selectores de un proyecto aún sin datos devuelven siempre la misma referencia. */
@@ -44,6 +47,7 @@ export const EMPTY_PROJECT: ProjectData = Object.freeze({
   relays: [],
   drafts: {},
   queue: {},
+  boardMoves: [],
 }) as ProjectData;
 
 export type PartitionSlice = {

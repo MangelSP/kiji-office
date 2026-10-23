@@ -5,7 +5,8 @@ import { DEFAULT_OFFICE, PALETTES, parseOfficeData, type OfficeData } from "./of
 import { makePlaceholderFrames } from "./placeholders";
 import { ROBOT_STATES, type RobotState } from "./robotStates";
 
-export type RobotFrames = Record<RobotState, Texture[]>;
+/** `walk` es opcional: solo si el sheet trae la animación (si no, la caminata usa `idle`). */
+export type RobotFrames = Record<RobotState, Texture[]> & { walk?: Texture[] };
 
 export type OfficeAssets = {
   office: OfficeData;
@@ -62,6 +63,8 @@ async function loadRobotSheet(name: string): Promise<RobotFrames | null> {
       if (frames.length === 0) frames = names.filter((n) => n.startsWith(st)).sort().map((n) => sheet.textures[n]);
       out[st] = frames;
     }
+    const walk: Texture[] = sheet.animations.walk ?? names.filter((n) => n.startsWith("walk")).sort().map((n) => sheet.textures[n]);
+    if (walk.length > 0) out.walk = walk;
     if (out.idle.length === 0) return null;
     for (const st of ROBOT_STATES) if (out[st].length === 0) out[st] = out.idle; // estado sin arte → idle
     return out;

@@ -8,7 +8,10 @@ export const ROBOT_W = 32;
 export const ROBOT_H = 40;
 
 export type Point = { x: number; y: number };
-export type OfficeData = { desks: Point[]; boss: Point; standing: Point[] };
+export type Rect = { x: number; y: number; w: number; h: number };
+/** Pizarra: `stand` = donde apoyan los pies del robot delante; `rect` = zona útil (px lógicos). */
+export type BoardSpot = { stand: Point; rect: Rect };
+export type OfficeData = { desks: Point[]; boss: Point; standing: Point[]; board: BoardSpot };
 
 /** Las posiciones son donde apoyan los pies del robot (ancla abajo-centro), en px lógicos. */
 export const DEFAULT_OFFICE: OfficeData = {
@@ -29,6 +32,7 @@ export const DEFAULT_OFFICE: OfficeData = {
     { x: 18, y: 165 },
     { x: 302, y: 165 },
   ],
+  board: { stand: { x: 200, y: 90 }, rect: { x: 169, y: 10, w: 62, h: 38 } },
 };
 
 function toPoint(v: unknown): Point | null {
@@ -44,6 +48,19 @@ function toPoints(v: unknown): Point[] {
   return Array.isArray(v) ? v.map(toPoint).filter((p): p is Point => p !== null) : [];
 }
 
+function toRect(v: unknown): Rect | null {
+  if (!v || typeof v !== "object") return null;
+  const { x, y, w, h } = v as Record<string, unknown>;
+  return [x, y, w, h].every((n) => typeof n === "number") && (w as number) > 0 && (h as number) > 0
+    ? { x: x as number, y: y as number, w: w as number, h: h as number }
+    : null;
+}
+
+function toBoard(v: unknown): BoardSpot {
+  const r = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+  return { stand: toPoint(r.stand) ?? DEFAULT_OFFICE.board.stand, rect: toRect(r.rect) ?? DEFAULT_OFFICE.board.rect };
+}
+
 /** Lee `oficina.json` de forma tolerante (`desks`, `boss`|`jefe`, `standing`); lo que falte usa los valores por defecto. */
 export function parseOfficeData(raw: unknown): OfficeData {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -53,6 +70,7 @@ export function parseOfficeData(raw: unknown): OfficeData {
     desks: desks.length > 0 ? desks : DEFAULT_OFFICE.desks,
     boss: toPoint(r.boss ?? r.jefe) ?? DEFAULT_OFFICE.boss,
     standing: standing.length > 0 ? standing : DEFAULT_OFFICE.standing,
+    board: toBoard(r.board ?? r.pizarra),
   };
 }
 
