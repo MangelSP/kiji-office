@@ -68,7 +68,17 @@ function coreLabel(status: string, detail?: string) {
 }
 
 export default function OfficeV0() {
-  const s = useStore();
+  const agents = useStore((st) => st.agents);
+  const approvalsList = useStore((st) => st.approvals);
+  const coreStatus = useStore((st) => st.coreStatus);
+  const coreDetail = useStore((st) => st.coreDetail);
+  const notice = useStore((st) => st.notice);
+  const unavailableAgentList = useStore((st) => st.unavailable["agent.list"]);
+  const project = useStore((st) => st.project);
+  const eventCount = useStore((st) => st.events.length);
+  const answerApproval = useStore((st) => st.answerApproval);
+  const openProject = useStore((st) => st.openProject);
+  const setNotice = useStore((st) => st.setNotice);
   const narrow = useNarrow();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
@@ -90,24 +100,24 @@ export default function OfficeV0() {
   const abrirProyecto = async () => {
     try {
       const path = await open({ directory: true, multiple: false, title: "Elige la carpeta del proyecto" });
-      if (typeof path === "string") await s.openProject(path);
+      if (typeof path === "string") await openProject(path);
     } catch {
       // Fuera de Tauri no existe el selector nativo.
-      s.setNotice("El selector de carpetas solo está disponible en la app de escritorio.");
+      setNotice("El selector de carpetas solo está disponible en la app de escritorio.");
     }
   };
 
-  const agentName = (id?: string | number) => s.agents.find((a) => String(a.id) === String(id))?.name;
+  const agentName = (id?: string | number) => agents.find((a) => String(a.id) === String(id))?.name;
 
-  const approvals = s.approvals.length > 0 && (
+  const approvals = approvalsList.length > 0 && (
     <section className="panel" aria-labelledby="appr-title">
-      <h2 id="appr-title">Esperan tu respuesta ({s.approvals.length})</h2>
-      {s.approvals.map((a) => (
+      <h2 id="appr-title">Esperan tu respuesta ({approvalsList.length})</h2>
+      {approvalsList.map((a) => (
         <ApprovalCard
           key={String(a.id)}
           approval={a}
           agentName={agentName(a.agent_id)}
-          onAnswer={(allow) => s.answerApproval(a.id, allow)}
+          onAnswer={(allow) => answerApproval(a.id, allow)}
         />
       ))}
     </section>
@@ -123,13 +133,13 @@ export default function OfficeV0() {
         <button type="button" className="btn" onClick={() => setShowCreateAgent(true)}>
           + Robot
         </button>
-        <p className="core-status">core: {coreLabel(s.coreStatus, s.coreDetail)}</p>
+        <p className="core-status">core: {coreLabel(coreStatus, coreDetail)}</p>
       </header>
 
-      {s.notice && (
+      {notice && (
         <div className="notice" role="status">
-          <span>{s.notice}</span>
-          <button type="button" className="btn btn-ghost" onClick={() => s.setNotice(null)}>
+          <span>{notice}</span>
+          <button type="button" className="btn btn-ghost" onClick={() => setNotice(null)}>
             Cerrar
           </button>
         </div>
@@ -148,7 +158,7 @@ export default function OfficeV0() {
 
       <div className="office-grid">
         <div className="col">
-          {s.unavailable["agent.list"] && <p className="muted">Aún no disponible: el core no implementa agent.list.</p>}
+          {unavailableAgentList && <p className="muted">Aún no disponible: el core no implementa agent.list.</p>}
           <AgentTabs selectedId={selectedId} onSelect={setSelectedId} />
         </div>
 
@@ -163,7 +173,7 @@ export default function OfficeV0() {
                 Abrir proyecto
               </button>
             </div>
-            <p className="muted small project-path">{s.project ? s.project.path : "Ningún proyecto abierto."}</p>
+            <p className="muted small project-path">{project ? project.path : "Ningún proyecto abierto."}</p>
           </section>
 
           {showLog ? (
@@ -175,7 +185,7 @@ export default function OfficeV0() {
             </div>
           ) : (
             <button type="button" className="btn" aria-expanded={false} onClick={() => setShowLog(true)}>
-              Registro en vivo ({s.events.length}) ▸
+              Registro en vivo ({eventCount}) ▸
             </button>
           )}
         </div>

@@ -8,7 +8,7 @@ import { createWorktree, branchName, changedFiles, diff } from '../git/worktree.
 import { denyPending, onPermissionRequest } from './approvals.js';
 import { type Ctx, type Handler, type LiveRun, asParams, str } from './context.js';
 import { logEvent } from './events.js';
-import { applyUsage, finalizeMetrics, newUsageState, preferredModel, writeUsage } from './metrics.js';
+import { applyUsage, finalizeMetrics, newUsageState, preferredModel, sessionBaseline, writeUsage } from './metrics.js';
 import { forkPoint, foreignFiles, revertFiles } from './ownership.js';
 import { contextWindowFor } from '../adapters/claude.js';
 import { recordRate, scheduleLimitsNotify } from './quota.js';
@@ -210,7 +210,10 @@ export async function startTask(ctx: Ctx, taskId: string, opts: StartOptions = {
       ...(resumeSessionId ? { resumeSessionId } : {}),
       ...(skills.length > 0 ? { skills: skills.map((k) => ({ name: k.name, dir: k.dir, description: k.description })) } : {}),
     };
-    if (resumeSessionId) live.sessionId = resumeSessionId;
+    if (resumeSessionId) {
+      live.sessionId = resumeSessionId;
+      live.usage.baseline = sessionBaseline(ctx, taskId, resumeSessionId, run.id);
+    }
     const stream = adapter.start(spec);
     live.finished = consume(ctx, live, stream);
     scheduleLimitsNotify(ctx);
@@ -312,7 +315,7 @@ function closeRun(
   denyPending(ctx, live, 'el run terminó con la aprobación sin contestar');
   // Consumo definitivo: el del adaptador (`usage`); sin él (adaptadores sin métricas) vale el `done` como en 0.1.
   const u = live.usage;
-  if (extra.costUsd !== undefined) u.costUsd = extra.costUsd;
+  if (extra.costUsd !== undefined) u.costUsd = Math.max(0, extra.costUsd - u.baseline.costUsd); // acumulado de la sesión
   if (!u.seen && extra.usage) {
     u.input = extra.usage.input;
     u.output = extra.usage.output;
@@ -438,8 +441,20 @@ async function onDone(ctx: Ctx, live: LiveRun, ev: Extract<AgentEvent, { type: '
 // Parada
 // ---------------------------------------------------------------------------
 
+/** El run en curso de la tarea; si ya terminó (`ended`) espera a que `consume` acabe (incluido el relevo) y devuelve el que haya entonces. */
+export async function settledLive(ctx: Ctx, taskId: string): Promise<LiveRun | undefined> {
+  let live = ctx.live.get(taskId);
+  while (live?.ended) {
+    await live.finished.catch(() => undefined);
+    const next = ctx.live.get(taskId);
+    if (next === live) break; // por si el run no se retira solo: no esperar en bucle
+    live = next;
+  }
+  return live?.ended ? undefined : live;
+}
+
 export async function stopTask(ctx: Ctx, taskId: string, reason = 'detenida por el usuario') {
-  const live = ctx.live.get(taskId);
+  const live = await settledLive(ctx, taskId);
   if (!live) throw new Error('la tarea no tiene un run en curso');
   if (live.finishing) throw new Error('el run ya terminó y se está guardando el trabajo; espera unos segundos');
   live.stopping = true;

@@ -97,6 +97,31 @@ describe('run.metrics y escritura limitada', () => {
   });
 });
 
+describe('resume: el result del SDK acumula la sesión', () => {
+  it('guarda en el run solo la diferencia respecto a los runs anteriores de la misma sesión', async () => {
+    h = makeHarness({ metricsNotifyMs: 0, metricsWriteMs: 0 });
+    const { t, fake } = await start(h);
+    fake.push(
+      usage(1, { final: true, costUsd: 0.1, input: 10, output: 20, cacheRead: 30, cacheWrite: 40 }),
+      { type: 'limit', kind: 'rate', rateLimitType: 'five_hour', message: 'x', sessionId: 'S' },
+    );
+    await h.waitFor(() => task(t.id).status === 'paused_limit' && h.orch.ctx.live.size === 0, 'paused_limit');
+    expect(h.orch.ctx.repos.runs.latestByTask(t.id)).toMatchObject({ cost_usd: 0.1, input_tokens: 10, provider_session_id: 'S' });
+
+    await h.call('task.start', { id: t.id });
+    // el segundo result trae los totales de TODA la sesión (10 + 5 entrada, 0.1 + 0.05 coste...)
+    h.adapters[1]!.push(
+      usage(2, { final: true, costUsd: 0.15, input: 15, output: 26, cacheRead: 37, cacheWrite: 48, sessionId: 'S' }),
+      { type: 'done', text: 'ok', costUsd: 0.15, sessionId: 'S' },
+    );
+    await h.waitFor(() => task(t.id).status === 'review', 'review');
+    const [r1, r2] = h.orch.ctx.repos.runs.listByTask(t.id);
+    expect(r1).toMatchObject({ cost_usd: 0.1, input_tokens: 10 });
+    expect(r2!.cost_usd).toBeCloseTo(0.05, 10);
+    expect(r2).toMatchObject({ input_tokens: 5, output_tokens: 6, cache_read_tokens: 7, cache_write_tokens: 8 });
+  });
+});
+
 describe('agent.metrics, task.list y agent.list', () => {
   it('agent.metrics suma los runs del agente, da el modelo en uso y los últimos 20 runs (el más nuevo primero)', async () => {
     h = makeHarness({ metricsNotifyMs: 0, metricsWriteMs: 0 });

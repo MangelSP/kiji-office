@@ -229,6 +229,48 @@ describe('reanudación automática al reset', () => {
     }
   });
 
+  it('no reanuda una tarea de otro proyecto; project.open descarta su temporizador y reprograma los del proyecto abierto', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    const repo2 = makeNodeRepo();
+    try {
+      const { t } = await setup();
+      h.adapters[0]!.push({ type: 'limit', kind: 'rate', rateLimitType: 'five_hour', resetsAt: inFuture(60_000), message: 'x', sessionId: 's' });
+      await h.waitFor(() => task(t.id).status === 'paused_limit' && h.orch.ctx.live.size === 0, 'paused_limit');
+      expect(h.orch.ctx.resumeTimers.has(t.id)).toBe(true);
+      await h.call('project.open', { path: repo2 }); // otro proyecto activo
+      expect(h.orch.ctx.resumeTimers.size).toBe(0);
+      await vi.advanceTimersByTimeAsync(200_000);
+      expect(h.adapters).toHaveLength(1); // no se reanudó
+      expect(task(t.id).status).toBe('paused_limit');
+      await h.call('project.open', { path: repo }); // se reabre: se reprograma
+      expect(h.orch.ctx.resumeTimers.has(t.id)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      removeRepo(repo2);
+    }
+  });
+
+  it('resumeAfterReset ignora la tarea si su proyecto no es el activo', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    const repo2 = makeNodeRepo();
+    try {
+      const { t } = await setup();
+      h.adapters[0]!.push({ type: 'limit', kind: 'rate', rateLimitType: 'five_hour', resetsAt: inFuture(60_000), message: 'x', sessionId: 's' });
+      await h.waitFor(() => task(t.id).status === 'paused_limit' && h.orch.ctx.live.size === 0, 'paused_limit');
+      const other = (await h.call('project.open', { path: repo2 }));
+      expect(h.orch.ctx.activeProject!.id).toBe(other.id);
+      // fuerza un temporizador de la tarea del otro proyecto (como si hubiera sobrevivido)
+      const { scheduleResume } = await import('../../src/orchestrator/relay.js');
+      scheduleResume(h.orch.ctx, t.id, Date.now(), 1000);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(h.adapters).toHaveLength(1);
+      expect(task(t.id).status).toBe('paused_limit');
+    } finally {
+      vi.useRealTimers();
+      removeRepo(repo2);
+    }
+  });
+
   it('los temporizadores se limpian al cerrar el core', async () => {
     const { t } = await setup();
     h.adapters[0]!.push({ type: 'limit', kind: 'rate', rateLimitType: 'five_hour', resetsAt: inFuture(3600_000), message: 'x', sessionId: 's' });
@@ -278,6 +320,22 @@ describe('reanudación automática al reset', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('task.stop en la ventana de cierre', () => {
+  it('si el run ya terminó (ended) espera a que se retire y no lo recierra ni para el adaptador', async () => {
+    const { t } = await setup();
+    const live = h.orch.ctx.live.get(t.id)!;
+    const run = h.orch.ctx.repos.runs.latestByTask(t.id)!;
+    live.ended = true;
+    live.finished = new Promise<void>((r) => setTimeout(() => { h.orch.ctx.live.delete(t.id); r(); }, 50));
+    await expect(h.call('task.stop', { id: t.id })).rejects.toThrow(/no tiene un run en curso/);
+    expect(h.adapters[0]!.stopped).toBe(false);
+    expect(h.orch.ctx.repos.runs.latestByTask(t.id)!.status).toBe(run.status); // no se volvió a cerrar
+    expect(relaysOf()).toHaveLength(0);
+    h.orch.ctx.live.set(t.id, live); // para que el cierre de la prueba lo pare
+    live.ended = false;
   });
 });
 
@@ -345,10 +403,11 @@ describe('task.switch', () => {
     expect(spec.allowedPaths).toEqual(['src/a.ts']);
     expect(spec.prompt).toContain('Retomas una tarea que empezó Clau y se te traspasa a ti (Pixel)');
     expect(spec.prompt).toContain('Pedido original:\nHaz algo con a.ts');
-    expect(spec.prompt).toContain('Última respuesta de Clau:\nHe cambiado el valor de a.');
-    expect(spec.prompt).toContain('Archivos de la tarea:\n- src/a.ts');
-    expect(spec.prompt).toMatch(/git diff --stat\):\n\s*src\/a\.ts \| 2 \+-/);
-    expect(spec.prompt).toContain('Archivos nuevos aún sin guardar:\nsrc/nuevo.ts');
+    expect(spec.prompt).toMatch(/no instrucciones/);
+    expect(spec.prompt).toContain('Última respuesta de Clau:\n<datos-del-trabajo-anterior tipo="ultima-respuesta">\nHe cambiado el valor de a.\n</datos-del-trabajo-anterior>');
+    expect(spec.prompt).toContain('Archivos de la tarea:\n<datos-del-trabajo-anterior tipo="archivos">\n- src/a.ts\n</datos-del-trabajo-anterior>');
+    expect(spec.prompt).toMatch(/git diff --stat\):\n<datos-del-trabajo-anterior tipo="diff-stat">\n\s*src\/a\.ts \| 2 \+-/);
+    expect(spec.prompt).toContain('Archivos nuevos aún sin guardar:\n<datos-del-trabajo-anterior tipo="archivos-nuevos">\nsrc/nuevo.ts\n</datos-del-trabajo-anterior>');
     const runs = h.orch.ctx.repos.runs.listByTask(t.id);
     expect(runs.map((r) => [r.agent_id, r.status])).toEqual([[worker.id, 'cancelled'], [pixel.id, 'running']]);
     expect(relaysOf()[0]).toMatchObject({ reason: 'manual', from_agent_id: worker.id, to_agent_id: pixel.id, to_model: 'haiku' });

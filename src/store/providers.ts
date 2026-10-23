@@ -61,8 +61,15 @@ export const createOfficeSlice: StateCreator<AppState, [], [], OfficeSlice> = (s
   drafts: {},
   noteActivity: (agentId, kind, payload, at = Date.now()) => {
     // Los eventos que no cambian el globo (git, tests...) no pisan al anterior.
-    if (bubbleText({ kind, payload }) === null) return;
-    set((s) => ({ activity: { ...s.activity, [String(agentId)]: { kind, payload, at } } }));
+    const text = bubbleText({ kind, payload });
+    if (text === null) return;
+    set((s) => {
+      const prev = s.activity[String(agentId)];
+      // Mismo globo (tipo y texto): no se toca el estado, para no repintar la pantalla por cada token. "¡listo!" sí
+      // renueva `at`, que fija cuánto dura el globo.
+      if (prev && prev.kind === kind && text !== "¡listo!" && bubbleText(prev) === text) return s;
+      return { activity: { ...s.activity, [String(agentId)]: { kind, payload, at } } };
+    });
   },
   setDraft: (agentId, draft) =>
     set((s) => {

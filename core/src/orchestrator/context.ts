@@ -14,6 +14,11 @@ export interface RunUsageState {
   contextTokens: number;
   contextWindow: number;
   costUsd: number;
+  /**
+   * Con `resume`, el `result` del SDK trae `total_cost_usd` y `modelUsage` ACUMULADOS de toda la sesión (medido en 0.2b):
+   * aquí van los totales de los runs anteriores de la misma sesión, que se restan para guardar solo lo de este run.
+   */
+  baseline: { input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number };
   /** Ya llegó algún evento `usage` (si no, al cerrar se usa el `usage` del `done`, como en 0.1). */
   seen: boolean;
   lastWrite: number;

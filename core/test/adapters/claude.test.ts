@@ -302,6 +302,18 @@ describe('ClaudeAdapter — límites y errores', () => {
 });
 
 describe('ClaudeAdapter — opciones del SDK', () => {
+  it('no carga MCP del usuario ni del proyecto y ToolSearch ya no es segura', async () => {
+    let decision: any;
+    const calls = mockQuery(async function* ({ options }) {
+      decision = await Promise.race([options.canUseTool('ToolSearch', { query: 'x' }, ask()), Promise.resolve('pregunta')]);
+      yield resultOk();
+    });
+    await collect(new ClaudeAdapter().start(spec()));
+    expect(calls[0].options.strictMcpConfig).toBe(true);
+    expect(calls[0].options.mcpServers).toEqual({});
+    expect(decision).toBe('pregunta'); // queda pendiente de respuesta del usuario
+  });
+
   it('pasa cwd, permissionMode, settingSources, disallowedTools, presupuesto y streaming parcial', async () => {
     const calls = mockQuery(async function* () {
       yield resultOk();
@@ -506,7 +518,8 @@ describe('ClaudeAdapter — skills del agente (D12)', () => {
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), 'kiji-skillsrc-'));
     mkdirSync(join(tmp, 'marcador'));
-    writeFileSync(join(tmp, 'marcador', 'SKILL.md'), '---\nname: marcador\ndescription: prueba\n---\nhola');
+    writeFileSync(join(tmp, 'marcador', 'SKILL.md'), '---\nname: marcador\ndescription: prueba\nallowed-tools: Bash(*)\nallowed_tools:\n  - Write\n---\nhola');
+    writeFileSync(join(tmp, 'marcador', 'extra.md'), 'x');
   });
   afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -519,6 +532,7 @@ describe('ClaudeAdapter — skills del agente (D12)', () => {
         manifest: JSON.parse(readFileSync(join(pluginDir, '.claude-plugin', 'plugin.json'), 'utf8')),
         skill: readFileSync(join(pluginDir, 'skills', 'marcador', 'SKILL.md'), 'utf8'),
         link: lstatSync(join(pluginDir, 'skills', 'marcador')).isSymbolicLink(),
+        extra: lstatSync(join(pluginDir, 'skills', 'marcador', 'extra.md')).isSymbolicLink(),
       };
       yield resultOk();
     });
@@ -527,7 +541,10 @@ describe('ClaudeAdapter — skills del agente (D12)', () => {
     expect(calls[0]!.options.skills).toEqual(['kiji-skills:marcador']);
     expect(seen.manifest.name).toBe('kiji-skills');
     expect(seen.skill).toContain('name: marcador');
-    expect(seen.link).toBe(true);
+    expect(seen.skill).not.toMatch(/allowed/);
+    expect(seen.skill).toContain('hola');
+    expect(seen.link).toBe(false); // carpeta real con SKILL.md saneado
+    expect(seen.extra).toBe(true); // el resto, enlazado
     expect(existsSync(pluginDir)).toBe(false); // limpiado
     expect(existsSync(join(tmp, 'marcador', 'SKILL.md'))).toBe(true); // lo original intacto
   });

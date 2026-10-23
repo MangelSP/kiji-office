@@ -17,6 +17,7 @@ const RECENT_RUNS = 20;
 export function newUsageState(model: string, contextWindow = DEFAULT_CONTEXT_WINDOW): RunUsageState {
   return {
     model, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, contextTokens: 0, contextWindow, costUsd: 0,
+    baseline: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 },
     seen: false, lastWrite: 0, lastNotify: 0, notifyTimer: null,
   };
 }
@@ -49,6 +50,20 @@ export function contextPct(tokens: number, window: number): number {
   return Math.min(100, Math.round((tokens / window) * 1000) / 10);
 }
 
+/** Totales ya guardados de los runs anteriores de la misma sesión (el `result` con `resume` acumula toda la sesión). */
+export function sessionBaseline(ctx: Ctx, taskId: string, sessionId: string, exceptRunId: string): RunUsageState['baseline'] {
+  const b = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 };
+  for (const r of ctx.repos.runs.listByTask(taskId)) {
+    if (r.id === exceptRunId || r.provider_session_id !== sessionId) continue;
+    b.input += r.input_tokens;
+    b.output += r.output_tokens;
+    b.cacheRead += r.cache_read_tokens;
+    b.cacheWrite += r.cache_write_tokens;
+    b.costUsd += r.cost_usd;
+  }
+  return b;
+}
+
 /** Escribe el consumo en la fila del run. */
 export function writeUsage(ctx: Ctx, live: LiveRun): void {
   const u = live.usage;
@@ -72,13 +87,15 @@ export function applyUsage(ctx: Ctx, live: LiveRun, ev: UsageEvent): void {
   const u = live.usage;
   u.seen = true;
   u.model = live.model; // el modelo "en uso" es el del spec (alias), no el id largo que devuelve la API
-  u.input = ev.input;
-  u.output = ev.output;
-  u.cacheRead = ev.cacheRead;
-  u.cacheWrite = ev.cacheWrite;
+  // El evento final (del `result`) es acumulado de la sesión: se resta lo de los runs anteriores de esa sesión.
+  const b = ev.final ? u.baseline : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 };
+  u.input = Math.max(0, ev.input - b.input);
+  u.output = Math.max(0, ev.output - b.output);
+  u.cacheRead = Math.max(0, ev.cacheRead - b.cacheRead);
+  u.cacheWrite = Math.max(0, ev.cacheWrite - b.cacheWrite);
   u.contextTokens = ev.contextTokens;
   u.contextWindow = ev.contextWindow;
-  if (ev.costUsd !== undefined) u.costUsd = ev.costUsd;
+  if (ev.costUsd !== undefined) u.costUsd = Math.max(0, ev.costUsd - b.costUsd);
   if (ev.sessionId) live.sessionId = ev.sessionId;
 
   const now = Date.now();

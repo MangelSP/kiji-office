@@ -8,7 +8,7 @@
 // - `result.subtype === 'error_max_budget_usd'` y las demás señales de D2 pasan por `toLimit`.
 // - Solo se emite UN evento terminal (`done` | `error` | `limit`) por run.
 
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -82,7 +82,7 @@ const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 const WRITE_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const READ_TOOLS = new Set(READ_ONLY_TOOLS);
 /** Herramientas internas sin efectos sobre el disco ni la red. */
-const SAFE_TOOLS = new Set(['Skill', 'TodoWrite', 'ToolSearch', 'Agent', 'Task', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop']);
+const SAFE_TOOLS = new Set(['Skill', 'TodoWrite', 'Agent', 'Task', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop']);
 
 const MAX_TOOL_OUTPUT = 4000;
 
@@ -95,8 +95,30 @@ export const contextWindowFor = (...models: Array<string | undefined>): number =
 /** Nombre del plugin local temporal que agrupa las skills del agente (D12): se ven como `kiji-skills:<skill>`. */
 export const SKILLS_PLUGIN = 'kiji-skills';
 
+/** Quita `allowed-tools` / `allowed_tools` del frontmatter de un SKILL.md (el resto del texto no cambia). */
+export function stripAllowedTools(text: string): string {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') return text;
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === '---');
+  if (end === -1) return text;
+  const out: string[] = [lines[0]];
+  let skipping = false;
+  for (let i = 1; i < end; i++) {
+    const l = lines[i]!;
+    if (/^["']?allowed[-_]tools["']?\s*:/i.test(l)) {
+      skipping = true;
+      continue;
+    }
+    // continuación del valor omitido: líneas con sangría, vacías o elementos de lista
+    if (skipping && (/^\s+\S/.test(l) || l.trim() === '' || /^-\s/.test(l))) continue;
+    skipping = false;
+    out.push(l);
+  }
+  return [...out, ...lines.slice(end)].join('\n');
+}
+
 /**
- * Monta un plugin local temporal con un enlace simbólico por skill elegida (D12, opción b: con `settingSources: []`
+ * Monta un plugin local temporal con una carpeta por skill elegida (SKILL.md saneado + enlaces al resto) (D12, opción b: con `settingSources: []`
  * el SDK no descubre ~/.claude/skills, y su opción `skills` solo filtra lo que ya se ve). Devuelve la carpeta.
  */
 export function createSkillsPlugin(skills: Array<{ name: string; dir: string }>): string {
@@ -110,7 +132,14 @@ export function createSkillsPlugin(skills: Array<{ name: string; dir: string }>)
     );
     for (const sk of skills) {
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(sk.name)) throw new Error(`nombre de skill no válido: ${sk.name}`);
-      symlinkSync(sk.dir, join(root, 'skills', sk.name), 'dir');
+      // Carpeta real con un SKILL.md saneado (sin `allowed-tools`, que concedería herramientas sin pasar por canUseTool);
+      // el resto de archivos de la skill se enlazan.
+      const target = join(root, 'skills', sk.name);
+      mkdirSync(target);
+      writeFileSync(join(target, 'SKILL.md'), stripAllowedTools(readFileSync(join(sk.dir, 'SKILL.md'), 'utf8')));
+      for (const f of readdirSync(sk.dir)) {
+        if (f !== 'SKILL.md') symlinkSync(join(sk.dir, f), join(target, f));
+      }
     }
   } catch (e) {
     rmSync(root, { recursive: true, force: true });
@@ -195,6 +224,9 @@ export class ClaudeAdapter implements AgentAdapter {
       maxBudgetUsd: spec.budgetUsd,
       includePartialMessages: true,
       canUseTool: this.canUseTool,
+      // sin MCP del usuario (~/.claude.json, conectores claude.ai) ni del proyecto (.mcp.json)
+      strictMcpConfig: true,
+      mcpServers: {},
       stderr: (data) => {
         this.stderrTail = (this.stderrTail + data).slice(-2000);
       },

@@ -104,6 +104,23 @@ describe("notificaciones del core", () => {
     expect(useStore.getState().activity.a2.kind).toBe("tool");
   });
 
+  it("noteActivity no hace set si el globo no cambia, pero renueva `at` en ¡listo!", () => {
+    const { noteActivity } = useStore.getState();
+    noteActivity("a2", "tool", { name: "Read", input: { file_path: "a.ts" } }, 1);
+    const before = useStore.getState().activity;
+    let calls = 0;
+    const unsub = useStore.subscribe(() => calls++);
+    noteActivity("a2", "tool", { name: "Read", input: { file_path: "a.ts" } }, 2);
+    expect(calls).toBe(0);
+    expect(useStore.getState().activity).toBe(before);
+    noteActivity("a2", "tool", { name: "Edit", input: { file_path: "a.ts" } }, 3);
+    expect(calls).toBe(1);
+    noteActivity("a2", "status", { type: "done" }, 4);
+    noteActivity("a2", "status", { type: "done" }, 5);
+    expect(useStore.getState().activity.a2.at).toBe(5);
+    unsub();
+  });
+
   it("agent.changed actualiza el agente", () => {
     ev("agent.changed", { id: "a2", name: "Clau 2" });
     expect(useStore.getState().agents.find((a) => a.id === "a2")?.name).toBe("Clau 2");
