@@ -308,6 +308,14 @@ export function createRepos(db: DatabaseSync) {
      *  - beforeId: eventos con id < beforeId, los más recientes primero en la selección (historial hacia atrás).
      *  - ninguno: los últimos `limit`.
      */
+    /** Texto final del último `done` de la tarea (evento `status` con `type: 'done'`), o null. */
+    lastDoneText(taskId: string): string | null {
+      const row = one<{ text: string | null }>(
+        `SELECT json_extract(payload, '$.text') AS text FROM events
+         WHERE task_id = ? AND kind = 'status' AND json_extract(payload, '$.type') = 'done'
+         ORDER BY id DESC LIMIT 1`, taskId);
+      return typeof row?.text === 'string' && row.text !== '' ? row.text : null;
+    },
     tail(projectId: string, o: {
       afterId?: number; beforeId?: number; limit?: number; agentId?: string; kind?: EventKind;
     } = {}): EventRow[] {

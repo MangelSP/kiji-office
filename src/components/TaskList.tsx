@@ -17,6 +17,20 @@ const STATE_LABEL: Record<string, string> = {
   paused_limit: "Pausada por límite",
 };
 
+/** Respuestas más largas que esto se muestran plegadas. */
+const LONG_RESULT_CHARS = 600;
+const LONG_RESULT_LINES = 12;
+
+/** "Solo lectura" si la tarea no toca archivos; si no, "Modifica N archivos". `undefined` si aún no se sabe. */
+export function accessLabel(t: Task): string | undefined {
+  const n = t.files?.length;
+  if (t.read_only === true || n === 0) return "Solo lectura";
+  if (n === undefined) return undefined;
+  return `Modifica ${n} ${n === 1 ? "archivo" : "archivos"}`;
+}
+
+const isReadOnly = (t: Task) => t.read_only === true || t.files?.length === 0;
+
 /** Estados desde los que tiene sentido pulsar ▶. */
 const STARTABLE = new Set(["todo", "assigned", "changes", "paused_limit"]);
 
@@ -67,11 +81,15 @@ export default function TaskList({
                 const key = String(t.id);
                 return (
                   <li key={key} className="card">
-                    <p className="card-title">{t.title}</p>
+                    <p className="card-title">
+                      {t.title}
+                      {accessLabel(t) && <span className="tag muted">{accessLabel(t)}</span>}
+                    </p>
                     <p className="muted small">
                       {agentName(t.agent_id)}
                       {t.files && t.files.length > 0 ? ` · ${t.files.join(", ")}` : ""}
                     </p>
+                    {t.result && <TaskResult task={t} author={t.agent_id == null ? undefined : agentName(t.agent_id)} />}
                     <div className="row">
                       {STARTABLE.has(t.status) && (
                         <button
@@ -83,14 +101,16 @@ export default function TaskList({
                           ▶ Iniciar
                         </button>
                       )}
-                      <button
-                        type="button"
-                        className="btn"
-                        disabled={loadingDiff === key}
-                        onClick={() => void showDiff(t.id)}
-                      >
-                        {loadingDiff === key ? "Cargando…" : "Ver diff"}
-                      </button>
+                      {!isReadOnly(t) && (
+                        <button
+                          type="button"
+                          className="btn"
+                          disabled={loadingDiff === key}
+                          onClick={() => void showDiff(t.id)}
+                        >
+                          {loadingDiff === key ? "Cargando…" : "Ver diff"}
+                        </button>
+                      )}
                     </div>
                     {diffs[key] !== undefined && (
                       <pre className="pre" aria-label={`Diff de ${t.title}`}>
@@ -105,5 +125,30 @@ export default function TaskList({
         );
       })}
     </div>
+  );
+}
+
+/** Respuesta final del agente, con saltos de línea; desplegable si es larga. */
+function TaskResult({ task, author }: { task: Task; author?: string }) {
+  const text = task.result ?? "";
+  const label = author ? `Respuesta de ${author}:` : "Respuesta:";
+  const long = text.length > LONG_RESULT_CHARS || text.split("\n").length > LONG_RESULT_LINES;
+  if (!long) {
+    return (
+      <>
+        <p className="result-title">{label}</p>
+        <div className="result" aria-label={`Respuesta de ${task.title}`}>
+          {text}
+        </div>
+      </>
+    );
+  }
+  return (
+    <details className="result-box">
+      <summary>{label} (ver completa)</summary>
+      <div className="result" aria-label={`Respuesta de ${task.title}`}>
+        {text}
+      </div>
+    </details>
   );
 }

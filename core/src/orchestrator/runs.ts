@@ -10,7 +10,7 @@ import { type Ctx, type Handler, type LiveRun, asParams, str } from './context.j
 import { logEvent } from './events.js';
 import { forkPoint, foreignFiles, revertFiles } from './ownership.js';
 import { robotStatusFor, setRobotStatus } from './status.js';
-import { getTask, projectOfTask, taskView, transition } from './tasks.js';
+import { MAX_RESULT_CHARS, getTask, isReadOnlyTask, projectOfTask, taskView, transition } from './tasks.js';
 
 /** Una línea por rol; los prompts completos del kit llegan en el paso 12a. */
 const ROLE_PROMPTS: Record<string, string> = {
@@ -57,12 +57,20 @@ function buildPrompt(ctx: Ctx, task: TaskRow, files: string[], resuming: boolean
   if (resuming) {
     parts.push('Continúa donde lo dejaste: la tarea se interrumpió por un límite de uso.');
   }
-  parts.push(`Tarea: ${task.title}`);
-  if (task.description.trim() !== '') parts.push(task.description.trim());
-  parts.push(
-    `Archivos que puedes modificar (solo estos):\n${files.map((f) => `- ${f}`).join('\n')}`,
-    'Trabaja en el directorio actual. No hagas commit: el core guarda tu trabajo cuando termines.',
-  );
+  const description = task.description.trim();
+  // La UI manda el texto completo como descripción y su primera línea como título: no se repite.
+  if (description === '' || !description.startsWith(task.title.trim())) parts.push(`Tarea: ${task.title}`);
+  if (description !== '') parts.push(description);
+  if (files.length === 0) {
+    parts.push(
+      'Es una consulta de solo lectura: no puedes modificar archivos ni ejecutar comandos. Lee lo que necesites y responde en texto, en español, con claridad.',
+    );
+  } else {
+    parts.push(
+      `Archivos que puedes modificar (solo estos):\n${files.map((f) => `- ${f}`).join('\n')}`,
+      'Trabaja en el directorio actual. No hagas commit: el core guarda tu trabajo cuando termines.',
+    );
+  }
   if (task.status === 'changes') {
     // Hallazgo más reciente de la red de seguridad de propiedad.
     const finding = ctx.repos.events
@@ -123,6 +131,7 @@ export async function startTask(ctx: Ctx, taskId: string) {
   const adapter = ctx.adapterFactory(agent); // falla antes de tocar nada si el proveedor no está soportado
   const project = projectOfTask(ctx, task);
   const files = ctx.repos.taskFiles.list(task.id).map((f) => f.path);
+  const readOnly = isReadOnlyTask(ctx, task.id); // consulta: sin archivos, sin worktree, trabaja en el repo principal
   const resumeHint = readResumeHint(ctx, task);
 
   // Reserva el hueco ya: dos `task.start` seguidos no pueden crear dos runs.
@@ -134,16 +143,18 @@ export async function startTask(ctx: Ctx, taskId: string) {
   let running = false; // la tarea ya pasó a `running`
   try {
     // Una tarea `failed` liberó sus archivos: se vuelven a reservar (falla si otra tarea los tomó entretanto).
-    if (task.status === 'failed') ctx.repos.taskFiles.claim(taskId, files);
+    if (task.status === 'failed' && !readOnly) ctx.repos.taskFiles.claim(taskId, files);
 
     let worktree = task.worktree_path;
-    if (!worktree || !existsSync(worktree)) {
+    if (readOnly) {
+      worktree = project.path;
+    } else if (!worktree || !existsSync(worktree)) {
       worktree = await createWorktree(project.path, task.id, project.base_branch);
     }
     live.worktree = worktree;
     const run = ctx.repos.runs.create({ taskId, agentId: agent.id });
     live.runId = run.id;
-    transition(ctx, taskId, 'running', 'task.start', { branch: branchName(task.id), worktree_path: worktree });
+    transition(ctx, taskId, 'running', 'task.start', readOnly ? {} : { branch: branchName(task.id), worktree_path: worktree });
     running = true;
     setRobotStatus(ctx, agent.id, 'thinking');
 
@@ -155,6 +166,7 @@ export async function startTask(ctx: Ctx, taskId: string) {
       systemPrompt: `${ROLE_PROMPTS[agent.role ?? ''] ?? DEFAULT_ROLE_PROMPT}\nTe llamas ${agent.name}.`,
       prompt: buildPrompt(ctx, task, files, resumeSessionId !== undefined),
       allowedPaths: files,
+      ...(readOnly ? { readOnly: true } : {}),
       budgetUsd: budgetUsd(ctx),
       ...(resumeSessionId ? { resumeSessionId } : {}),
     };
@@ -296,12 +308,18 @@ async function onDone(ctx: Ctx, live: LiveRun, ev: Extract<AgentEvent, { type: '
   logEvent(ctx, {
     ...base, kind: 'status',
     payload: { type: 'done', text: ev.text, cost_usd: ev.costUsd ?? null, usage: ev.usage ?? null, session_id: ev.sessionId ?? null },
+    maxString: MAX_RESULT_CHARS, // la respuesta final se muestra entera en la UI
   });
   // Sin aprobaciones pendientes la tarea vuelve a `running` antes de seguir (pudo quedarse en `needs_you`).
   if (getTask(ctx, live.taskId).status === 'needs_you') transition(ctx, live.taskId, 'running', 'run terminado');
   setRobotStatus(ctx, live.agentId, 'done');
 
   try {
+    // Consulta de solo lectura: no hay nada que revertir, guardar ni probar; la respuesta ya quedó en el evento `done`.
+    if (isReadOnlyTask(ctx, live.taskId)) {
+      transition(ctx, live.taskId, 'review', 'respuesta lista');
+      return;
+    }
     const task = getTask(ctx, live.taskId);
     const project = projectOfTask(ctx, task);
     const worktree = live.worktree;

@@ -93,7 +93,8 @@
 }
 .btn:focus-visible,
 .field input:focus-visible,
-.field select:focus-visible {
+.field select:focus-visible,
+.field textarea:focus-visible {
   outline: 3px solid #f4c542;
   outline-offset: 2px;
 }
@@ -123,4 +124,34 @@
 }
 .log strong {
   color: #f4c542;
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid #4a4f6d;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.result {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: #12131d;
+  border-left: 3px solid #f4c542;
+  border-radius: 6px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.result-title {
+  margin: 8px 0 0;
+  font-weight: 600;
+}
+details.result-box > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-top: 8px;
 }

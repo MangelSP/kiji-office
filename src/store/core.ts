@@ -53,7 +53,7 @@ export const createCoreSlice: StateCreator<AppState, [], [], CoreSlice> = (set, 
     } catch (err) {
       if (!opts?.silent) {
         const aun = err instanceof CoreError && err.code === "unknown_method";
-        set({ notice: aun ? `${method}: aún no disponible en el core` : `${method}: ${errorMessage(err)}` });
+        set({ notice: aun ? `${method}: aún no disponible en el core` : `${method}: ${stripMethodPrefix(method, errorMessage(err))}` });
       }
       return undefined;
     }
@@ -88,6 +88,12 @@ export const createCoreSlice: StateCreator<AppState, [], [], CoreSlice> = (set, 
     await get().refreshAll();
   },
 });
+
+/** Muchos errores del core ya empiezan por `método: `; se quita para no mostrarlo dos veces. */
+export function stripMethodPrefix(method: string, message: string): string {
+  const prefix = `${method}: `;
+  return message.startsWith(prefix) ? message.slice(prefix.length) : message;
+}
 
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

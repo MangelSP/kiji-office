@@ -128,7 +128,6 @@ describe('task.create', () => {
 
   it('valida rutas y agente; sin agente queda en todo y se puede asignar', async () => {
     const { boss, worker } = await open();
-    await expect(h.call('task.create', { title: 't', files: [] })).rejects.toThrow(/al menos un archivo/);
     await expect(h.call('task.create', { title: 't', files: ['/etc/passwd'] })).rejects.toThrow(/relativa/);
     await expect(h.call('task.create', { title: 't', files: ['../fuera'] })).rejects.toThrow(/relativa/);
     await expect(h.call('task.create', { title: 't', files: ['.git/config'] })).rejects.toThrow(/\.git/);

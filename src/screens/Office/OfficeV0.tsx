@@ -1,10 +1,11 @@
 // Pantalla principal v0 (sin pixel art): proyecto, agentes, tareas, aprobaciones y registro en vivo.
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import ApprovalCard from "../../components/ApprovalCard";
 import LogPanel from "../../components/LogPanel";
 import TaskList from "../../components/TaskList";
 import CreateAgent from "../CreateAgent/CreateAgent";
+import { parseFiles, parseRequest } from "./request";
 import OfficeScene from "../../scenes/OfficeScene";
 import { connectStore, useStore } from "../../store";
 import "../../components/components.css";
@@ -33,7 +34,7 @@ function coreLabel(status: string, detail?: string) {
 
 export default function OfficeV0() {
   const s = useStore();
-  const [title, setTitle] = useState("");
+  const [request, setRequest] = useState("");
   const [files, setFiles] = useState("");
   const [agentId, setAgentId] = useState("");
   const [creating, setCreating] = useState(false);
@@ -58,20 +59,31 @@ export default function OfficeV0() {
     }
   };
 
-  const crearTarea = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-    setCreating(true);
-    const ok = await s.createTask({
-      title: title.trim(),
-      files: files.split(",").map((f) => f.trim()).filter(Boolean),
-      agentId: agentId || undefined,
-    });
-    setCreating(false);
-    if (ok) {
-      setTitle("");
-      setFiles("");
+  // El jefe planea y revisa: las tareas se asignan a los demás robots (el primero, por defecto).
+  const workers = s.agents.filter((a) => !a.is_boss);
+  const selectedAgent = workers.some((a) => String(a.id) === agentId) ? agentId : String(workers[0]?.id ?? "");
+  const { title, description } = parseRequest(request);
+  const canSend = !creating && title !== "";
+
+  const enviar = async (start: boolean) => {
+    if (!canSend) return;
+    if (start && !selectedAgent) {
+      s.setNotice("Crea un robot con «+ Robot» para poder enviarle el pedido.");
+      return;
     }
+    setCreating(true);
+    const created = await s.createTask({
+      title,
+      description,
+      files: parseFiles(files),
+      agentId: selectedAgent || undefined,
+    });
+    if (created) {
+      setRequest("");
+      setFiles("");
+      if (start) await s.startTask(created.id);
+    }
+    setCreating(false);
   };
 
   const agentName = (id?: string | number) => s.agents.find((a) => String(a.id) === String(id))?.name;
@@ -141,35 +153,60 @@ export default function OfficeV0() {
           </section>
 
           <section className="panel" aria-labelledby="new-task-title">
-            <h2 id="new-task-title">Crear tarea</h2>
-            <form className="form" onSubmit={(e) => void crearTarea(e)}>
+            <h2 id="new-task-title">¿Qué quieres que haga?</h2>
+            <p className="muted small">
+              Escribe tu pedido, elige el robot y pulsa Enviar. Si toca archivos, te pedirá permiso antes de hacer algo
+              riesgoso.
+            </p>
+            <form
+              className="form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void enviar(true);
+              }}
+            >
               <div className="field">
-                <label htmlFor="task-title">Título</label>
-                <input id="task-title" value={title} onChange={(e) => setTitle(e.target.value)} required />
+                <label htmlFor="task-request">Tu pedido</label>
+                <textarea
+                  id="task-request"
+                  rows={5}
+                  value={request}
+                  onChange={(e) => setRequest(e.target.value)}
+                  placeholder="Ej.: Revisa este proyecto y explícame qué hace, cómo está organizado y qué falta."
+                />
               </div>
               <div className="field">
-                <label htmlFor="task-files">Archivos (separados por comas)</label>
+                <label htmlFor="task-files">Archivos que puede modificar (opcional)</label>
                 <input
                   id="task-files"
                   value={files}
                   onChange={(e) => setFiles(e.target.value)}
                   placeholder="src/a.ts, src/b.ts"
+                  aria-describedby="task-files-help"
                 />
+                <p id="task-files-help" className="muted small field-help">
+                  Déjalo vacío para que solo lea y te responda. Pon archivos (separados por comas) si debe cambiarlos.
+                </p>
               </div>
               <div className="field">
                 <label htmlFor="task-agent">Agente</label>
-                <select id="task-agent" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
-                  <option value="">Sin asignar</option>
-                  {s.agents.map((a) => (
+                <select id="task-agent" value={selectedAgent} onChange={(e) => setAgentId(e.target.value)}>
+                  {workers.map((a) => (
                     <option key={String(a.id)} value={String(a.id)}>
                       {a.name}
                     </option>
                   ))}
+                  <option value="">Sin asignar</option>
                 </select>
               </div>
-              <button type="submit" className="btn btn-primary" disabled={creating || !title.trim()}>
-                {creating ? "Creando…" : "Crear tarea"}
-              </button>
+              <div className="row">
+                <button type="submit" className="btn btn-primary" disabled={!canSend || !selectedAgent}>
+                  {creating ? "Enviando…" : "Enviar y empezar"}
+                </button>
+                <button type="button" className="btn" disabled={!canSend} onClick={() => void enviar(false)}>
+                  Solo crear
+                </button>
+              </div>
             </form>
           </section>
         </div>

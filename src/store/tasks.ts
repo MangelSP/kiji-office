@@ -10,6 +10,12 @@ export type Task = {
   agent_id?: Id | null;
   /** Archivos que posee la tarea (si el core los incluye en `task.list`). */
   files?: string[];
+  /** Texto completo del pedido. */
+  description?: string;
+  /** Tarea de consulta: sin archivos que modificar (el core la marca así si no reserva ninguno). */
+  read_only?: boolean;
+  /** Respuesta final del agente (último `done`, máx. 20 000 caracteres). */
+  result?: string | null;
 };
 
 /** Estados de tarea de la sección 3 de PLAN-0.1.md, en orden de flujo. */
@@ -32,7 +38,7 @@ export type TasksSlice = {
   upsertTask: (task: Task) => void;
   refreshTasks: () => Promise<void>;
   /** Nombre del método de creación: no está en la lista de 0.1 (ver informe del paso 7). */
-  createTask: (input: { title: string; files: string[]; agentId?: Id }) => Promise<boolean>;
+  createTask: (input: { title: string; description?: string; files: string[]; agentId?: Id }) => Promise<Task | undefined>;
   startTask: (id: Id) => Promise<void>;
   /** Devuelve el texto del diff, o `undefined` si no se pudo obtener. */
   loadDiff: (id: Id) => Promise<string | undefined>;
@@ -52,17 +58,21 @@ export const createTasksSlice: StateCreator<AppState, [], [], TasksSlice> = (set
     const list = await get().callSafe<Task[]>("task.list", undefined, { silent: true });
     if (Array.isArray(list)) set({ tasks: list });
   },
-  createTask: async ({ title, files, agentId }) => {
+  createTask: async ({ title, description, files, agentId }) => {
     const created = await get().callSafe<Task | null>("task.create", {
       title,
+      ...(description ? { description } : {}),
       files,
       agent_id: agentId ?? null,
     });
-    if (created === undefined) return false;
-    if (created && typeof created === "object" && "id" in created) get().upsertTask(created);
-    else await get().refreshTasks();
+    if (created === undefined) return undefined;
     set({ notice: null });
-    return true;
+    if (created && typeof created === "object" && "id" in created) {
+      get().upsertTask(created);
+      return created;
+    }
+    await get().refreshTasks();
+    return undefined;
   },
   startTask: async (id) => {
     await get().callSafe("task.start", { id });

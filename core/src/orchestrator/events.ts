@@ -10,18 +10,18 @@ const SECRET_KEYS = /^(env|api[_-]?key|authorization|password|secret|token)$/i;
 const SECRET_PATTERNS = [/sk-[A-Za-z0-9_-]{16,}/g, /AIza[0-9A-Za-z_-]{20,}/g, /\b(ANTHROPIC|OPENAI|GEMINI|GOOGLE)_API_KEY\s*=\s*\S+/g];
 
 /** Copia del valor apta para guardar: sin claves secretas, con patrones de claves enmascarados y recortada. */
-export function sanitize(value: unknown, depth = 0): unknown {
+export function sanitize(value: unknown, depth = 0, maxString = MAX_STRING): unknown {
   if (typeof value === 'string') {
     let s = value;
     for (const re of SECRET_PATTERNS) s = s.replace(re, '[redacted]');
-    return s.length > MAX_STRING ? `${s.slice(0, MAX_STRING)}… [recortado]` : s;
+    return s.length > maxString ? `${s.slice(0, maxString)}… [recortado]` : s;
   }
   if (value === null || typeof value !== 'object') return value;
   if (depth >= MAX_DEPTH) return '[…]';
-  if (Array.isArray(value)) return value.slice(0, MAX_ITEMS).map((v) => sanitize(v, depth + 1));
+  if (Array.isArray(value)) return value.slice(0, MAX_ITEMS).map((v) => sanitize(v, depth + 1, maxString));
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value)) {
-    out[k] = SECRET_KEYS.test(k) ? '[redacted]' : sanitize(v, depth + 1);
+    out[k] = SECRET_KEYS.test(k) ? '[redacted]' : sanitize(v, depth + 1, maxString);
   }
   return out;
 }
@@ -39,9 +39,13 @@ export function eventView(row: EventRow): Omit<EventRow, 'payload'> & { payload:
 
 export function logEvent(
   ctx: Ctx,
-  e: { projectId: string; kind: EventKind; payload?: unknown; taskId?: string | null; agentId?: string | null; runId?: string | null },
+  e: {
+    projectId: string; kind: EventKind; payload?: unknown; taskId?: string | null; agentId?: string | null; runId?: string | null;
+    /** Tope de caracteres por texto del payload (por defecto 8000). */
+    maxString?: number;
+  },
 ): EventRow {
-  const row = ctx.repos.events.append({ ...e, payload: sanitize(e.payload ?? {}) });
+  const row = ctx.repos.events.append({ ...e, payload: sanitize(e.payload ?? {}, 0, e.maxString) });
   ctx.emit('event.appended', eventView(row));
   return row;
 }

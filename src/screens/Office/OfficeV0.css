@@ -63,7 +63,8 @@
   color: #c9cbe0;
 }
 .field input,
-.field select {
+.field select,
+.field textarea {
   min-height: 44px;
   padding: 0 12px;
   font: inherit;
@@ -72,6 +73,16 @@
   border: 1px solid #4a4f6d;
   border-radius: 8px;
   box-sizing: border-box;
+}
+
+.field textarea {
+  min-height: 112px;
+  padding: 10px 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.field-help {
+  margin: 0;
 }
 
 .scene-panel {

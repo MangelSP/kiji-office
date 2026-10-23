@@ -31,13 +31,29 @@ export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
   return TRANSITIONS[from].includes(to);
 }
 
-/** Fila de tarea tal como viaja a la UI: columnas de la BD + `files` (rutas que posee). */
-export function taskView(ctx: Ctx, task: TaskRow): TaskRow & { files: string[] } {
-  return { ...task, files: ctx.repos.taskFiles.list(task.id).map((f) => f.path) };
+/** Tope de caracteres de `result` en `task.list` / `task.changed`. */
+export const MAX_RESULT_CHARS = 20_000;
+
+/** Una tarea sin ninguna fila en `task_files` (ni activa ni liberada) es de solo lectura ("consulta"). */
+export function isReadOnlyTask(ctx: Ctx, taskId: string): boolean {
+  return ctx.repos.taskFiles.list(taskId).length === 0;
+}
+
+export type TaskView = TaskRow & { files: string[]; read_only: boolean; result: string | null };
+
+/** Fila de tarea tal como viaja a la UI: columnas de la BD + `files` (rutas que posee), `read_only` y `result` (respuesta final). */
+export function taskView(ctx: Ctx, task: TaskRow): TaskView {
+  const files = ctx.repos.taskFiles.list(task.id).map((f) => f.path);
+  return {
+    ...task,
+    files,
+    read_only: files.length === 0,
+    result: ctx.repos.events.lastDoneText(task.id)?.slice(0, MAX_RESULT_CHARS) ?? null,
+  };
 }
 
 /** Emite `task.changed` con la fila completa actual. */
-export function publishTask(ctx: Ctx, taskId: string): TaskRow & { files: string[] } {
+export function publishTask(ctx: Ctx, taskId: string): TaskView {
   const task = ctx.repos.tasks.get(taskId);
   if (!task) throw new Error(`tarea inexistente: ${taskId}`);
   const view = taskView(ctx, task);
@@ -68,7 +84,7 @@ export function transition(
   to: TaskStatus,
   reason?: string,
   patch: Partial<Pick<TaskRow, 'branch' | 'worktree_path' | 'agent_id'>> = {},
-): TaskRow & { files: string[] } {
+): TaskView {
   const task = getTask(ctx, taskId);
   const from = task.status;
   if (from !== to) {
@@ -127,10 +143,9 @@ export function taskHandlers(ctx: Ctx): Record<string, Handler> {
       const project = requireProject(ctx);
       const title = str(p.title, 'title', 'task.create').trim();
       const description = typeof p.description === 'string' ? p.description : '';
-      if (!Array.isArray(p.files) || p.files.length === 0) {
-        throw new Error('task.create: indica al menos un archivo que la tarea puede modificar (files)');
-      }
-      const files = [...new Set(p.files.map(normalizeTaskPath))];
+      // Sin `files` (ausente o vacío) la tarea es de solo lectura: no reserva archivos.
+      if (p.files != null && !Array.isArray(p.files)) throw new Error('task.create: "files" debe ser una lista de rutas');
+      const files = [...new Set(((p.files as unknown[] | undefined) ?? []).map(normalizeTaskPath))];
       const agentId = typeof p.agent_id === 'string' && p.agent_id !== '' ? p.agent_id : null;
       if (agentId) checkAssignable(ctx, project, agentId);
 
@@ -145,7 +160,7 @@ export function taskHandlers(ctx: Ctx): Record<string, Handler> {
           agentId,
           status: agentId ? 'assigned' : 'todo',
         });
-        ctx.repos.taskFiles.claim(created.id, files);
+        if (files.length > 0) ctx.repos.taskFiles.claim(created.id, files);
         ctx.db.exec('COMMIT');
       } catch (err) {
         ctx.db.exec('ROLLBACK');
