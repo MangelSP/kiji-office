@@ -114,12 +114,15 @@ describe('tablas básicas', () => {
     expect(big.output.length).toBe(64 * 1024);
   });
 
-  it('integrations: create / getByTask / markReverted', () => {
+  it('integrations: create / getByTask / list / setStatus', () => {
     const t = repos.tasks.create({ objectiveId, title: 't' });
-    const i = repos.integrations.create({ taskId: t.id, beforeSha: 'aaa', afterSha: 'bbb' });
-    expect(i).toMatchObject({ before_sha: 'aaa', after_sha: 'bbb', reverted_at: null });
-    repos.integrations.markReverted(i.id);
-    expect(repos.integrations.getByTask(t.id)!.reverted_at).not.toBeNull();
+    const i = repos.integrations.create({ projectId, taskId: t.id, beforeSha: 'aaa', afterSha: 'bbb' });
+    expect(i).toMatchObject({ project_id: projectId, before_sha: 'aaa', after_sha: 'bbb', status: 'applied', detail: '' });
+    repos.integrations.setStatus(i.id, 'reverted', 'revertida');
+    expect(repos.integrations.getByTask(t.id)).toMatchObject({ status: 'reverted', detail: 'revertida' });
+    const f = repos.integrations.create({ projectId, taskId: t.id, status: 'failed', detail: 'x' });
+    expect(repos.integrations.list(projectId).map((r) => r.id)).toEqual([f.id, i.id]); // la más nueva primero
+    expect(() => repos.integrations.setStatus(i.id, 'rara' as never)).toThrow(); // CHECK
   });
 
   it('settings: get / set (upsert)', () => {
@@ -226,7 +229,7 @@ describe('migraciones', () => {
   it('abrir dos veces la misma BD no re-aplica nada y conserva los datos', () => {
     const file = join(dir, 'kiji.db');
     const db1 = openDb(file);
-    expect((db1.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4);
+    expect((db1.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(5);
     expect((db1.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toBe('wal');
     expect((db1.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys).toBe(1);
     createRepos(db1).projects.create({ path: '/x', name: 'x' });
@@ -234,7 +237,7 @@ describe('migraciones', () => {
 
     // si re-aplicara schema.sql fallaría con "table projects already exists"
     const db2 = openDb(file);
-    expect((db2.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4);
+    expect((db2.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(5);
     expect(createRepos(db2).projects.getByPath('/x')).toBeDefined();
     db2.close();
   });
@@ -253,7 +256,7 @@ describe('migraciones', () => {
     old.close();
 
     const db = openDb(file);
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(5);
     const repos = createRepos(db);
     expect(repos.agents.get('a')).toMatchObject({ name: 'Vieja', persona: '', skills: '[]', auto_relay: 1, relay_order: null });
     expect(repos.runs.get('r')).toMatchObject({
@@ -286,7 +289,7 @@ describe('migraciones', () => {
     old.close();
 
     const db = openDb(file);
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(5);
     const repos = createRepos(db);
     expect(repos.projects.get('p')).toMatchObject({
       name: 'x', base_branch: 'dev', test_command: 'npm test', scene: 'oficina', last_opened_at: null, color: null, is_open: 0,
@@ -311,7 +314,7 @@ describe('migraciones', () => {
     old.close();
 
     const db = openDb(file);
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(5);
     const repos = createRepos(db);
     expect(repos.agents.get('a')).toMatchObject({ name: 'Vieja', model: 'opus', connection_id: null });
     const c = repos.connections.create({ name: 'LM', preset: 'lmstudio', baseUrl: 'http://localhost:1234/v1', auth: 'none' });
@@ -321,6 +324,91 @@ describe('migraciones', () => {
     expect(() => repos.connections.update(c.id, { tool_quality: 'raro' as never })).toThrow(); // CHECK
     repos.connections.delete(c.id);
     expect(repos.agents.get('a')!.connection_id).toBeNull(); // ON DELETE SET NULL
+    db.close();
+  });
+
+  it('migración 5: desde una BD v4 con datos añade gerente, memoria FTS5, avisos y started_by sin perder nada', () => {
+    const file = join(dir, 'v4.db');
+    const old = new DatabaseSync(file);
+    old.exec('PRAGMA foreign_keys = ON');
+    for (let i = 0; i < 4; i++) migrations[i]!(old);
+    old.exec('PRAGMA user_version = 4');
+    old.exec(`INSERT INTO projects (id, path, name, base_branch, created_at) VALUES ('p', '/x', 'x', 'dev', 1)`);
+    old.exec(`INSERT INTO agents (id, project_id, name, provider, created_at) VALUES ('a', 'p', 'Vieja', 'claude', 1)`);
+    old.exec(`INSERT INTO objectives (id, project_id, text, created_at) VALUES ('o', 'p', 't', 1)`);
+    old.exec(`INSERT INTO tasks (id, objective_id, title, status, updated_at) VALUES ('t', 'o', 't', 'integrated', 1), ('t2', 'o', 't2', 'integrated', 1)`);
+    old.exec(`INSERT INTO runs (id, task_id, agent_id, started_at, cost_usd) VALUES ('r', 't', 'a', 1, 0.5)`);
+    old.exec(`INSERT INTO integrations (task_id, before_sha, after_sha, created_at, reverted_at) VALUES ('t', 'aaa1111', 'bbb2222', 5, NULL), ('t2', 'ccc3333', 'ddd4444', 6, 9)`);
+    old.close();
+
+    const db = openDb(file);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(5);
+    const repos = createRepos(db);
+    expect(repos.projects.get('p')).toMatchObject({ base_branch: 'dev', manager_policy: null });
+    expect(repos.runs.get('r')).toMatchObject({ cost_usd: 0.5, started_by: 'user' });
+    // integraciones antiguas conservadas con proyecto y estado derivado
+    expect(repos.integrations.list('p').map((i) => [i.task_id, i.project_id, i.status, i.before_sha, i.created_at]).sort())
+      .toEqual([['t', 'p', 'applied', 'aaa1111', 5], ['t2', 'p', 'reverted', 'ccc3333', 6]]);
+    expect(repos.integrations.create({ projectId: 'p', taskId: 't', status: 'failed' }).id).toBeGreaterThan(2);
+
+    // política del gerente
+    expect(repos.projects.setManagerPolicy('p', '{"enabled":true}').manager_policy).toBe('{"enabled":true}');
+    expect(repos.projects.setManagerPolicy('p', null).manager_policy).toBeNull();
+
+    // runs.started_by
+    const r2 = repos.runs.create({ taskId: 't', agentId: 'a', startedBy: 'manager' });
+    repos.runs.update(r2.id, { cost_usd: 1.25 });
+    expect(r2.started_by).toBe('manager');
+    expect(repos.runs.costByStartedBySince('p', 'manager', 0)).toBe(1.25);
+    expect(repos.runs.costByStartedBySince('p', 'user', 0)).toBe(0.5);
+
+    // memoria + FTS5 con triggers insert / update / delete
+    const m1 = repos.memory.create({ projectId: 'p', kind: 'fact', text: 'Usamos un worktree por tarea' });
+    const m2 = repos.memory.create({ projectId: 'p', kind: 'decision', text: 'Los tests corren con vitest', source: 'user' });
+    expect(m1.source).toBe('manager');
+    expect(repos.memory.search('p', 'worktree').map((m) => m.id)).toEqual([m1.id]);
+    expect(repos.memory.search('p', 'WORKTREE vitest')).toEqual([]); // AND
+    repos.memory.updateText(m1.id, 'Ahora hablamos de ramas');
+    expect(repos.memory.search('p', 'worktree')).toEqual([]);
+    expect(repos.memory.search('p', 'ramas').map((m) => m.id)).toEqual([m1.id]);
+    repos.memory.setArchived(m2.id);
+    expect(repos.memory.search('p', 'vitest')).toEqual([]);
+    expect(repos.memory.search('p', 'vitest', 10, true).map((m) => m.id)).toEqual([m2.id]);
+    repos.memory.delete(m1.id);
+    expect(repos.memory.search('p', 'ramas')).toEqual([]);
+    expect(repos.memory.recent('p')).toEqual([]);
+    expect(repos.memory.recent('p', 10, true).map((m) => m.id)).toEqual([m2.id]);
+    // la consulta del usuario no puede romper la sintaxis FTS
+    for (const q of ['"', 'a OR', 'NEAR(', '*', 'foo:bar', '-x', "it's (a) \"test\"", '   ', 'ñandú ^ AND']) {
+      expect(() => repos.memory.search('p', q)).not.toThrow();
+    }
+    expect(repos.memory.create({ projectId: 'p', kind: 'todo', text: 'revisar café' })).toBeDefined();
+    expect(repos.memory.search('p', 'cafe')).toHaveLength(1); // sin tildes
+    expect(() => repos.memory.create({ projectId: 'p', kind: 'otro' as never, text: 'x' })).toThrow(); // CHECK
+
+    // ticks y acciones (cascada al borrar el proyecto)
+    const tick = repos.managerTicks.create({ projectId: 'p', trigger: 'objective' });
+    const act = repos.managerActions.create({ tickId: tick.id, projectId: 'p', tool: 'start_task', input: { id: 't' }, result: 'ok', level: 'ask' });
+    repos.managerActions.resolve(act.id, { decidedBy: 'user', result: { ok: true } });
+    expect(repos.managerActions.listByTick(tick.id)).toMatchObject([{ decided_by: 'user', result: '{"ok":true}', input: '{"id":"t"}' }]);
+    repos.managerTicks.end(tick.id, { summary: 'hecho', costUsd: 0.3 });
+    expect(repos.managerTicks.latest('p')).toMatchObject({ summary: 'hecho', cost_usd: 0.3 });
+    expect(repos.managerTicks.get(tick.id)!.ended_at).not.toBeNull();
+    expect(repos.managerTicks.costSince('p', 0)).toBeCloseTo(0.3);
+
+    // avisos
+    const n1 = repos.notifications.create({ projectId: 'p', level: 'info', title: 'a', body: 'b' });
+    const n2 = repos.notifications.create({ projectId: 'p', level: 'ask', title: 'c', body: 'd', approvalId: 'x' });
+    expect(repos.notifications.list({ projectId: 'p' }).map((n) => n.id)).toEqual([n2.id, n1.id]);
+    expect(repos.notifications.markRead([n1.id])).toBe(1);
+    expect(repos.notifications.markRead([n1.id])).toBe(0);
+    expect(repos.notifications.list({ unreadOnly: true }).map((n) => n.id)).toEqual([n2.id]);
+    expect(repos.notifications.unreadCount('p')).toBe(1);
+    expect(repos.notifications.markRead('all')).toBe(1);
+
+    db.prepare('DELETE FROM projects WHERE id = ?').run('p');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM manager_actions').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM memory').get()).toEqual({ n: 0 });
     db.close();
   });
 });

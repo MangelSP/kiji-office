@@ -5,6 +5,8 @@ import { FileClaimError, type EventRow, type ObjectiveRow, type ProjectRow, type
 import { type Ctx, type Handler, asParams, assertSameProject, optionalProject, projectIdOf, requireProject, str } from './context.js';
 import { logEvent } from './events.js';
 import { contextPct } from './metrics.js';
+import { notify } from './notifications.js';
+import { refreshObjective } from './objectives.js';
 import { queuePosition } from './queue.js';
 import { scheduleWorkspacesNotify } from './workspaces.js';
 
@@ -141,6 +143,7 @@ export function publishTask(ctx: Ctx, taskId: string): TaskView {
   if (!task) throw new Error(`tarea inexistente: ${taskId}`);
   const view = taskView(ctx, task);
   ctx.emit('task.changed', view);
+  refreshObjective(ctx, task.objective_id); // estado del objetivo + `objective.changed` con los contadores nuevos
   scheduleWorkspacesNotify(ctx);
   return view;
 }
@@ -181,6 +184,10 @@ export function transition(
       agentId: task.agent_id,
       payload: { task_id: taskId, from, to, ...(reason ? { reason } : {}) },
     });
+    if (to === 'review') {
+      const project = projectOfTask(ctx, task);
+      notify(ctx, { projectId: project.id, level: 'info', title: `Clau terminó: «${task.title}»`, body: 'Lista para revisar.' });
+    }
   } else if (Object.keys(patch).length > 0) {
     ctx.repos.tasks.update(taskId, patch);
   }
@@ -215,6 +222,31 @@ export function checkAssignable(ctx: Ctx, project: ProjectRow, agentId: string) 
   return agent;
 }
 
+const MAX_FINDINGS = 50;
+const FINDING_MAX = 2000;
+
+/**
+ * Guarda los hallazgos de una revisión como evento `git` (`finding`), que el prompt del siguiente run recoge
+ * (`buildPrompt` en runs.ts). Devuelve el texto guardado.
+ */
+export function recordFinding(ctx: Ctx, task: TaskRow, finding: string, message: string): void {
+  logEvent(ctx, {
+    projectId: projectOfTask(ctx, task).id, kind: 'git', taskId: task.id, agentId: task.agent_id,
+    payload: { finding, task_id: task.id, message },
+  });
+}
+
+/** Veredicto sobre una tarea en `review` (lo llama `task.review`: la persona o el gerente). */
+export function reviewTask(ctx: Ctx, taskId: string, verdict: 'approve' | 'changes', findings: string[] = []): TaskView {
+  const task = getTask(ctx, taskId);
+  if (task.status !== 'review') throw new Error(`task.review: la tarea está en ${task.status}; solo se revisan las que están en review`);
+  if (verdict === 'approve') return transition(ctx, taskId, 'approved', 'aprobada');
+  const list = findings.map((f) => f.trim()).filter((f) => f !== '').slice(0, MAX_FINDINGS).map((f) => f.slice(0, FINDING_MAX));
+  const message = list.length === 0 ? 'Se pidieron cambios sin más detalle.' : list.length === 1 ? list[0]! : list.map((f) => `- ${f}`).join('\n');
+  recordFinding(ctx, task, 'review', message);
+  return transition(ctx, taskId, 'changes', list.length === 0 ? 'cambios pedidos' : `cambios pedidos: ${list.length} hallazgo(s)`);
+}
+
 export function taskHandlers(ctx: Ctx): Record<string, Handler> {
   return {
     /** `{projectId?}` */
@@ -243,13 +275,20 @@ export function taskHandlers(ctx: Ctx): Record<string, Handler> {
       const files = [...new Set(((p.files as unknown[] | undefined) ?? []).map(normalizeTaskPath))];
       const agentId = typeof p.agent_id === 'string' && p.agent_id !== '' ? p.agent_id : null;
       if (agentId) checkAssignable(ctx, project, agentId);
+      // 0.2d: `objectiveId` opcional (debe ser de este proyecto); sin él, el objetivo implícito "Tareas sueltas".
+      let objectiveId: string | null = null;
+      if (p.objectiveId != null && p.objectiveId !== '') {
+        const objective = ctx.repos.objectives.get(str(p.objectiveId, 'objectiveId', 'task.create'));
+        if (!objective || objective.project_id !== project.id) throw new Error(`task.create: el objetivo ${String(p.objectiveId)} no existe en este proyecto`);
+        objectiveId = objective.id;
+      }
 
       // Tarea + reserva de archivos en una transacción: si hay conflicto no queda nada creado.
       ctx.db.exec('BEGIN IMMEDIATE');
       let created: TaskRow;
       try {
         created = ctx.repos.tasks.create({
-          objectiveId: looseObjective(ctx, project).id,
+          objectiveId: objectiveId ?? looseObjective(ctx, project).id,
           title,
           description,
           agentId,
@@ -268,6 +307,18 @@ export function taskHandlers(ctx: Ctx): Record<string, Handler> {
         throw err;
       }
       return publishTask(ctx, created.id);
+    },
+
+    /** `{id, projectId?, verdict: 'approve' | 'changes', findings?: string[]}` sobre una tarea en `review`. */
+    'task.review': (params) => {
+      const p = asParams(params, 'task.review');
+      const task = getTask(ctx, str(p.id, 'id', 'task.review'));
+      assertSameProject(p, projectOfTask(ctx, task).id, 'task.review');
+      if (p.verdict !== 'approve' && p.verdict !== 'changes') throw new Error('task.review: "verdict" debe ser "approve" o "changes"');
+      if (p.findings != null && (!Array.isArray(p.findings) || !p.findings.every((f) => typeof f === 'string'))) {
+        throw new Error('task.review: "findings" debe ser una lista de textos');
+      }
+      return reviewTask(ctx, task.id, p.verdict, (p.findings as string[] | undefined) ?? []);
     },
 
     'task.assign': (params) => {

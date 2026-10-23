@@ -2,6 +2,7 @@
 import type { AgentEvent } from '../adapters/types.js';
 import { type Ctx, type Handler, type LiveRun, asParams, str } from './context.js';
 import { logEvent, sanitize } from './events.js';
+import { notify } from './notifications.js';
 import { setRobotStatus } from './status.js';
 import { getTask, transition } from './tasks.js';
 
@@ -19,7 +20,15 @@ export function onPermissionRequest(ctx: Ctx, live: LiveRun, ev: Extract<AgentEv
     runId: live.runId,
     payload: { approval_id: row.id, tool: ev.tool, input, risk: ev.risk, decision: 'pending' },
   });
-  if (getTask(ctx, live.taskId).status === 'running') transition(ctx, live.taskId, 'needs_you', `permiso: ${ev.tool}`);
+  if (getTask(ctx, live.taskId).status === 'running') {
+    transition(ctx, live.taskId, 'needs_you', `permiso: ${ev.tool}`);
+    const agent = ctx.repos.agents.get(live.agentId);
+    const task = getTask(ctx, live.taskId);
+    notify(ctx, {
+      projectId: live.projectId, level: 'ask', title: 'Clau te necesita',
+      body: `${agent?.name ?? 'Un robot'} pide permiso para ${ev.tool} en «${task.title}».`, approvalId: row.id,
+    });
+  }
   setRobotStatus(ctx, live.agentId, 'needs_you');
   ctx.emit('approval.requested', {
     projectId: live.projectId,

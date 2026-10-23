@@ -19,6 +19,9 @@ pub struct LifecycleState {
     /// Hay una petición de cierre sin confirmar por la UI.
     awaiting_ack: Arc<AtomicBool>,
     busy_item: Mutex<Option<MenuItem<tauri::Wry>>>,
+    stop_item: Mutex<Option<MenuItem<tauri::Wry>>>,
+    /// El gerente está parado (`manager.halted`): el menú ofrece «Reanudar».
+    halted: AtomicBool,
 }
 
 fn busy_label(n: u32) -> String {
@@ -26,6 +29,19 @@ fn busy_label(n: u32) -> String {
         0 => "Ningún robot trabajando".into(),
         1 => "1 robot trabajando".into(),
         n => format!("{n} robots trabajando"),
+    }
+}
+
+fn stop_label(halted: bool) -> &'static str {
+    if halted { "Reanudar" } else { "Parar todo" }
+}
+
+/// El core avisa de que la parada global cambió: alterna el texto del menú.
+pub fn set_halted(app: &AppHandle, halted: bool) {
+    let state = app.state::<LifecycleState>();
+    state.halted.store(halted, Ordering::SeqCst);
+    if let Some(item) = state.stop_item.lock().unwrap().as_ref() {
+        let _ = item.set_text(stop_label(halted));
     }
 }
 
@@ -75,10 +91,12 @@ pub fn should_intercept_exit(app: &AppHandle, code: Option<i32>) -> bool {
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Mostrar Kiji Office", true, None::<&str>)?;
     let busy = MenuItem::with_id(app, "busy", busy_label(0), false, None::<&str>)?;
+    let stop = MenuItem::with_id(app, "stop", stop_label(false), true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Salir", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&show, &busy, &sep, &quit_item])?;
+    let menu = Menu::with_items(app, &[&show, &busy, &stop, &sep, &quit_item])?;
     *app.state::<LifecycleState>().busy_item.lock().unwrap() = Some(busy);
+    *app.state::<LifecycleState>().stop_item.lock().unwrap() = Some(stop);
 
     let mut builder = TrayIconBuilder::with_id("main")
         .tooltip("Kiji Office")
@@ -86,6 +104,10 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main(app),
+            "stop" => {
+                let halted = app.state::<LifecycleState>().halted.load(Ordering::SeqCst);
+                crate::core_process::send_simple(app, if halted { "manager.resume" } else { "manager.stopAll" });
+            }
             "quit" => request_close(app, "quit"),
             _ => {}
         });

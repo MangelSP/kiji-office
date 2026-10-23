@@ -2,6 +2,7 @@ mod core_process;
 mod detect;
 mod keyring;
 mod lifecycle;
+mod notify;
 
 use tauri::{Manager, RunEvent, WindowEvent};
 
@@ -10,6 +11,8 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .manage(notify::NotifyState::default())
         .manage(core_process::CoreState::default())
         .manage(lifecycle::LifecycleState::default())
         .on_window_event(|window, event| {
@@ -49,6 +52,9 @@ pub fn run() {
                 api.prevent_exit();
                 lifecycle::request_close(handle, "quit");
             }
+            // Clic en una notificación (o en el Dock) con la app en segundo plano: ventana al frente.
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => notify::on_reactivated(handle),
             RunEvent::Exit => core_process::shutdown(handle),
             _ => {}
         }

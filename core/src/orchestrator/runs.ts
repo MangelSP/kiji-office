@@ -2,7 +2,7 @@
 // (red de seguridad de propiedad, commit, tests) según cómo termine.
 import { existsSync } from 'node:fs';
 import type { AgentEvent, RunSpec } from '../adapters/types.js';
-import type { AgentRow, TaskRow } from '../db/repos.js';
+import type { AgentRow, RunStartedBy, TaskRow } from '../db/repos.js';
 import { commitAll, runTests } from '../git/integrate.js';
 import { createWorktree, branchName, changedFiles, diff } from '../git/worktree.js';
 import { denyPending, onPermissionRequest } from './approvals.js';
@@ -69,6 +69,8 @@ export interface StartOptions {
   resumeNote?: string;
   /** Prompt de traspaso (otro agente): va delante del pedido. */
   handover?: string;
+  /** Quién arranca el run (0.2d): 'user' por defecto; el gerente pasa 'manager' (cuenta para su tope del día). Sin indicar en un relevo o reanudación, hereda el del último run de la tarea. */
+  startedBy?: RunStartedBy;
 }
 
 const DEFAULT_RESUME_NOTE = 'Continúa donde lo dejaste: la tarea se interrumpió por un límite de uso.';
@@ -125,7 +127,7 @@ export function runHandlers(ctx: Ctx): Record<string, Handler> {
       const p = asParams(params, 'task.start');
       const task = getTask(ctx, str(p.id, 'id', 'task.start'));
       assertSameProject(p, projectOfTask(ctx, task).id, 'task.start');
-      return requestStart(ctx, task.id, {}, 'start');
+      return requestStart(ctx, task.id, { startedBy: 'user' }, 'start'); // la persona manda: 'user' aunque el último run fuera del gerente
     },
     /** `{id, projectId?}`: para el run; si la tarea estaba en la cola, la saca de ella. */
     'task.stop': async (params) => {
@@ -216,7 +218,8 @@ export async function startTask(ctx: Ctx, taskId: string, opts: StartOptions = {
       worktree = await createWorktree(project.path, task.id, project.base_branch);
     }
     live.worktree = worktree;
-    const run = ctx.repos.runs.create({ taskId, agentId: agent.id, model });
+    const startedBy = opts.startedBy ?? ctx.repos.runs.latestByTask(taskId)?.started_by ?? 'user';
+    const run = ctx.repos.runs.create({ taskId, agentId: agent.id, model, startedBy });
     live.runId = run.id;
     ctx.repos.runs.update(run.id, { context_window: live.usage.contextWindow });
     transition(ctx, taskId, 'running', 'task.start', readOnly ? {} : { branch: branchName(task.id), worktree_path: worktree });

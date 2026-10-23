@@ -23,6 +23,8 @@ export interface ProjectRow {
   id: string; path: string; name: string; base_branch: string; test_command: string | null; created_at: number;
   // 0.2c (migración 3)
   scene: 'oficina' | 'casa'; last_opened_at: number | null; color: string | null; is_open: 0 | 1;
+  // 0.2d (migración 5): JSON ManagerPolicy; NULL = gerente apagado
+  manager_policy: string | null;
 }
 export interface AgentRow {
   id: string; project_id: string; name: string; provider: Provider; api_base: string | null;
@@ -56,7 +58,10 @@ export interface RunRow {
   // 0.2a (migración 2)
   model: string | null; cache_read_tokens: number; cache_write_tokens: number;
   context_tokens: number; context_window: number;
+  // 0.2d (migración 5): quién arrancó el run
+  started_by: RunStartedBy;
 }
+export type RunStartedBy = 'user' | 'manager';
 export type RelayReasonDb = 'limit' | 'manual' | 'resume_after_reset';
 export interface RelayDbRow {
   id: number; project_id: string; task_id: string | null; from_agent_id: string | null; to_agent_id: string | null;
@@ -76,8 +81,27 @@ export interface ApprovalRow {
 export interface TestRunRow {
   id: number; task_id: string; command: string; exit_code: number | null; output: string; created_at: number;
 }
+export type IntegrationStatusDb = 'applied' | 'reverted' | 'failed';
 export interface IntegrationRow {
-  id: number; task_id: string; before_sha: string; after_sha: string; created_at: number; reverted_at: number | null;
+  id: number; project_id: string; task_id: string; before_sha: string; after_sha: string;
+  status: IntegrationStatusDb; detail: string; created_at: number;
+}
+export type MemoryKindDb = 'fact' | 'decision' | 'preference' | 'todo';
+export interface MemoryDbRow {
+  id: number; project_id: string; kind: MemoryKindDb; text: string; source: 'manager' | 'user'; archived: 0 | 1; created_at: number;
+}
+export interface ManagerTickRow {
+  id: string; project_id: string; trigger: string; run_id: string | null; summary: string; cost_usd: number;
+  started_at: number; ended_at: number | null;
+}
+export type AutonomyLevelDb = 'auto' | 'notify' | 'ask';
+export interface ManagerActionRow {
+  id: number; tick_id: string; project_id: string; tool: string; input: string; result: string;
+  level: AutonomyLevelDb; decided_by: 'policy' | 'user' | 'timeout' | null; created_at: number;
+}
+export interface NotificationDbRow {
+  id: number; project_id: string; level: 'info' | 'warn' | 'ask'; title: string; body: string;
+  approval_id: string | null; read_at: number | null; created_at: number;
 }
 
 // Estados que terminan una tarea: sus archivos dejan de estar reservados.
@@ -130,6 +154,15 @@ function patchRow(
   db.prepare(`UPDATE ${table} SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
 }
 
+/**
+ * Consulta FTS5 segura a partir de texto libre: palabras (letras/números unicode) entre comillas dobles, unidas por
+ * espacio (AND). null si no queda ninguna palabra. Nunca pasa operadores (AND/OR/NOT/NEAR, *, -, :, ^, paréntesis).
+ */
+export function ftsQuery(raw: string): string | null {
+  const words = raw.match(/[\p{L}\p{N}_]+/gu) ?? [];
+  return words.length === 0 ? null : words.map((w) => `"${w}"`).join(' ');
+}
+
 // ---------- Repos ----------
 
 export function createRepos(db: DatabaseSync) {
@@ -163,6 +196,11 @@ export function createRepos(db: DatabaseSync) {
       if (open && touch) db.prepare('UPDATE projects SET is_open = 1, last_opened_at = ? WHERE id = ?').run(now(), id);
       else if (open) db.prepare('UPDATE projects SET is_open = 1 WHERE id = ?').run(id);
       else db.prepare('UPDATE projects SET is_open = 0 WHERE id = ?').run(id);
+      return projects.get(id)!;
+    },
+    /** Guarda la política del gerente (JSON ya serializado); `null` apaga el gerente. */
+    setManagerPolicy(id: string, policyJson: string | null): ProjectRow {
+      db.prepare('UPDATE projects SET manager_policy = ? WHERE id = ?').run(policyJson, id);
       return projects.get(id)!;
     },
     /** Los que estaban abiertos al cerrar el core, el último abierto al final. */
@@ -339,11 +377,13 @@ export function createRepos(db: DatabaseSync) {
     'model', 'cache_read_tokens', 'cache_write_tokens', 'context_tokens', 'context_window',
   ] as const;
   const runs = {
-    create(r: { taskId: string; agentId: string; providerSessionId?: string | null; model?: string | null }): RunRow {
+    create(r: {
+      taskId: string; agentId: string; providerSessionId?: string | null; model?: string | null; startedBy?: RunStartedBy;
+    }): RunRow {
       const id = newId();
       db.prepare(
-        'INSERT INTO runs (id, task_id, agent_id, provider_session_id, model, started_at) VALUES (?, ?, ?, ?, ?, ?)',
-      ).run(id, r.taskId, r.agentId, r.providerSessionId ?? null, r.model ?? null, now());
+        'INSERT INTO runs (id, task_id, agent_id, provider_session_id, model, started_by, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ).run(id, r.taskId, r.agentId, r.providerSessionId ?? null, r.model ?? null, r.startedBy ?? 'user', now());
       return runs.get(id)!;
     },
     /** Últimos runs de un agente, el más nuevo primero. */
@@ -382,6 +422,11 @@ export function createRepos(db: DatabaseSync) {
       patchRow(db, 'runs', id, patch, RUN_FIELDS);
       return runs.get(id);
     },
+    /** Gasto de los runs del proyecto arrancados por `startedBy` que empezaron desde `since` (tope del día del gerente). */
+    costByStartedBySince: (projectId: string, startedBy: RunStartedBy, since: number) =>
+      one<{ total: number }>(
+        `SELECT COALESCE(SUM(r.cost_usd), 0) AS total FROM runs r JOIN agents a ON a.id = r.agent_id
+         WHERE a.project_id = ? AND r.started_by = ? AND r.started_at >= ?`, projectId, startedBy, since)!.total,
     /** Gasto acumulado de una tarea en USD (todos sus runs). */
     costByTask: (taskId: string) =>
       one<{ total: number }>('SELECT COALESCE(SUM(cost_usd), 0) AS total FROM runs WHERE task_id = ?', taskId)!.total,
@@ -496,19 +541,159 @@ export function createRepos(db: DatabaseSync) {
       one<TestRunRow>('SELECT * FROM test_runs WHERE task_id = ? ORDER BY id DESC LIMIT 1', taskId),
   };
 
-  // --- integrations ---
+  // --- integrations (0.2d: una fila por intento de integrar; status applied | reverted | failed) ---
   const integrations = {
-    create(i: { taskId: string; beforeSha: string; afterSha: string }): IntegrationRow {
+    create(i: {
+      projectId: string; taskId: string; beforeSha?: string; afterSha?: string; status?: IntegrationStatusDb; detail?: string;
+    }): IntegrationRow {
       const info = db.prepare(
-        'INSERT INTO integrations (task_id, before_sha, after_sha, created_at) VALUES (?, ?, ?, ?)',
-      ).run(i.taskId, i.beforeSha, i.afterSha, now());
-      return one<IntegrationRow>('SELECT * FROM integrations WHERE id = ?', Number(info.lastInsertRowid))!;
+        `INSERT INTO integrations (project_id, task_id, before_sha, after_sha, status, detail, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(i.projectId, i.taskId, i.beforeSha ?? '', i.afterSha ?? '', i.status ?? 'applied', i.detail ?? '', now());
+      return integrations.get(Number(info.lastInsertRowid))!;
     },
+    get: (id: number) => one<IntegrationRow>('SELECT * FROM integrations WHERE id = ?', id),
+    /** La última integración de la tarea (cualquier estado). */
     getByTask: (taskId: string) =>
       one<IntegrationRow>('SELECT * FROM integrations WHERE task_id = ? ORDER BY id DESC LIMIT 1', taskId),
-    markReverted(id: number): void {
-      db.prepare('UPDATE integrations SET reverted_at = ? WHERE id = ?').run(now(), id);
+    /** La más nueva primero. */
+    list: (projectId: string, limit = 100) =>
+      all<IntegrationRow>('SELECT * FROM integrations WHERE project_id = ? ORDER BY id DESC LIMIT ?', projectId, limit),
+    setStatus(id: number, status: IntegrationStatusDb, detail?: string): void {
+      if (detail === undefined) db.prepare('UPDATE integrations SET status = ? WHERE id = ?').run(status, id);
+      else db.prepare('UPDATE integrations SET status = ?, detail = ? WHERE id = ?').run(status, detail, id);
     },
+  };
+
+  // --- memory (0.2d, D24): FTS5 con contenido externo; los triggers de la migración 5 mantienen el índice ---
+  const memory = {
+    create(m: { projectId: string; kind: MemoryKindDb; text: string; source?: 'manager' | 'user' }): MemoryDbRow {
+      const info = db.prepare('INSERT INTO memory (project_id, kind, text, source, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(m.projectId, m.kind, m.text, m.source ?? 'manager', now());
+      return memory.get(Number(info.lastInsertRowid))!;
+    },
+    get: (id: number) => one<MemoryDbRow>('SELECT * FROM memory WHERE id = ?', id),
+    /** Lo más nuevo primero. */
+    recent: (projectId: string, limit = 50, includeArchived = false) =>
+      all<MemoryDbRow>(
+        `SELECT * FROM memory WHERE project_id = ? ${includeArchived ? '' : 'AND archived = 0'} ORDER BY id DESC LIMIT ?`,
+        projectId, limit),
+    /**
+     * Búsqueda de texto completo. La consulta es texto libre de la persona: se convierte en palabras entre comillas
+     * (todas deben aparecer), así que ningún operador ni comilla de FTS5 puede romper la sintaxis. Sin palabras
+     * útiles devuelve lo más reciente. Orden: relevancia (bm25).
+     */
+    search(projectId: string, query: string, limit = 50, includeArchived = false): MemoryDbRow[] {
+      const match = ftsQuery(query);
+      if (match === null) return memory.recent(projectId, limit, includeArchived);
+      return all<MemoryDbRow>(
+        `SELECT m.* FROM memory_fts f JOIN memory m ON m.id = f.rowid
+         WHERE memory_fts MATCH ? AND m.project_id = ? ${includeArchived ? '' : 'AND m.archived = 0'}
+         ORDER BY f.rank, m.id DESC LIMIT ?`,
+        match, projectId, limit);
+    },
+    setArchived(id: number, archived = true): void {
+      db.prepare('UPDATE memory SET archived = ? WHERE id = ?').run(archived ? 1 : 0, id);
+    },
+    updateText(id: number, text: string): void {
+      db.prepare('UPDATE memory SET text = ? WHERE id = ?').run(text, id);
+    },
+    delete(id: number): void {
+      db.prepare('DELETE FROM memory WHERE id = ?').run(id);
+    },
+  };
+
+  // --- manager_ticks / manager_actions (0.2d) ---
+  const managerTicks = {
+    create(t: { projectId: string; trigger: string; runId?: string | null }): ManagerTickRow {
+      const id = newId();
+      db.prepare('INSERT INTO manager_ticks (id, project_id, trigger, run_id, started_at) VALUES (?, ?, ?, ?, ?)')
+        .run(id, t.projectId, t.trigger, t.runId ?? null, now());
+      return managerTicks.get(id)!;
+    },
+    get: (id: string) => one<ManagerTickRow>('SELECT * FROM manager_ticks WHERE id = ?', id),
+    /** Cierra el tick (`ended_at` = ahora) con su resumen y coste; `runId` si el tick usó un run. */
+    end(id: string, e: { summary?: string; costUsd?: number; runId?: string | null }): ManagerTickRow | undefined {
+      db.prepare(
+        `UPDATE manager_ticks SET ended_at = ?, summary = COALESCE(?, summary), cost_usd = COALESCE(?, cost_usd),
+         run_id = COALESCE(?, run_id) WHERE id = ?`,
+      ).run(now(), e.summary ?? null, e.costUsd ?? null, e.runId ?? null, id);
+      return managerTicks.get(id);
+    },
+    /** El más nuevo primero. */
+    list: (projectId: string, limit = 50) =>
+      all<ManagerTickRow>('SELECT * FROM manager_ticks WHERE project_id = ? ORDER BY started_at DESC, rowid DESC LIMIT ?', projectId, limit),
+    latest: (projectId: string) =>
+      one<ManagerTickRow>('SELECT * FROM manager_ticks WHERE project_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 1', projectId),
+    /** Gasto de los ticks que empezaron desde `since`. */
+    costSince: (projectId: string, since: number) =>
+      one<{ total: number }>(
+        'SELECT COALESCE(SUM(cost_usd), 0) AS total FROM manager_ticks WHERE project_id = ? AND started_at >= ?', projectId, since)!.total,
+    countSince: (projectId: string, since: number) =>
+      one<{ n: number }>('SELECT COUNT(*) AS n FROM manager_ticks WHERE project_id = ? AND started_at >= ?', projectId, since)!.n,
+  };
+  const managerActions = {
+    create(a: {
+      tickId: string; projectId: string; tool: string; input: unknown; result: unknown; level: AutonomyLevelDb;
+      decidedBy?: 'policy' | 'user' | 'timeout' | null;
+    }): ManagerActionRow {
+      const text = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v ?? null));
+      const info = db.prepare(
+        `INSERT INTO manager_actions (tick_id, project_id, tool, input, result, level, decided_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(a.tickId, a.projectId, a.tool, text(a.input), text(a.result), a.level, a.decidedBy ?? null, now());
+      return managerActions.get(Number(info.lastInsertRowid))!;
+    },
+    get: (id: number) => one<ManagerActionRow>('SELECT * FROM manager_actions WHERE id = ?', id),
+    /** Cuando una pregunta se resuelve (usuario o tiempo agotado) o llega el resultado de una acción en espera. */
+    resolve(id: number, r: { result?: unknown; decidedBy?: 'policy' | 'user' | 'timeout' }): void {
+      const text = (v: unknown): string | null => (v === undefined ? null : typeof v === 'string' ? v : JSON.stringify(v));
+      db.prepare('UPDATE manager_actions SET result = COALESCE(?, result), decided_by = COALESCE(?, decided_by) WHERE id = ?')
+        .run(text(r.result), r.decidedBy ?? null, id);
+    },
+    listByTick: (tickId: string) =>
+      all<ManagerActionRow>('SELECT * FROM manager_actions WHERE tick_id = ? ORDER BY id', tickId),
+    /** La más nueva primero. */
+    listByProject: (projectId: string, limit = 100) =>
+      all<ManagerActionRow>('SELECT * FROM manager_actions WHERE project_id = ? ORDER BY id DESC LIMIT ?', projectId, limit),
+  };
+
+  // --- notifications (0.2d) ---
+  const notifications = {
+    create(n: { projectId: string; level: 'info' | 'warn' | 'ask'; title: string; body: string; approvalId?: string | null }): NotificationDbRow {
+      const info = db.prepare(
+        'INSERT INTO notifications (project_id, level, title, body, approval_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ).run(n.projectId, n.level, n.title, n.body, n.approvalId ?? null, now());
+      return notifications.get(Number(info.lastInsertRowid))!;
+    },
+    get: (id: number) => one<NotificationDbRow>('SELECT * FROM notifications WHERE id = ?', id),
+    /** La más nueva primero; sin `projectId`, de todos los proyectos. */
+    list(o: { projectId?: string; unreadOnly?: boolean; limit?: number } = {}): NotificationDbRow[] {
+      const where: string[] = [];
+      const params: SQLInputValue[] = [];
+      if (o.projectId !== undefined) { where.push('project_id = ?'); params.push(o.projectId); }
+      if (o.unreadOnly) where.push('read_at IS NULL');
+      return all<NotificationDbRow>(
+        `SELECT * FROM notifications ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT ?`,
+        ...params, o.limit ?? 100);
+    },
+    /** Marca como leídas (las que no lo estaban) y devuelve cuántas. `ids: 'all'` acota por `projectId` si se da. */
+    markRead(ids: number[] | 'all', projectId?: string): number {
+      if (ids === 'all') {
+        const info = projectId === undefined
+          ? db.prepare('UPDATE notifications SET read_at = ? WHERE read_at IS NULL').run(now())
+          : db.prepare('UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND project_id = ?').run(now(), projectId);
+        return Number(info.changes);
+      }
+      let n = 0;
+      const upd = db.prepare('UPDATE notifications SET read_at = ? WHERE id = ? AND read_at IS NULL');
+      for (const id of ids) n += Number(upd.run(now(), id).changes);
+      return n;
+    },
+    unreadCount: (projectId?: string) =>
+      one<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM notifications WHERE read_at IS NULL ${projectId === undefined ? '' : 'AND project_id = ?'}`,
+        ...(projectId === undefined ? [] : [projectId]))!.n,
   };
 
   // --- relays ---
@@ -541,7 +726,7 @@ export function createRepos(db: DatabaseSync) {
     },
   };
 
-  return { projects, agents, connections, objectives, tasks, taskFiles, runs, messages, events, approvals, testRuns, integrations, relays, settings };
+  return { projects, agents, connections, objectives, tasks, taskFiles, runs, messages, events, approvals, testRuns, integrations, memory, managerTicks, managerActions, notifications, relays, settings };
 }
 
 export type Repos = ReturnType<typeof createRepos>;

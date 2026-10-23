@@ -3,6 +3,10 @@
 // para las pruebas), y devuelve los handlers que `core/src/index.ts` registra en el router.
 import type { DatabaseSync } from 'node:sqlite';
 import { createRepos } from '../db/repos.js';
+import { integrationHandlers } from './integration.js';
+import { memoryHandlers } from './memory.js';
+import { notificationHandlers } from './notifications.js';
+import { objectiveHandlers } from './objectives.js';
 import { agentHandlers } from './agents.js';
 import { approvalHandlers } from './approvals.js';
 import type { AdapterFactory, Ctx, Handler } from './context.js';
@@ -69,6 +73,7 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     closed: false,
     secrets: new Map(),
     conn: null,
+    integrationLocks: new Map(),
   };
   // Por defecto: Claude, o ApiLoopAdapter cuando el agente tiene connection_id (0.2b).
   if (!opts.adapterFactory) ctx.adapterFactory = makeAdapterFactory(ctx, opts.connectionDeps);
@@ -88,6 +93,10 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     ...metricsHandlers(ctx),
     ...skillHandlers(ctx),
     ...taskHandlers(ctx),
+    ...objectiveHandlers(ctx),
+    ...integrationHandlers(ctx),
+    ...memoryHandlers(ctx),
+    ...notificationHandlers(ctx),
     ...runHandlers(ctx),
     ...relayHandlers(ctx),
     ...approvalHandlers(ctx),

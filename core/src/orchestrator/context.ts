@@ -128,6 +128,9 @@ export interface Ctx {
   secrets: Map<string, string>;
   /** Servicio de conexiones (prueba, modelos, descubrimiento); lo asigna `connectionHandlers` en `createOrchestrator`. */
   conn: ConnectionService | null;
+  // --- 0.2d ---
+  /** Cola de integraciones por proyecto: una a la vez (cada valor es cola de promesas encadenadas). */
+  integrationLocks: Map<string, Promise<unknown>>;
 }
 
 /** Datos de la petición que el router pasa al handler (solo `secrets.put` los usa). */

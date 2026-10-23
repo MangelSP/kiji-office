@@ -65,6 +65,66 @@ ALTER TABLE agents ADD COLUMN connection_id TEXT REFERENCES connections(id) ON D
 CREATE INDEX agents_connection ON agents(connection_id);
 `;
 
+// Migración 5 (0.2d, PLAN-0.2b.md parte 3, D24): política del gerente, memoria con FTS5, diario de ticks y acciones,
+// avisos, `runs.started_by` y la tabla `integrations` rehecha (proyecto, estado y detalle; la de la migración 1 solo
+// tenía task_id/shas/reverted_at). Las filas existentes se conservan: reverted_at -> status 'reverted'.
+const MIGRATION_5 = `
+ALTER TABLE projects ADD COLUMN manager_policy TEXT;
+ALTER TABLE runs ADD COLUMN started_by TEXT NOT NULL DEFAULT 'user';
+CREATE TABLE memory (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('fact', 'decision', 'preference', 'todo')),
+  text TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manager',
+  archived INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+);
+CREATE INDEX memory_project ON memory(project_id, archived, id);
+CREATE VIRTUAL TABLE memory_fts USING fts5(text, content='memory', content_rowid='id');
+CREATE TRIGGER memory_ai AFTER INSERT ON memory BEGIN
+  INSERT INTO memory_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER memory_ad AFTER DELETE ON memory BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+CREATE TRIGGER memory_au AFTER UPDATE ON memory BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, text) VALUES ('delete', old.id, old.text);
+  INSERT INTO memory_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TABLE manager_ticks (
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  trigger TEXT NOT NULL, run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+  summary TEXT NOT NULL DEFAULT '', cost_usd REAL NOT NULL DEFAULT 0, started_at INTEGER NOT NULL, ended_at INTEGER
+);
+CREATE INDEX manager_ticks_project ON manager_ticks(project_id, started_at);
+CREATE TABLE manager_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, tick_id TEXT NOT NULL REFERENCES manager_ticks(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL, tool TEXT NOT NULL, input TEXT NOT NULL, result TEXT NOT NULL,
+  level TEXT NOT NULL CHECK (level IN ('auto', 'notify', 'ask')), decided_by TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX manager_actions_project ON manager_actions(project_id, id);
+CREATE TABLE notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, level TEXT NOT NULL CHECK (level IN ('info', 'warn', 'ask')),
+  title TEXT NOT NULL, body TEXT NOT NULL, approval_id TEXT, read_at INTEGER, created_at INTEGER NOT NULL
+);
+CREATE INDEX notifications_project ON notifications(project_id, id);
+CREATE TABLE integrations_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  before_sha TEXT NOT NULL DEFAULT '', after_sha TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK (status IN ('applied', 'reverted', 'failed')),
+  detail TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL
+);
+INSERT INTO integrations_new (id, project_id, task_id, before_sha, after_sha, status, detail, created_at)
+  SELECT i.id, o.project_id, i.task_id, i.before_sha, i.after_sha,
+         CASE WHEN i.reverted_at IS NULL THEN 'applied' ELSE 'reverted' END, '', i.created_at
+  FROM integrations i JOIN tasks t ON t.id = i.task_id JOIN objectives o ON o.id = t.objective_id;
+DROP TABLE integrations;
+ALTER TABLE integrations_new RENAME TO integrations;
+CREATE INDEX integrations_project ON integrations(project_id, id);
+CREATE INDEX integrations_task ON integrations(task_id, id);
+`;
+
 // Migraciones en orden; la posición + 1 es el valor de user_version tras aplicarla.
 // Para cambiar el esquema en el futuro: añadir un elemento al final, nunca editar los anteriores.
 export const migrations: Array<(db: DatabaseSync) => void> = [
@@ -72,6 +132,7 @@ export const migrations: Array<(db: DatabaseSync) => void> = [
   (db) => db.exec(MIGRATION_2),
   (db) => db.exec(MIGRATION_3),
   (db) => db.exec(MIGRATION_4),
+  (db) => db.exec(MIGRATION_5),
 ];
 
 export function openDb(path: string): DatabaseSync {

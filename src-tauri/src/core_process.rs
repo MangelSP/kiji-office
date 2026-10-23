@@ -40,6 +40,42 @@ fn put_line(n: u64, account: &str, value: Option<&str>) -> String {
     .to_string()
 }
 
+/// Línea NDJSON de una petición sin parámetros que origina Rust (`manager.stopAll` / `manager.resume`).
+fn simple_req_line(n: u64, method: &str) -> String {
+    serde_json::json!({ "id": format!("rust:{n}"), "type": "req", "method": method }).to_string()
+}
+
+/// Envía una petición sin parámetros al core en marcha. La respuesta (`rust:*`) se descarta; si el core aún
+/// no conoce el método, el error también.
+pub fn send_simple(app: &AppHandle, method: &str) {
+    let state = app.state::<CoreState>();
+    let mut g = state.0.lock().unwrap();
+    if let Some(stdin) = g.stdin.as_mut() {
+        let line = simple_req_line(RUST_REQ.fetch_add(1, Ordering::Relaxed), method);
+        if let Err(e) = write_line(stdin, &line) {
+            eprintln!("[core] no se pudo enviar {method}: {e}");
+        }
+    }
+}
+
+/// Efectos laterales de eventos que Rust también atiende (siguen reenviándose al webview).
+fn side_effects(app: &AppHandle, line: &str) {
+    if !(line.contains("\"notify\"") || line.contains("manager.halted")) {
+        return;
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return };
+    if v["type"] != "event" {
+        return;
+    }
+    match v["name"].as_str() {
+        Some("notify") => crate::notify::handle(app, &v["payload"]),
+        Some("manager.halted") => {
+            crate::lifecycle::set_halted(app, v["payload"]["halted"].as_bool().unwrap_or(false))
+        }
+        _ => {}
+    }
+}
+
 /// Escribe una línea + salto en el escritor dado (el stdin del core, o uno falso en tests).
 fn write_line<W: Write>(w: &mut W, line: &str) -> std::io::Result<()> {
     w.write_all(line.as_bytes())?;
@@ -219,6 +255,7 @@ fn spawn(app: &AppHandle, inner: &mut Inner) -> Result<(), String> {
                 Route::Forward => {}
             }
             log_milestones(&line);
+            side_effects(&app_out, &line);
             let _ = app_out.emit("core:line", line);
         }
         on_exit(&app_out, generation);
@@ -369,6 +406,15 @@ mod tests {
         assert_eq!(ls[1]["params"]["value"], "");
         let id = |i: usize| ls[i]["id"].as_str().unwrap().strip_prefix("rust:").unwrap().parse::<u64>().unwrap();
         assert!(id(1) > id(0));
+    }
+
+    #[test]
+    fn peticion_stop_all() {
+        let v: serde_json::Value = serde_json::from_str(&simple_req_line(7, "manager.stopAll")).unwrap();
+        assert_eq!(v["id"], "rust:7");
+        assert_eq!(v["type"], "req");
+        assert_eq!(v["method"], "manager.stopAll");
+        assert!(is_reserved(&simple_req_line(8, "manager.resume")));
     }
 
     #[test]

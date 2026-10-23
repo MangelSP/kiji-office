@@ -6,6 +6,7 @@ import type { BudgetNotice, QueueChange } from '../../../shared/protocol.js';
 import { type Ctx, type Handler, type QueueEntry } from './context.js';
 import { logEvent } from './events.js';
 import { AgentBusyError, type StartOptions, checkStartable, startTask } from './runs.js';
+import { notify } from './notifications.js';
 import { type TaskView, getTask, publishTask, taskView } from './tasks.js';
 import { scheduleWorkspacesNotify } from './workspaces.js';
 
@@ -144,6 +145,7 @@ function noticeBudget(ctx: Ctx, entry: QueueEntry): void {
     ctx.budgetNoticeAt = Date.now();
     const notice: BudgetNotice = { costTodayUsd: cost, dailyBudgetUsd: budget, message, projectId: entry.projectId, taskId: entry.taskId };
     ctx.emit('budget.reached', notice);
+    notify(ctx, { projectId: entry.projectId, level: 'warn', title: 'Tope de gasto alcanzado', body: `Hoy van ${cost.toFixed(2)} de ${budget.toFixed(2)} USD: no arrancan más runs hasta mañana.` });
   }
 }
 
