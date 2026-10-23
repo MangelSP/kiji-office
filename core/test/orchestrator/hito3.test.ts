@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { git, removeRepo } from '../git/helpers.js';
 import { notify, stripAbsolutePaths } from '../../src/orchestrator/notifications.js';
-import { makeHarness, makeNodeRepo, type Harness } from './helpers.js';
+import { applyAndWait, makeHarness, makeNodeRepo, type Harness } from './helpers.js';
 
 let repo: string;
 let h: Harness;
@@ -107,7 +107,7 @@ describe('integración', () => {
     writeFileSync(join(repo, 'src', 'other.ts'), 'export const other = 2;\n');
     git(repo, 'commit', '-am', 'main avanza');
 
-    const view = await h.call('integration.apply', { id, projectId: project.id });
+    const view = await applyAndWait(h, id, { projectId: project.id });
     expect(view).toMatchObject({ projectId: project.id, taskId: id, status: 'applied' });
     expect(view.beforeSha).toMatch(/^[0-9a-f]{40}$/);
     expect(git(repo, 'rev-parse', 'HEAD')).toBe(view.afterSha);
@@ -130,7 +130,7 @@ describe('integración', () => {
     const { project, worker } = await open();
     const id = await approved(project.id, worker.id, 'cambia a', 'src/a.ts', 'export const a = 42;\n');
     const before = git(repo, 'rev-parse', 'HEAD');
-    const view = await h.call('integration.apply', { id });
+    const view = await applyAndWait(h, id);
     const rev = await h.call('integration.revert', { integrationId: view.id, projectId: project.id });
     expect(rev).toMatchObject({ id: view.id, status: 'reverted' });
     expect(readFileSync(join(repo, 'src', 'a.ts'), 'utf8')).toBe('export const a = 1;\n');
@@ -148,7 +148,7 @@ describe('integración', () => {
     git(repo, 'commit', '-am', 'main toca a.ts');
     const head = git(repo, 'rev-parse', 'HEAD');
 
-    const view = await h.call('integration.apply', { id });
+    const view = await applyAndWait(h, id);
     expect(view.status).toBe('failed');
     expect(view.detail).toContain('src/a.ts');
     expect(task(id).status).toBe('blocked');
@@ -165,7 +165,7 @@ describe('integración', () => {
     h.orch.ctx.projects.set(project.id, repos().projects.get(project.id)!);
     const head = git(repo, 'rev-parse', 'HEAD');
 
-    const view = await h.call('integration.apply', { id });
+    const view = await applyAndWait(h, id);
     expect(view.status).toBe('failed');
     expect(view.detail.length).toBeLessThanOrEqual(2000);
     expect(task(id).status).toBe('changes');
@@ -181,22 +181,24 @@ describe('integración', () => {
     const { project, worker } = await open();
     const id = await approved(project.id, worker.id, 'cambia a', 'src/a.ts', 'export const a = 42;\n');
     writeFileSync(join(repo, 'src', 'other.ts'), 'trabajo de la persona sin guardar\n');
-    await expect(h.call('integration.apply', { id })).rejects.toThrow(/cambios sin guardar \(src\/other\.ts\)/);
+    const dirty = await applyAndWait(h, id);
+    expect(dirty).toMatchObject({ status: 'failed', reason: 'dirty' });
+    expect(dirty.detail).toMatch(/cambios sin guardar \(src\/other\.ts\)/);
     expect(readFileSync(join(repo, 'src', 'other.ts'), 'utf8')).toBe('trabajo de la persona sin guardar\n');
     git(repo, 'checkout', '--', 'src/other.ts');
     git(repo, 'checkout', '-b', 'otra');
-    await expect(h.call('integration.apply', { id })).rejects.toThrow(/rama «otra» y debería estar en «main»/);
+    expect((await applyAndWait(h, id)).detail).toMatch(/rama «otra» y debería estar en «main»/);
     expect(task(id).status).toBe('approved');
-    expect(repos().integrations.list(project.id)).toHaveLength(0);
+    expect(repos().integrations.list(project.id).every((i) => i.status === 'failed')).toBe(true); // nada se integró
     git(repo, 'checkout', 'main');
-    expect((await h.call('integration.apply', { id })).status).toBe('applied'); // y luego sí
+    expect((await applyAndWait(h, id)).status).toBe('applied'); // y luego sí
   });
 
   it('una integración a la vez por proyecto: dos apply seguidos se encadenan', async () => {
     const { project, worker } = await open();
     const a = await approved(project.id, worker.id, 'uno', 'src/a.ts', 'export const a = 10;\n');
     const b = await approved(project.id, worker.id, 'dos', 'src/other.ts', 'export const other = 20;\n');
-    const [va, vb] = await Promise.all([h.call('integration.apply', { id: a }), h.call('integration.apply', { id: b })]);
+    const [va, vb] = await Promise.all([applyAndWait(h, a), applyAndWait(h, b)]);
     expect([va.status, vb.status]).toEqual(['applied', 'applied']);
     expect(vb.beforeSha).toBe(va.afterSha); // el segundo partió del resultado del primero
     expect(h.orch.ctx.integrationLocks.size).toBe(0);

@@ -127,6 +127,8 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     },
     /** Pide a Rust las claves `conn:*` del llavero (evento `secrets.request`); `core/src/index.ts` lo llama tras `core.ready`. */
     requestSecrets: () => requestSecrets(ctx),
+    /** Tras `core.ready`: si la parada global sobrevivió al reinicio, avisa a la UI y a Rust (menú «Reanudar»). */
+    announceHalted: () => { if (ctx.halted) ctx.emit('manager.halted', { halted: true }); },
     ctx,
   };
 }

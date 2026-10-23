@@ -45,25 +45,33 @@ describe("fallos de integración", () => {
 });
 
 describe("applyTask / revertTask", () => {
-  it("integrar con éxito llama a integration.apply y limpia el estado", async () => {
-    mocks.request.mockImplementation(async (m: string) => (m === "integration.apply" ? { id: "i1", taskId: "t1", status: "applied", projectId: P } : []));
+  const started = { phase: "started", taskId: "t1" };
+  const done = (extra: object = {}) => ({ id: "i1", projectId: P, taskId: "t1", status: "applied", phase: "done", detail: "", ...extra });
+  const event = (payload: object) => applyEvent({ type: "event", name: "integration.changed", payload });
+
+  it("integrar llama a integration.apply, queda ocupada hasta el evento done y entonces limpia el estado", async () => {
+    mocks.request.mockImplementation(async (m: string) => (m === "integration.apply" ? started : []));
     expect(await st().applyTask(P, "t1")).toBe(true);
     expect(calls("integration.apply")[0][1]).toEqual({ id: "t1", projectId: P });
-    expect(st().integrationRuns.t1).toMatchObject({ busy: false, failure: null });
+    expect(st().integrationRuns.t1).toMatchObject({ busy: true, failure: null }); // el resultado llega por evento
+    event(done());
+    expect(st().integrationRuns.t1).toMatchObject({ busy: false, phase: null, failure: null });
     expect(st().integrations[P]?.[0].id).toBe("i1");
+    expect(calls("task.list").length + calls("integration.list").length).toBeGreaterThan(0);
   });
 
-  it("integration.apply devuelve status failed (no lanza): conflicto, tests y merge", async () => {
-    const view = (extra: object) => ({ id: "i2", projectId: P, taskId: "t1", status: "failed", detail: "d", ...extra });
-    mocks.request.mockResolvedValueOnce(view({ reason: "tests_failed", output: "FAIL x" }));
-    expect(await st().applyTask(P, "t1")).toBe(false);
-    expect(st().integrationRuns.t1.failure).toMatchObject({ kind: "tests", output: "FAIL x" });
-    mocks.request.mockResolvedValueOnce(view({ reason: "conflict", files: ["a.ts"] }));
-    expect(await st().applyTask(P, "t1")).toBe(false);
-    expect(st().integrationRuns.t1.failure).toMatchObject({ kind: "conflict", files: ["a.ts"] });
-    mocks.request.mockResolvedValueOnce(view({ reason: "merge" }));
+  it("el evento failed suelta la integración con el fallo: conflicto, tests, merge y parada", async () => {
+    mocks.request.mockImplementation(async (m: string) => (m === "integration.apply" ? started : []));
+    const failed = (extra: object) => ({ id: "i2", projectId: P, taskId: "t1", status: "failed", phase: "failed", detail: "d", ...extra });
     await st().applyTask(P, "t1");
+    event(failed({ reason: "tests_failed", output: "FAIL x" }));
+    expect(st().integrationRuns.t1).toMatchObject({ busy: false, failure: { kind: "tests", output: "FAIL x" } });
+    event(failed({ reason: "conflict", files: ["a.ts"] }));
+    expect(st().integrationRuns.t1.failure).toMatchObject({ kind: "conflict", files: ["a.ts"] });
+    event(failed({ reason: "merge" }));
     expect(st().integrationRuns.t1.failure?.kind).toBe("merge");
+    event(failed({ reason: "halted" }));
+    expect(st().integrationRuns.t1.failure).toMatchObject({ kind: "other", message: expect.stringMatching(/Parada global/) });
   });
 
   it("error code dirty: usa la rama base del proyecto", async () => {
@@ -115,6 +123,13 @@ describe("answerApproval", () => {
     expect(calls("approval.answer")[0][1]).toEqual({ id: "a1", allow: true, projectId: P, option: "Sí, hoy" });
     await st().answerApproval(P, "a2", false);
     expect(calls("approval.answer")[1][1]).toEqual({ id: "a2", allow: false, projectId: P });
+  });
+
+  it("cada opción de una pregunta del gerente se envía como approval.answer con option", async () => {
+    const options = ["Sí, hoy", "Mañana", "Nunca"];
+    seed({ approvals: options.map((_, i) => ({ id: `q${i}`, tool: "manager:ask_user" })) });
+    for (const [i, o] of options.entries()) await st().answerApproval(P, `q${i}`, true, o);
+    expect(calls("approval.answer").map((c) => c[1])).toEqual(options.map((o, i) => ({ id: `q${i}`, allow: true, projectId: P, option: o })));
   });
 });
 

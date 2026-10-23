@@ -64,9 +64,8 @@ describe("TaskReviewActions", () => {
     expect(calls("task.review")[0][1]).toEqual({ id: "t1", projectId: P, verdict: "changes", findings: ["falta test", "revisar el estado"] });
   });
 
-  it("approved: Integrar muestra el progreso mientras dura y luego se limpia", async () => {
-    let done: (v: unknown) => void = () => {};
-    mocks.request.mockImplementation((m: string) => (m === "integration.apply" ? new Promise((r) => (done = r)) : Promise.resolve([])));
+  it("approved: Integrar muestra el progreso hasta que llega el evento done", async () => {
+    mocks.request.mockImplementation((m: string) => Promise.resolve(m === "integration.apply" ? { phase: "started", taskId: "t1" } : []));
     render(<TaskReviewActions task={task("approved")} />);
     fireEvent.click(screen.getByRole("button", { name: "Integrar Login" }));
     const progress = await screen.findByRole("status", { name: "Progreso de la integración" });
@@ -74,31 +73,47 @@ describe("TaskReviewActions", () => {
     act(() => useStore.getState().applyIntegration({ projectId: P, taskId: "t1", phase: "tests" }));
     expect(within(progress).getByText("Tests").getAttribute("aria-current")).toBe("step");
     expect(within(progress).getByText("✓ Rebase")).toBeTruthy();
-    await act(async () => done({ id: "i1", projectId: P, taskId: "t1", status: "applied" }));
+    expect(screen.getByRole("button", { name: "Integrar Login" }).textContent).toBe("Integrando…");
+    act(() => useStore.getState().applyIntegration({ id: "i1", projectId: P, taskId: "t1", status: "applied", phase: "done", detail: "" }));
     await waitFor(() => expect(screen.queryByRole("status", { name: "Progreso de la integración" })).toBeNull());
   });
 
-  const failed = (extra: object) => ({ id: "i2", projectId: "p1", taskId: "t1", status: "failed", detail: "d", ...extra });
+  const failed = (extra: object) => ({ id: "i2", projectId: "p1", taskId: "t1", status: "failed", phase: "failed", detail: "d", ...extra });
+  const clickIntegrate = async (ev?: object) => {
+    mocks.request.mockImplementation((m: string) => Promise.resolve(m === "integration.apply" ? { phase: "started", taskId: "t1" } : []));
+    const view = render(<TaskReviewActions task={task("approved")} />);
+    fireEvent.click(screen.getByRole("button", { name: "Integrar Login" }));
+    await waitFor(() => expect(calls("integration.apply")).toHaveLength(1));
+    if (ev) act(() => useStore.getState().applyIntegration(ev));
+    return view;
+  };
 
   it("conflicto: lista los archivos", async () => {
-    mocks.request.mockResolvedValue(failed({ reason: "conflict", files: ["src/a.ts", "src/b.ts"] }));
-    render(<TaskReviewActions task={task("approved")} />);
-    fireEvent.click(screen.getByRole("button", { name: "Integrar Login" }));
+    await clickIntegrate(failed({ reason: "conflict", files: ["src/a.ts", "src/b.ts"] }));
     const files = await screen.findByRole("list", { name: "Archivos en conflicto" });
     expect(within(files).getAllByRole("listitem").map((l) => l.textContent)).toEqual(["src/a.ts", "src/b.ts"]);
   });
 
   it("tests fallidos: la salida va plegada", async () => {
-    mocks.request.mockResolvedValue(failed({ reason: "tests_failed", output: "FAIL login.test.ts" }));
-    const { container } = render(<TaskReviewActions task={task("approved")} />);
-    fireEvent.click(screen.getByRole("button", { name: "Integrar Login" }));
+    const { container } = await clickIntegrate(failed({ reason: "tests_failed", output: "FAIL login.test.ts" }));
     await screen.findByText(/Los tests fallaron/);
     const details = container.querySelector("details")!;
     expect(details.open).toBe(false);
     expect(details.textContent).toContain("FAIL login.test.ts");
   });
 
-  it("repo principal sucio u otra rama (code dirty)", async () => {
+  it("parada global: avisa de que hay que reanudar", async () => {
+    await clickIntegrate(failed({ reason: "halted" }));
+    await screen.findByText(/Parada global activa/);
+  });
+
+  it("repo principal sucio u otra rama (reason dirty)", async () => {
+    useStore.setState({ projects: [{ projectId: P, baseBranch: "main" } as never] });
+    await clickIntegrate(failed({ reason: "dirty" }));
+    await screen.findByText("Tu repo principal tiene cambios sin guardar o está en otra rama: haz commit o cambia a main y vuelve a intentarlo");
+  });
+
+  it("repo principal sucio u otra rama (code dirty al empezar)", async () => {
     useStore.setState({ projects: [{ projectId: P, baseBranch: "main" } as never] });
     mocks.request.mockRejectedValue(new CoreError({ code: "dirty", message: "x" }));
     render(<TaskReviewActions task={task("approved")} />);

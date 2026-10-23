@@ -455,7 +455,7 @@ export type IntegrationView = {
   files?: string[];
   output?: string;
 };
-export type IntegrationFailReason = 'conflict' | 'tests_failed' | 'dirty' | 'merge';
+export type IntegrationFailReason = 'conflict' | 'tests_failed' | 'dirty' | 'merge' | 'halted';
 export type IntegrationPhase = 'rebase' | 'tests' | 'merge' | 'done' | 'failed';
 /** Payload de `integration.changed`: las fases intermedias solo llevan `projectId`, `taskId` y `phase`. */
 export type IntegrationChangedEvent = { projectId: string; taskId: string; phase?: IntegrationPhase } & Partial<IntegrationView>;

@@ -113,3 +113,16 @@ export function makeHarness(
     waitFor,
   };
 }
+
+/**
+ * `integration.apply` responde ya `{phase:'started'}`; el resultado llega por `integration.changed` (done | failed).
+ * Devuelve ese último evento (la IntegrationView con `phase`).
+ */
+export async function applyAndWait(h: Harness, id: string, params: Record<string, unknown> = {}): Promise<any> {
+  const finals = () => h.emitted.filter((e) => e.name === 'integration.changed' && e.payload.taskId === id && (e.payload.phase === 'done' || e.payload.phase === 'failed'));
+  const before = finals().length;
+  const started = await h.call('integration.apply', { id, ...params });
+  if (started?.phase !== 'started' || started.taskId !== id) throw new Error(`integration.apply no respondió started: ${JSON.stringify(started)}`);
+  await h.waitFor(() => finals().length > before, `integración de ${id} terminada`, 30_000);
+  return finals().at(-1)!.payload;
+}

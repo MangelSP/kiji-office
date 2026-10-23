@@ -110,7 +110,7 @@ export function createManagerRuntime(ctx: Ctx): ManagerRuntime {
   function schedule(pid: string): void {
     const s = st(pid);
     if (s.timer || s.running || s.pending.length === 0 || !active(pid)) return;
-    const wait = Math.max(opts.settleMs, s.lastStart + opts.minTickGapMs - Date.now());
+    const wait = Math.max(opts.settleMs, s.lastStart + opts.minTickGapMs - nowMs());
     s.timer = setTimeout(() => { s.timer = null; fire(pid); }, wait);
     s.timer.unref();
   }
@@ -124,8 +124,8 @@ export function createManagerRuntime(ctx: Ctx): ManagerRuntime {
 
   const noticeDue = (s: PState, key: string): boolean => {
     const last = s.lastNotice.get(key) ?? 0;
-    if (Date.now() - last < NOTICE_EVERY_MS) return false;
-    s.lastNotice.set(key, Date.now());
+    if (nowMs() - last < NOTICE_EVERY_MS) return false;
+    s.lastNotice.set(key, nowMs());
     return true;
   };
 
@@ -165,10 +165,10 @@ export function createManagerRuntime(ctx: Ctx): ManagerRuntime {
       skipTick(pid, 'day-budget', `Tope del día alcanzado (${policy.dayBudgetUsd} USD): no arranco nada más hoy. ${waitingSummary(pid)}`);
       return;
     }
-    const hour = hourStats(pid, Date.now() - HOUR);
+    const hour = hourStats(pid, nowMs() - HOUR);
     if (hour.n >= policy.maxTicksPerHour) {
       if (noticeDue(s, 'hour-limit')) notify(ctx, { projectId: pid, level: 'info', title: 'El gerente descansa', body: `Llegó a ${policy.maxTicksPerHour} despertares en una hora; seguirá en cuanto pase.` });
-      s.timer = setTimeout(() => { s.timer = null; fire(pid); }, Math.max(1000, hour.oldest + HOUR - Date.now() + 50));
+      s.timer = setTimeout(() => { s.timer = null; fire(pid); }, Math.max(1000, hour.oldest + HOUR - nowMs() + 50));
       s.timer.unref();
       return;
     }
@@ -181,7 +181,7 @@ export function createManagerRuntime(ctx: Ctx): ManagerRuntime {
   function startTick(pid: string, label: string, triggers: TickTrigger[], message?: string): string {
     const s = st(pid);
     const tick = ctx.repos.managerTicks.create({ projectId: pid, trigger: label });
-    s.lastStart = Date.now();
+    s.lastStart = nowMs();
     s.abort = null;
     ctx.emit('manager.tick', { projectId: pid, phase: 'started', tick: tickView(tick) });
     s.running = runTick(pid, tick.id, triggers, message)

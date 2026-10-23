@@ -77,3 +77,4 @@ process.on('unhandledRejection', (err) => {
 emit('core.ready', { version: '0.1.0' });
 // 0.2b: pide a Rust las claves `conn:*` del llavero (llegan por `secrets.put` con id "rust:*").
 orchestrator.requestSecrets();
+orchestrator.announceHalted();

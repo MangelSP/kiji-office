@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { removeRepo } from '../git/helpers.js';
+import { applyAndWait } from '../orchestrator/helpers.js';
 import { makeManagerHarness, type MgrHarness } from './helpers.js';
 
 let m: MgrHarness;
@@ -18,7 +19,7 @@ describe('integration.apply para la UI', () => {
     m = await makeManagerHarness();
     const id = await m.toReview('ok', 'src/a.ts', 'export const a = 2;\n');
     await m.h.call('task.review', { id, verdict: 'approve' });
-    const v = await m.h.call('integration.apply', { id });
+    const v = await applyAndWait(m.h, id);
     expect(v.status).toBe('applied');
     expect(phases()).toEqual(['rebase', 'tests', 'merge', 'done']);
   });
@@ -29,20 +30,18 @@ describe('integration.apply para la UI', () => {
     await m.h.call('task.review', { id, verdict: 'approve' });
     m.repos.projects.update(m.project.id, { testCommand: 'node -e "console.log(\'rojo\');process.exit(1)"' });
     m.ctx.projects.set(m.project.id, m.repos.projects.get(m.project.id)!);
-    const v = await m.h.call('integration.apply', { id });
+    const v = await applyAndWait(m.h, id);
     expect(v).toMatchObject({ status: 'failed', reason: 'tests_failed' });
     expect(v.output).toContain('rojo');
     expect(phases().at(-1)).toBe('failed');
   });
 
-  it('repo principal sucio: lanza con code dirty', async () => {
+  it('repo principal sucio: falla con reason dirty', async () => {
     m = await makeManagerHarness();
     const id = await m.toReview('sucio', 'src/a.ts', 'export const a = 4;\n');
     await m.h.call('task.review', { id, verdict: 'approve' });
     writeFileSync(join(m.repo, 'src', 'other.ts'), 'export const other = 99;\n');
-    const err = await m.h.call('integration.apply', { id }).catch((e) => e);
-    expect(err).toBeInstanceOf(Error);
-    expect((err as any).code).toBe('dirty');
+    expect(await applyAndWait(m.h, id)).toMatchObject({ status: 'failed', reason: 'dirty' });
     expect(m.repos.tasks.get(id)!.status).toBe('approved');
   });
 });

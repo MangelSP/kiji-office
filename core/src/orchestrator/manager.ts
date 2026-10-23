@@ -37,7 +37,10 @@ function journal(ctx: Ctx, label: 'halt' | 'resume', summary: string): void {
 
 /** Parada global: nada arranca, el gerente calla, los runs vivos paran (tareas a `assigned`, proyectos abiertos). */
 export async function haltAll(ctx: Ctx): Promise<{ halted: boolean }> {
-  if (ctx.halted) return { halted: true };
+  if (ctx.halted) {
+    ctx.emit('manager.halted', { halted: true }); // la UI/Rust pueden haberse desincronizado
+    return { halted: true };
+  }
   ctx.halted = true;
   ctx.repos.settings.set(HALT_KEY, '1');
   for (const e of [...ctx.queue]) dequeue(ctx, e.taskId);
@@ -59,7 +62,10 @@ export async function haltAll(ctx: Ctx): Promise<{ halted: boolean }> {
 }
 
 export function resumeAll(ctx: Ctx): { halted: boolean } {
-  if (!ctx.halted) return { halted: false };
+  if (!ctx.halted) {
+    ctx.emit('manager.halted', { halted: false });
+    return { halted: false };
+  }
   ctx.halted = false;
   ctx.repos.settings.set(HALT_KEY, '0');
   ctx.manager?.resume();

@@ -115,7 +115,7 @@ describe('bucle', () => {
     await m.invoke('request_integration', { taskId: id });
     const ap = m.repos.approvals.listPending()[0]!;
     await m.h.call('approval.answer', { id: ap.id, allow: true });
-    expect(m.repos.tasks.get(id)!.status).toBe('integrated');
+    await m.h.waitFor(() => m.repos.tasks.get(id)!.status === 'integrated', 'integrada en segundo plano', 30_000);
     expect(m.repos.integrations.getByTask(id)!.status).toBe('applied');
     await m.h.waitFor(() => m.specs.some((x) => x.prompt.includes('La persona respondió SÍ')), 'tick tras la respuesta');
   });

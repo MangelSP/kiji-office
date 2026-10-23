@@ -93,6 +93,7 @@ export async function integrateTask(ctx: Ctx, taskId: string): Promise<Integrati
     const task = getTask(ctx, taskId);
     if (task.status !== 'approved') throw new Error(`integration.apply: la tarea está en ${task.status}; solo se integran las aprobadas`);
     if (ctx.live.has(taskId)) throw new Error('integration.apply: la tarea tiene un run en curso');
+    if (ctx.halted) return fail(ctx, project, task, 'Parada global activa: no se integra.', 'Parada global activa: reanuda y vuelve a integrar.', { reason: 'halted' });
     if (isReadOnlyTask(ctx, taskId)) throw new Error('integration.apply: es una consulta de solo lectura, no hay nada que integrar');
     const worktree = task.worktree_path;
     if (!worktree || !existsSync(worktree)) throw new Error('integration.apply: la tarea no tiene worktree');
@@ -137,7 +138,9 @@ export async function integrateTask(ctx: Ctx, taskId: string): Promise<Integrati
         }
       }
 
-      // 4) Merge ff-only en el repo principal (vuelve a exigir rama base y árbol limpio).
+      // 4) Merge ff-only en el repo principal (vuelve a exigir rama base y árbol limpio). Una parada global durante
+      // el rebase/los tests lo impide: la tarea sigue `approved`.
+      if (ctx.halted) return fail(ctx, project, task, 'Parada global activa: no se integra.', 'Parada global activa: reanuda y vuelve a integrar.', { reason: 'halted' });
       phase(ctx, project.id, taskId, 'merge');
       let merged;
       try {
@@ -199,8 +202,22 @@ export function integrationHandlers(ctx: Ctx): Record<string, Handler> {
     'integration.apply': (params) => {
       const p = asParams(params, 'integration.apply');
       const task = getTask(ctx, str(p.id, 'id', 'integration.apply'));
-      assertSameProject(p, projectOfTask(ctx, task).id, 'integration.apply');
-      return integrateTask(ctx, task.id);
+      const project = projectOfTask(ctx, task);
+      assertSameProject(p, project.id, 'integration.apply');
+      if (!ctx.projects.has(project.id)) throw new Error(`el proyecto «${project.name}» no está abierto`);
+      if (task.status !== 'approved') throw new Error(`integration.apply: la tarea está en ${task.status}; solo se integran las aprobadas`);
+      // Responde ya: rebase+tests+merge pueden tardar minutos y el router atiende una petición a la vez.
+      // El resultado llega por `integration.changed` (phase done | failed). El lock por proyecto las serializa.
+      void integrateTask(ctx, task.id).catch((err) => {
+        try {
+          const dirty = err instanceof IntegrationError ? err.code === 'dirty' : false;
+          const t = getTask(ctx, task.id);
+          fail(ctx, project, t, msg(err), msg(err), { reason: dirty ? 'dirty' : 'merge' });
+        } catch (e) {
+          process.stderr.write(`kiji-core: integration.apply falló: ${msg(e)}\n`);
+        }
+      });
+      return { phase: 'started', taskId: task.id };
     },
     /** `{integrationId, projectId?}` -> IntegrationView */
     'integration.revert': (params) => {

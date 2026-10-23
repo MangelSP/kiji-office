@@ -85,8 +85,8 @@ describe('herramienta × nivel', () => {
           expect(ap).toHaveLength(1);
           expect(notices().slice(before).some((n) => n.level === 'ask' && n.approvalId === ap[0]!.id)).toBe(true);
           // se puede aprobar: entonces se ejecuta y queda decided_by 'user'
-          await m.h.call('approval.answer', { id: ap[0]!.id, allow: true });
-          expect(sc.done(args)).toBe(true);
+          expect(await m.h.call('approval.answer', { id: ap[0]!.id, allow: true })).toMatchObject({ status: 'approved', pending: true });
+          await m.h.waitFor(() => sc.done(args) && m.repos.managerActions.get(row.id)!.decided_by === 'user', 'acción aprobada ejecutada', 30_000);
           expect(m.repos.managerActions.get(row.id)!.decided_by).toBe('user');
         } else {
           expect(r.isError).toBe(false);
@@ -275,6 +275,7 @@ describe('candados y validación', () => {
     await expect(m.h.call('approval.answer', { id: ap.id, allow: true, option: 'mongo' })).rejects.toThrow(/option/);
     await expect(m.h.call('approval.answer', { id: ap.id, allow: false, option: 'sqlite' })).rejects.toThrow(/allow:true/);
     expect(await m.h.call('approval.answer', { id: ap.id, allow: true, option: 'postgres' })).toMatchObject({ status: 'approved', option: 'postgres' });
+    await m.h.waitFor(() => actions('ask_user')[0]!.decided_by === 'user', 'ask_user resuelta');
     expect(JSON.parse(actions('ask_user')[0]!.result)).toMatchObject({ ok: true, option: 'postgres' });
     expect(actions('ask_user')[0]!.decided_by).toBe('user');
   });

@@ -26,7 +26,12 @@ pub struct Throttle(HashMap<String, Slot>);
 
 impl Throttle {
     /// `Some(n)` = se puede lanzar ahora, con `n` avisos agrupados desde el último; `None` = suprimir.
-    pub fn check(&mut self, project: &str, now: Instant) -> Option<u32> {
+    pub fn check(&mut self, project: &str, level: &str, now: Instant) -> Option<u32> {
+        // Los avisos que esperan a la persona (`ask`) o avisan de un problema (`warn`) nunca se suprimen:
+        // solo se agrupa `info`. Tampoco reinician la cuenta del throttle.
+        if level != "info" {
+            return Some(0);
+        }
         let s = self.0.entry(project.to_string()).or_default();
         if s.last.is_some_and(|t| now.duration_since(t) < THROTTLE) {
             s.suppressed += 1;
@@ -77,7 +82,7 @@ pub fn handle(app: &AppHandle, payload: &serde_json::Value) {
         return;
     }
     let state = app.state::<NotifyState>();
-    let Some(extra) = state.throttle.lock().unwrap().check(project, Instant::now()) else { return };
+    let Some(extra) = state.throttle.lock().unwrap().check(project, level, Instant::now()) else { return };
     let body = body_with_group(payload["body"].as_str().unwrap_or(""), extra);
     if let Err(e) = app.notification().builder().title(clip(title, MAX_CHARS)).body(body).show() {
         eprintln!("[notify] no se pudo mostrar la notificación: {e}");
@@ -115,12 +120,26 @@ mod tests {
     fn throttle_agrupa_por_proyecto() {
         let mut t = Throttle::default();
         let t0 = Instant::now();
-        assert_eq!(t.check("a", t0), Some(0));
-        assert_eq!(t.check("a", t0 + Duration::from_secs(1)), None);
-        assert_eq!(t.check("a", t0 + Duration::from_secs(2)), None);
-        assert_eq!(t.check("b", t0 + Duration::from_secs(2)), Some(0));
-        assert_eq!(t.check("a", t0 + Duration::from_secs(3)), Some(2));
-        assert_eq!(t.check("a", t0 + Duration::from_secs(4)), None);
+        assert_eq!(t.check("a", "info", t0), Some(0));
+        assert_eq!(t.check("a", "info", t0 + Duration::from_secs(1)), None);
+        assert_eq!(t.check("a", "info", t0 + Duration::from_secs(2)), None);
+        assert_eq!(t.check("b", "info", t0 + Duration::from_secs(2)), Some(0));
+        assert_eq!(t.check("a", "info", t0 + Duration::from_secs(3)), Some(2));
+        assert_eq!(t.check("a", "info", t0 + Duration::from_secs(4)), None);
+    }
+
+    #[test]
+    fn throttle_no_aplica_a_ask_ni_warn() {
+        let mut t = Throttle::default();
+        let t0 = Instant::now();
+        assert_eq!(t.check("a", "info", t0), Some(0));
+        // dentro de la ventana de 3 s: info se suprime, ask y warn pasan siempre
+        assert_eq!(t.check("a", "info", t0 + Duration::from_secs(1)), None);
+        assert_eq!(t.check("a", "ask", t0 + Duration::from_secs(1)), Some(0));
+        assert_eq!(t.check("a", "warn", t0 + Duration::from_secs(1)), Some(0));
+        assert_eq!(t.check("a", "ask", t0 + Duration::from_secs(1)), Some(0));
+        // sin haber consumido ni reiniciado el contador de info
+        assert_eq!(t.check("a", "info", t0 + Duration::from_secs(3)), Some(1));
     }
 
     #[test]

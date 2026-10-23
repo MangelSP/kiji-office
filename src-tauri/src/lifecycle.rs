@@ -91,7 +91,7 @@ pub fn should_intercept_exit(app: &AppHandle, code: Option<i32>) -> bool {
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Mostrar Kiji Office", true, None::<&str>)?;
     let busy = MenuItem::with_id(app, "busy", busy_label(0), false, None::<&str>)?;
-    let stop = MenuItem::with_id(app, "stop", stop_label(false), true, None::<&str>)?;
+    let stop = MenuItem::with_id(app, "stop", stop_label(app.state::<LifecycleState>().halted.load(Ordering::SeqCst)), true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Salir", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&show, &busy, &stop, &sep, &quit_item])?;

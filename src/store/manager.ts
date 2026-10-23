@@ -44,7 +44,7 @@ const EMPTY_RUN: IntegrationRun = { busy: false, phase: null, failure: null };
 export const dirtyMessage = (baseBranch?: string) =>
   `Tu repo principal tiene cambios sin guardar o está en otra rama: haz commit o cambia a ${baseBranch ?? "la rama base"} y vuelve a intentarlo`;
 
-/** Fallo estructurado de `integration.apply` (respuesta o evento con `status: 'failed'`). */
+/** Fallo estructurado de una integración (evento `integration.changed` con `status: 'failed'`). */
 export function integrationFailureFromView(v: Pick<IntegrationView, "detail" | "reason" | "files" | "output">, baseBranch?: string): IntegrationFailure {
   const reason: IntegrationFailReason | undefined = v.reason;
   const message = String(v.detail ?? "");
@@ -52,6 +52,7 @@ export function integrationFailureFromView(v: Pick<IntegrationView, "detail" | "
   if (reason === "tests_failed") return { kind: "tests", output: v.output ?? "", message };
   if (reason === "dirty") return { kind: "dirty", message: dirtyMessage(baseBranch) };
   if (reason === "merge") return { kind: "merge", output: v.output ?? "", message };
+  if (reason === "halted") return { kind: "other", message: "Parada global activa: reanuda y vuelve a integrar." };
   return { kind: "other", message };
 }
 
@@ -277,18 +278,12 @@ export const createManagerSlice: StateCreator<AppState, [], [], ManagerSlice> = 
       if (Array.isArray(list)) patchMap("integrations", pid, list);
     },
 
+    // El core responde ya `{phase:'started'}` y sigue en segundo plano: el progreso y el resultado (done | failed)
+    // llegan por `integration.changed` (applyIntegration), que es quien suelta `busy`.
     applyTask: async (pid, taskId) => {
       setRun(taskId, { busy: true, phase: null, failure: null });
       try {
-        const res = await get().call<IntegrationView | null>("integration.apply", { id: taskId, projectId: pid });
-        if (isObj(res) && res.status === "failed") {
-          setRun(taskId, { busy: false, phase: null, failure: integrationFailureFromView(res, baseBranchOf(pid)) });
-          return false;
-        }
-        if (isObj(res) && "taskId" in res) get().applyIntegration(res);
-        setRun(taskId, { busy: false, phase: null });
-        void get().refreshTasks(pid);
-        void get().refreshIntegrations(pid);
+        await get().call<{ phase: "started"; taskId: string } | null>("integration.apply", { id: taskId, projectId: pid });
         return true;
       } catch (err) {
         const code = err instanceof CoreError ? err.code : "";
@@ -348,7 +343,11 @@ export const createManagerSlice: StateCreator<AppState, [], [], ManagerSlice> = 
       // Progreso en vivo: rebase -> tests -> merge; `done` y `failed` lo cierran.
       if (ev.taskId === undefined || ev.phase === undefined) return;
       if ((INTEGRATION_PHASES as readonly string[]).includes(ev.phase)) setRun(ev.taskId, { phase: ev.phase as ProgressPhase });
-      else setRun(ev.taskId, { phase: null });
+      else if (ev.phase === "done") {
+        setRun(ev.taskId, { busy: false, phase: null });
+        void get().refreshTasks(pid);
+        void get().refreshIntegrations(pid);
+      } else setRun(ev.taskId, { busy: false, phase: null });
     },
 
     applyManagerTick: (pid, payload) => {

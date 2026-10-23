@@ -342,8 +342,12 @@ function settle(ctx: Ctx, id: string): PendingAsk | undefined {
 
 const wake = (ctx: Ctx, ask: PendingAsk, text: string): void => ctx.manager?.trigger(ask.projectId, 'answer', text);
 
-/** La persona contestó (`approval.answer` sobre una `manager:*`): si es sí, ejecuta la acción guardada. */
-export async function answerManagerAsk(ctx: Ctx, id: string, allow: boolean, option?: unknown): Promise<{ ok: true; status: 'approved' | 'denied'; option?: string }> {
+/**
+ * La persona contestó (`approval.answer` sobre una `manager:*`). Decide y responde ya; si es sí, la acción guardada
+ * (p. ej. rebase+tests+merge) corre en segundo plano para no congelar el router: al terminar se anota en el diario y
+ * se despierta al gerente; un error va al diario y a un aviso.
+ */
+export async function answerManagerAsk(ctx: Ctx, id: string, allow: boolean, option?: unknown): Promise<{ ok: true; status: 'approved' | 'denied'; option?: string; pending?: true }> {
   const ask = ctx.managerAsks.get(id);
   if (!ask) throw new Error('la aprobación ya está resuelta');
   let chosen: string | undefined;
@@ -353,6 +357,8 @@ export async function answerManagerAsk(ctx: Ctx, id: string, allow: boolean, opt
     if (!allow) throw new Error('approval.answer: una opción solo se elige con allow:true');
     chosen = option;
   }
+  // Con la parada global activa un SÍ no se puede ejecutar: se rechaza sin decidir (la aprobación sigue pendiente).
+  if (allow && ctx.halted) throw new Error('Parada global activa: reanuda antes de aprobar.');
   if (!ctx.repos.approvals.decide(id, allow ? 'approved' : 'denied')) {
     settle(ctx, id);
     throw new Error('la aprobación ya está resuelta');
@@ -363,19 +369,28 @@ export async function answerManagerAsk(ctx: Ctx, id: string, allow: boolean, opt
     wake(ctx, ask, `La persona respondió NO a: ${ask.summary}`);
     return { ok: true, status: 'denied' };
   }
-  let result: unknown;
-  try {
-    if (ctx.halted) throw new Error('Parada global activa: no se ejecuta.');
-    result = await ask.execute();
-    if (chosen !== undefined) result = { ...(result as object), option: chosen };
-  } catch (e) {
-    result = { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-  resolveAction(ctx, ask.actionId, { result, decidedBy: 'user' });
-  wake(ctx, ask, chosen !== undefined
-    ? `La persona eligió «${chosen}» a: ${ask.summary}`
-    : `La persona respondió SÍ a: ${ask.summary}. Resultado: ${clip(asText(result), 300)}`);
-  return { ok: true, status: 'approved', ...(chosen !== undefined ? { option: chosen } : {}) };
+  void (async () => {
+    let result: unknown;
+    let failed: string | undefined;
+    try {
+      if (ctx.halted) throw new Error('Parada global activa: no se ejecuta.');
+      result = await ask.execute();
+      if (chosen !== undefined) result = { ...(result as object), option: chosen };
+    } catch (e) {
+      failed = e instanceof Error ? e.message : String(e);
+      result = { ok: false, error: failed };
+    }
+    try {
+      resolveAction(ctx, ask.actionId, { result, decidedBy: 'user' });
+      if (failed !== undefined) notify(ctx, { projectId: ask.projectId, level: 'warn', title: 'No se pudo hacer lo aprobado', body: `${ask.summary}: ${clip(failed, 300)}` });
+      wake(ctx, ask, chosen !== undefined
+        ? `La persona eligió «${chosen}» a: ${ask.summary}`
+        : `La persona respondió SÍ a: ${ask.summary}. Resultado: ${clip(asText(result), 300)}`);
+    } catch (e) {
+      process.stderr.write(`kiji-core: falló cerrar la acción aprobada: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+  })();
+  return { ok: true, status: 'approved', pending: true, ...(chosen !== undefined ? { option: chosen } : {}) };
 }
 
 /** Sin respuesta a tiempo: se da por NO (fail-closed) y queda en el diario con decided_by 'timeout'. */
