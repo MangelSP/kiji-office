@@ -1,7 +1,7 @@
 // Aviso al cerrar: Rust emite `app-close-requested` y aquí se decide según el trabajo en curso.
 // Sin trabajo se sale directamente; con trabajo se pregunta (segundo plano / detener todo / cancelar).
 import { useEffect, useId, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useShallow } from "zustand/react/shallow";
 import { useStore } from "../store";
@@ -60,6 +60,7 @@ export default function CloseGuard() {
   }, [work.count]);
 
   useEffect(() => {
+    if (!isTauri()) return; // en el navegador (?demo=1) no hay ventana nativa que cerrar
     let off: (() => void) | undefined;
     let disposed = false;
     listen("app-close-requested", () => {
