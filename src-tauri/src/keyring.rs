@@ -27,9 +27,33 @@ pub fn is_conn_account(user: &str) -> bool {
     })
 }
 
+/// Cuentas internas de la app móvil (PLAN-movil.md, M1): la sesión de Google y la clave privada X25519 del Mac.
+/// Solo las usa Rust: la UI no puede leerlas ni escribirlas (ver `ui_account`).
+pub const INTERNAL: [&str; 2] = ["google:session", "device:mac"];
+
 /// Cuenta fija permitida o conexión válida.
 pub fn is_valid_account(user: &str) -> bool {
-    ALLOWED.iter().any(|(u, _)| *u == user) || is_conn_account(user)
+    ALLOWED.iter().any(|(u, _)| *u == user) || is_conn_account(user) || INTERNAL.contains(&user)
+}
+
+/// Lo que la UI puede tocar por los comandos `secret_*`: todo menos las cuentas internas.
+fn ui_account(user: &str) -> Result<(), String> {
+    if INTERNAL.contains(&user) {
+        return Err(format!("cuenta no permitida: {user}"));
+    }
+    Ok(())
+}
+
+/// Guarda o borra (con None) una cuenta desde Rust.
+pub fn write(user: &str, value: Option<&str>) -> Result<(), String> {
+    let e = entry(user)?;
+    match value {
+        Some(v) => e.set_password(v).map_err(|e| format!("no se pudo guardar '{user}': {e}")),
+        None => match e.delete_credential() {
+            Ok(()) | Err(Error::NoEntry) => Ok(()),
+            Err(err) => Err(format!("no se pudo borrar '{user}': {err}")),
+        },
+    }
 }
 
 fn entry(user: &str) -> Result<Entry, String> {
@@ -41,6 +65,11 @@ fn entry(user: &str) -> Result<Entry, String> {
 
 /// Lee una clave; `None` si no existe. Los errores del llavero no incluyen valores.
 pub fn read(user: &str) -> Result<Option<String>, String> {
+    // Solo desarrollo: pruebas automáticas sin los avisos del llavero (las claves de IA se tratan como vacías).
+    #[cfg(debug_assertions)]
+    if std::env::var("KIJI_DEV_SKIP_KEYCHAIN").is_ok() && !INTERNAL.contains(&user) {
+        return Ok(None);
+    }
     match entry(user)?.get_password() {
         Ok(v) => Ok(Some(v)),
         Err(Error::NoEntry) => Ok(None),
@@ -51,6 +80,7 @@ pub fn read(user: &str) -> Result<Option<String>, String> {
 // Los comandos son async para que el acceso al llavero (puede mostrar un aviso del SO) no bloquee el hilo principal.
 #[tauri::command]
 pub async fn secret_set(state: State<'_, CoreState>, user: String, value: String) -> Result<(), String> {
+    ui_account(&user)?;
     entry(&user)?
         .set_password(&value)
         .map_err(|e| format!("no se pudo guardar '{user}': {e}"))?;
@@ -64,6 +94,7 @@ pub async fn secret_set(state: State<'_, CoreState>, user: String, value: String
 /// nunca sale de Rust (va directo al entorno del core).
 #[tauri::command]
 pub async fn secret_get(user: String) -> Result<Option<String>, String> {
+    ui_account(&user)?;
     Ok(read(&user)?.map(|v| mask(&v)))
 }
 
@@ -76,6 +107,7 @@ fn mask(v: &str) -> String {
 /// Borrar algo que no existe no es un error.
 #[tauri::command]
 pub async fn secret_delete(state: State<'_, CoreState>, user: String) -> Result<(), String> {
+    ui_account(&user)?;
     match entry(&user)?.delete_credential() {
         Ok(()) | Err(Error::NoEntry) => {}
         Err(e) => return Err(format!("no se pudo borrar '{user}': {e}")),
@@ -119,6 +151,15 @@ mod tests {
             assert!(!is_valid_account(mal), "{mal:?}");
             assert!(entry(mal).is_err());
         }
+    }
+
+    #[test]
+    fn cuentas_internas_fuera_del_alcance_de_la_ui() {
+        for u in INTERNAL {
+            assert!(is_valid_account(u));
+            assert!(ui_account(u).is_err());
+        }
+        assert!(ui_account("openai").is_ok());
     }
 
     #[test]

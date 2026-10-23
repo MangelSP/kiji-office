@@ -1,7 +1,9 @@
 mod core_process;
 mod detect;
+mod google;
 mod keyring;
 mod lifecycle;
+mod mobile;
 mod notify;
 mod remote;
 mod updater;
@@ -20,6 +22,7 @@ pub fn run() {
         .manage(core_process::CoreState::default())
         .manage(lifecycle::LifecycleState::default())
         .manage(remote::RemoteState::default())
+        .manage(mobile::MobileState::default())
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
@@ -33,6 +36,7 @@ pub fn run() {
             // Fuera del hilo principal: leer el llavero puede mostrar un aviso del SO y no debe bloquear la ventana.
             let handle = app.handle().clone();
             std::thread::spawn(move || core_process::start(&handle));
+            mobile::resume(app.handle());
             #[cfg(all(debug_assertions, unix))]
             remote::start_dev_socket(app.handle());
             Ok(())
@@ -51,6 +55,12 @@ pub fn run() {
             lifecycle::tray_set_busy,
             updater::check_update,
             updater::install_update,
+            mobile::mobile_status,
+            mobile::mobile_sign_in,
+            mobile::mobile_sign_out,
+            mobile::mobile_set_enabled,
+            mobile::mobile_pair_start,
+            mobile::mobile_revoke,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

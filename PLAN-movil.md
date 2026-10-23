@@ -221,3 +221,66 @@ El puente en Rust filtra cada método antes de pasarlo al core. Lo que no está 
 | M2 | App Flutter para ver, aprobar y recibir avisos | 5–7 días |
 | M3 | App Flutter para trabajar | 3–4 días |
 | M4 | Cerebro en el servidor | 1–2 semanas |
+
+## 7. Protocolo de M1 (contrato entre puerta, relay, Mac y móvil)
+
+Cifrado: `crypto_box` de NaCl (X25519 + XSalsa20-Poly1305, nonce de 24 bytes aleatorio). Compatible entre
+`tweetnacl` (Node, pruebas), `sodium_libs` (Flutter) y el crate `crypto_box` (`SalsaBox`, Rust). Claves públicas y
+cajas en **base64 estándar**. El id de un dispositivo es su clave pública en base64.
+
+### Puerta (HTTP JSON)
+
+- `POST /session` `{ idToken, device: "mac" | "phone" }` → `200 { relayUrl, pass, expiresAt, email }`.
+  - El `idToken` es un ID token de Google. Se valida `aud` (uno de `GOOGLE_CLIENT_IDS`), `iss`, `exp` y
+    `email_verified`; el correo tiene que estar en `ALLOWED_EMAILS`.
+  - Errores: `401 {error:"invalid_token"}`, `403 {error:"not_allowed"}`, `503 {error:"provisioning"}` (el relay se
+    está creando: reintentar en unos segundos).
+- `GET /health` → `200 ok`.
+- **Pase:** JWT HS256. Claims `{ sub, email, dev, iat, exp }`, con `exp` a 5 minutos.
+  - Se firma con la clave del usuario, `relayKey = HMAC(PASS_SECRET, "relay:" + sub)`.
+  - Cada relay por usuario solo recibe su `RELAY_KEY`. Un relay compartido (desarrollo) deriva la clave de cada
+    pase con `PASS_SECRET`.
+  - Así, si se compromete un contenedor de relay, no se pueden forjar pases para los de otros usuarios.
+- **Provisión:** `PROVISIONER=static` usa `RELAY_URL` para todos (desarrollo o self-host). `PROVISIONER=coolify`
+  crea un contenedor del relay por usuario (`COOLIFY_URL`, `COOLIFY_TOKEN`, `COOLIFY_PROJECT_UUID`,
+  `COOLIFY_SERVER_UUID`, `COOLIFY_ENVIRONMENT`, `RELAY_IMAGE`, `RELAY_DOMAIN_TEMPLATE` con `{id}`) con
+  `OWNER_SUB=<sub>` y `RELAY_KEY=<relayKey>` en su entorno (nunca `PASS_SECRET`). Guarda `sub → relayUrl` en SQLite (`DATA_DIR/gateway.db`).
+- **Prueba local:** `DEV_INSECURE_TOKENS=1` (solo fuera de producción) acepta `idToken = "dev:<correo>"`.
+
+### Relay (WebSocket, mensajes JSON de texto, máximo 256 KB)
+
+1. **Saludo:** el cliente envía `{type:"hello", pass, pubkey}`. El relay valida el pase (firma, `exp`, y
+   `sub === OWNER_SUB` si existe), asocia la conexión a `(sub, dev, pubkey)` y responde
+   `{type:"welcome", peers:[{pubkey, dev}]}`. Si el pase no vale: `{type:"error", code:"unauthorized"}` y cierra.
+   Una segunda conexión con la misma `pubkey` reemplaza a la anterior.
+2. **Presencia:** a los demás del mismo `sub` les llega `{type:"peer.online", pubkey, dev}` o
+   `{type:"peer.offline", pubkey}`.
+3. **Emparejamiento:**
+   - **Mac:** envía `{type:"pair.offer", pairId}` (16 bytes aleatorios en base64url). Vale una sola vez durante 5
+     minutos. Muestra un QR con `kiji://pair?g=<puerta>&m=<pubkey del Mac>&p=<pairId>&s=<secreto>`. El secreto
+     (32 bytes, base64url) **nunca pasa por el relay**.
+   - **Móvil:** escanea, abre sesión con Google y saluda. Después envía
+     `{type:"pair.claim", pairId, to:<pubkey del Mac>, nonce, box}`, donde `box` contiene
+     `{"secret":"<s>","name":"<nombre del móvil>"}` cifrado del móvil al Mac.
+   - **Relay:** solo lo reenvía si `pairId` está vivo, es de ese Mac y del mismo `sub`; después lo consume. Al Mac le
+     llega con `from`.
+   - **Mac:** abre la caja con la `pubkey` del móvil y compara el secreto en tiempo constante. Si coincide, guarda el
+     dispositivo y responde `{type:"msg", to, nonce, box}` con `{"t":"pair.ok"}` dentro.
+4. **Mensajes cifrados:** `{type:"msg", to, nonce, box}`. El relay comprueba que `to` está conectado y es del mismo
+   `sub`, y entrega `{type:"msg", from, nonce, box}`. Si no está, responde `{type:"error", code:"offline", to}`.
+   - Dentro de la caja va un objeto JSON.
+     - Del móvil al Mac: `{"t":"req", "s":<sesión>, "n":<contador>, ...petición del core}` o `{"t":"hello"}`.
+     - Del Mac al móvil: `{"t":"session", "s"}`, `{"t":"line", "line":"<línea NDJSON>"}` o
+       `{"t":"pair.ok" | "revoked"}`.
+   - **Contra la reproducción:** cada vez que un móvil aparece conectado, el Mac le manda cifrado un id de sesión
+     aleatorio (16 bytes). También lo reenvía si el móvil saluda con `hello`.
+     - Cada `req` lleva ese `s` y un `n` estrictamente creciente dentro de la sesión.
+     - El Mac descarta las cajas de otra sesión o con un `n` ya visto, aunque abran bien. Así el relay no puede
+       reenviar órdenes grabadas.
+   - El Mac descarta todo lo que venga de una `pubkey` no vinculada (salvo `pair.claim`).
+5. **Push:**
+   - El móvil envía `{type:"push.register", token, platform:"fcm"}`.
+   - El Mac envía `{type:"push.wake"}`, y el relay manda un aviso sin contenido a todos los móviles de ese `sub`.
+   - El envío va detrás de una interfaz: sin `FCM_SERVICE_ACCOUNT` solo se registra en el log.
+6. **Límites:** 50 mensajes por segundo por conexión (si se pasa, `error rate_limited`), ping cada 30 s, y se
+   cierran las conexiones que no saludan en 10 s.

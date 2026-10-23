@@ -29,6 +29,18 @@ keyring = "4"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# App móvil (M1 de PLAN-movil.md): cifrado de punta a punta compatible con NaCl/libsodium (`crypto_box`), WebSocket
+# hacia el relay, HTTP a la puerta y a Google, y el QR de vinculación en SVG.
+crypto_box = { version = "0.9", features = ["std", "getrandom"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+base64 = "0.22"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+sha2 = "0.10"
+rand = "0.9"
+reqwest = { version = "0.13", features = ["json", "form"] }
+tokio = { version = "1", features = ["net", "time", "sync", "macros", "rt"] }
+url = "2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

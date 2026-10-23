@@ -142,7 +142,8 @@ pub fn push_secret(state: &CoreState, account: &str, value: Option<&str>) {
 /// cuentas válidas y las empuja al core de esta generación. Solo se registra el nombre de la cuenta.
 fn answer_secrets_request(app: &AppHandle, generation: u64, accounts: Vec<String>) {
     let mut found: Vec<(String, String)> = Vec::new();
-    for account in accounts.into_iter().filter(|a| keyring::is_valid_account(a)) {
+    // Las cuentas internas (sesión de Google, clave del Mac) nunca van al core.
+    for account in accounts.into_iter().filter(|a| keyring::is_valid_account(a) && !keyring::INTERNAL.contains(&a.as_str())) {
         match keyring::read(&account) {
             Ok(Some(v)) if !v.is_empty() => found.push((account, v)),
             Ok(_) => {}

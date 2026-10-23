@@ -19,3 +19,6 @@ tools/sprites/out/
 
 # sidecar de Node descargado por tools/fetch-node.mjs
 src-tauri/binaries/
+
+# datos locales de la puerta (gateway.db)
+server/data/

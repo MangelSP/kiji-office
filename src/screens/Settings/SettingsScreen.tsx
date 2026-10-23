@@ -1,6 +1,7 @@
 // Pantalla Ajustes (global): navegación lateral por secciones y un formulario por sección.
 import { useEffect, useState, type ComponentType } from "react";
 import { useSettings } from "../../store/settings";
+import Mobile from "./Mobile";
 import { AcercaDe, Actualizaciones, Avisos, Datos, General, Gerente, IAs, Skills, Trabajo, type SectionProps } from "./Sections";
 import "./Settings.css";
 
@@ -11,6 +12,7 @@ export const SECTIONS: { id: string; label: string; Body: ComponentType<SectionP
   { id: "skills", label: "Skills", Body: Skills },
   { id: "gerente", label: "Gerente", Body: Gerente },
   { id: "avisos", label: "Avisos", Body: Avisos },
+  { id: "movil", label: "Móvil", Body: Mobile },
   { id: "datos", label: "Datos", Body: Datos },
   { id: "actualizaciones", label: "Actualizaciones", Body: Actualizaciones },
   { id: "acerca", label: "Acerca de", Body: AcercaDe },
@@ -26,7 +28,7 @@ export default function SettingsScreen(props: SectionProps) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const section = SECTIONS.find((s) => s.id === current) ?? SECTIONS[0]!;
   // Estas secciones no dependen (solo) de los ajustes del core: se enseñan aunque no estén disponibles.
-  const blocked = status === "unavailable" && !["gerente", "acerca", "skills", "ias"].includes(section.id);
+  const blocked = status === "unavailable" && !["gerente", "acerca", "skills", "ias", "movil"].includes(section.id);
 
   return (
     <main className="st-screen">

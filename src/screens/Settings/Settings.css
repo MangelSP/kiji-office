@@ -276,3 +276,8 @@
 .st-modal-box code {
   overflow-wrap: anywhere;
 }
+
+/* Ajustes › Móvil: QR de vinculación, siempre sobre blanco para que la cámara lo lea en modo oscuro. */
+.mb-qr { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.mb-qr-img { background: #fff; padding: 8px; border-radius: 8px; line-height: 0; }
+.mb-qr-img svg { width: 240px; height: 240px; }

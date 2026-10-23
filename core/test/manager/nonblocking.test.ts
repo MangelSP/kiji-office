@@ -51,7 +51,7 @@ describe('integración en segundo plano', () => {
     expect(m.h.emitted.some((e) => e.name === 'notify' && e.payload.level === 'warn' && e.payload.title.includes('No se pudo integrar'))).toBe(true);
     await m.h.call('manager.resume');
     expect((await applyAndWait(m.h, id)).status).toBe('applied');
-  });
+  }, 40_000); // espera hasta 30 s a git y a unos tests lentos: con 5 s fallaba con la máquina cargada
 
   it('con la parada ya activa, integrar falla con reason halted sin tocar nada', async () => {
     m = await makeManagerHarness();
@@ -74,7 +74,7 @@ describe('integración en segundo plano', () => {
     expect(await m.h.call('manager.get', { projectId: m.project.id })).toMatchObject({ halted: false });
     await m.h.waitFor(() => m.repos.tasks.get(id)!.status === 'integrated', 'integrada', 30_000);
     await m.h.waitFor(() => m.repos.managerActions.listByProject(m.project.id).some((a) => a.tool === 'request_integration' && a.decided_by === 'user'), 'diario');
-  });
+  }, 40_000);
 
   it('si la acción aprobada lanza, queda en el diario y avisa', async () => {
     m = await makeManagerHarness();

@@ -152,6 +152,6 @@ describe("SettingsScreen", () => {
     expect(useStore.getState().unavailable["settings.all"]).toBe(true);
     go("Gerente");
     expect(screen.getByText(/pestaña del Jefe/)).toBeTruthy();
-    expect(within(screen.getByRole("navigation", { name: "Secciones de ajustes" })).getAllByRole("button")).toHaveLength(9);
+    expect(within(screen.getByRole("navigation", { name: "Secciones de ajustes" })).getAllByRole("button")).toHaveLength(10);
   });
 });
