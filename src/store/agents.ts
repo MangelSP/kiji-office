@@ -34,8 +34,8 @@ export type AgentsSlice = {
   refreshAgents: (projectId: string) => Promise<void>;
   /** Inserta o fusiona un agente (notificación `agent.changed`). */
   upsertAgent: (projectId: string, agent: Agent) => void;
-  /** Guarda el perfil con `agent.update`. `true` si el core lo aceptó; si no, el aviso queda en `notice`. */
-  updateAgent: (projectId: string, params: AgentUpdateParams) => Promise<boolean>;
+  /** Guarda el perfil con `agent.update`. `false` si falló (el aviso queda en `notice`); si no, `{ warning }` con el aviso del core (p. ej. modelo no listado). */
+  updateAgent: (projectId: string, params: AgentUpdateParams) => Promise<false | { warning?: string }>;
 };
 
 export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (_set, get) => ({
@@ -61,8 +61,10 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (_
   updateAgent: async (pid, params) => {
     const res = await get().callSafe<Agent | null>("agent.update", { ...params, projectId: pid });
     if (res === undefined) return false;
+    const w = (res as { warning?: unknown } | null)?.warning;
+    const warning = typeof w === "string" ? w : undefined;
     if (res && typeof res === "object" && "id" in res) get().upsertAgent(pid, res);
     else await get().refreshAgents(pid);
-    return true;
+    return warning ? { warning } : {};
   },
 });

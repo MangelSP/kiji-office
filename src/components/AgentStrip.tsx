@@ -5,6 +5,7 @@ import { useEffect, type KeyboardEvent } from "react";
 import type { Agent } from "../store/agents";
 import type { AgentMetrics, RunMetrics } from "../store/metrics";
 import { contextSegments, fmtTokens, fmtUsd, isBoss, paletteHex, pct, SEGMENTS, statusInfo } from "../screens/Agents/format";
+import { useModelLabel } from "../screens/Connections/useModelLabel";
 import { useAgentsStore } from "../screens/Agents/useAgentsStore";
 import "./AgentStrip.css";
 
@@ -131,6 +132,7 @@ function StripCard({
   onSelect: (id: string | null) => void;
   tab?: { id: string; panelId?: string };
 }) {
+  const label = useModelLabel();
   const st = statusInfo(agent.status);
   const model = liveRun?.model ?? totals?.model ?? agent.current_model ?? agent.model ?? "—";
   const used = liveRun?.contextTokens ?? totals?.lastContextTokens ?? 0;
@@ -149,7 +151,7 @@ function StripCard({
       <span className="strip-body">
         <span className="strip-top">
           <strong className="strip-name">{agent.name}</strong>
-          <span className="ag-chip">{model}</span>
+          <span className="ag-chip">{label(model)}</span>
         </span>
         <span className="strip-status muted">
           <span className="ag-status-dot" style={{ background: st.dot }} aria-hidden="true" /> {st.label}

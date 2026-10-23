@@ -65,6 +65,16 @@ describe("CreateAgent", () => {
     expect(created()).toHaveLength(0);
   });
 
+  it("muestra el warning que devuelve agent.create", async () => {
+    mocks.request.mockImplementation(async (m: string) => (m === "agent.create" ? { id: "a3", name: "Nuevo", warning: "el modelo no está en la lista" } : []));
+    const onClose = vi.fn();
+    render(<CreateAgent onClose={onClose} />);
+    fireEvent.change(nameInput(), { target: { value: "Nuevo" } });
+    submit();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(useStore.getState().notice).toBe("Nuevo: el modelo no está en la lista");
+  });
+
   it("el campo limita a 24 caracteres", () => {
     render(<CreateAgent onClose={() => {}} />);
     expect(nameInput().maxLength).toBe(24);

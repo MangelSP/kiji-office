@@ -1,13 +1,15 @@
 // Las seis herramientas del adaptador `api-loop` (PLAN-0.2b, D14). Se ejecutan dentro de `cwd`; cada
 // escritura pasa por isPathAllowed y cada comando por classifyCommand (mismas reglas que el adaptador de Claude).
 
-import { spawn } from 'node:child_process';
-import { lstatSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import { closeSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { classifyCommand, classifyPath, isInsideCwd, isPathAllowed } from '../classify.js';
 
 export const MAX_TOOL_OUTPUT = 4000;
 export const COMMAND_TIMEOUT_MS = 60_000;
+export const MAX_READ_BYTES = 2 * 1024 * 1024;
+export const GREP_TIMEOUT_MS = 10_000;
 
 export type ToolName = 'read_file' | 'write_file' | 'edit_file' | 'list_dir' | 'grep' | 'run_command';
 export const READ_ONLY_TOOL_NAMES: ToolName[] = ['read_file', 'list_dir', 'grep'];
@@ -105,7 +107,12 @@ async function run(name: ToolName, a: Record<string, unknown>, ctx: ToolContext)
       if (!isInsideCwd(p, cwd)) return fail(OUTSIDE(p));
       if (classifyPath(p) !== 'ok') return fail(SENSITIVE(p));
       const abs = path.resolve(cwd, p);
-      if (!statSync(abs).isFile()) return fail(`${p} no es un archivo. Usa list_dir para carpetas.`);
+      const st = statSync(abs);
+      if (!st.isFile()) return fail(`${p} no es un archivo. Usa list_dir para carpetas.`);
+      if (st.size > MAX_READ_BYTES) {
+        return fail(`${p} pesa ${Math.round(st.size / 1024)} KB y el límite es ${MAX_READ_BYTES / 1024} KB. Usa grep para buscar dentro de él.`);
+      }
+      if (looksBinary(abs)) return fail(`${p} parece un archivo binario (no es texto); no se puede leer con read_file.`);
       return ok(readFileSync(abs, 'utf8'));
     }
     case 'list_dir': {
@@ -122,16 +129,11 @@ async function run(name: ToolName, a: Record<string, unknown>, ctx: ToolContext)
     case 'grep': {
       const pattern = str(a.pattern);
       if (!pattern) return fail('Falta el argumento "pattern" (string).');
-      let re: RegExp;
-      try {
-        re = new RegExp(pattern);
-      } catch (e) {
-        return fail(`Expresión regular no válida: ${(e as Error).message}`);
-      }
+      if (pattern.length > 500) return fail('El patrón es demasiado largo (máximo 500 caracteres).');
       const p = str(a.path) || '.';
       if (!isInsideCwd(p, cwd)) return fail(OUTSIDE(p));
       if (classifyPath(p) !== 'ok') return fail(SENSITIVE(p));
-      return ok(grep(re, path.resolve(cwd, p), cwd));
+      return grep(pattern, path.resolve(cwd, p), cwd, ctx.signal);
     }
     case 'write_file': {
       const p = str(a.path);
@@ -187,35 +189,57 @@ async function writeGate(p: string, ctx: ToolContext): Promise<string | null> {
   return null;
 }
 
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'target']);
+const SKIP_DIRS = ['node_modules', '.git', 'dist', 'target'];
 const MAX_MATCHES = 100;
 
-function grep(re: RegExp, start: string, cwd: string): string {
-  const out: string[] = [];
-  const visit = (abs: string): void => {
-    if (out.length >= MAX_MATCHES) return;
-    const st = lstatSync(abs);
-    if (st.isSymbolicLink()) {
-      if (!isInsideCwd(abs, cwd)) return;
-    }
-    const rel = path.relative(cwd, abs) || '.';
-    if (rel !== '.' && classifyPath(rel) !== 'ok') return;
-    const real = statSync(abs);
-    if (real.isDirectory()) {
-      if (SKIP_DIRS.has(path.basename(abs)) && abs !== start) return;
-      for (const e of readdirSync(abs).sort()) visit(path.join(abs, e));
-      return;
-    }
-    if (!real.isFile() || real.size > 1_000_000) return;
-    const text = readFileSync(abs, 'utf8');
-    if (text.includes('\0')) return;
-    const lines = text.split('\n');
-    for (let i = 0; i < lines.length && out.length < MAX_MATCHES; i++) {
-      if (re.test(lines[i]!)) out.push(`${rel}:${i + 1}:${lines[i]!.slice(0, 300)}`);
-    }
-  };
-  visit(start);
-  return out.length ? out.join('\n') : 'Sin coincidencias.';
+/** ¿Hay un byte \0 en los primeros 8 KB? */
+function looksBinary(abs: string): boolean {
+  const fd = openSync(abs, 'r');
+  try {
+    const buf = Buffer.alloc(8192);
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, n).includes(0);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * grep del sistema sin shell (`execFile`): el motor ERE de grep no hace backtracking exponencial como `RegExp` de JS
+ * (un `(a+)+$` del modelo bloquearía el event loop), corre en otro proceso y se mata a los 10 s. Los resultados de
+ * rutas no permitidas (classifyPath) se descartan después; `--null` separa la ruta del resto sin ambigüedad.
+ */
+function grep(pattern: string, start: string, cwd: string, signal: AbortSignal): Promise<ToolResult> {
+  const args = ['-rnIE', '--null', ...SKIP_DIRS.map((d) => `--exclude-dir=${d}`), '--', pattern, start];
+  return new Promise((resolve) => {
+    execFile(
+      'grep',
+      args,
+      { cwd, timeout: GREP_TIMEOUT_MS, maxBuffer: 1024 * 1024, encoding: 'utf8', signal, env: { ...safeEnv(), LC_ALL: 'C' } },
+      (err, stdout) => {
+        const e = err as { code?: number | string; killed?: boolean; message: string } | null;
+        if (e && e.code === 'ENOENT') return resolve(fail('grep no está disponible en este sistema.'));
+        if (e && e.killed) return resolve(fail(`La búsqueda superó ${GREP_TIMEOUT_MS / 1000} s y se canceló. Usa un patrón más simple o una carpeta más pequeña.`));
+        if (e && e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+          // salida enorme: se usa lo recibido (e.stdout) y se sigue filtrando
+          stdout = (e as unknown as { stdout?: string }).stdout ?? '';
+        } else if (e && e.code !== 1) {
+          const msg = String((e as unknown as { stderr?: string }).stderr || e.message).split('\n')[0]!;
+          return resolve(fail(`Expresión regular no válida o error de grep: ${msg}`));
+        }
+        const out: string[] = [];
+        for (const line of stdout.split('\n')) {
+          if (out.length >= MAX_MATCHES) break;
+          const z = line.indexOf('\0');
+          if (z < 0) continue;
+          const rel = path.relative(cwd, path.resolve(cwd, line.slice(0, z))) || '.';
+          if (rel.startsWith('..') || classifyPath(rel) !== 'ok') continue;
+          out.push(`${rel}:${line.slice(z + 1, z + 1 + 300)}`);
+        }
+        resolve(ok(out.length ? out.join('\n') : 'Sin coincidencias.'));
+      },
+    );
+  });
 }
 
 /** Elimina del entorno heredado lo que parece un secreto: el comando del agente no debe poder imprimirlo. */

@@ -31,11 +31,11 @@ fn lossy_lines(r: impl std::io::Read) -> impl Iterator<Item = String> {
 /// Contador de ids de las peticiones que origina Rust (`rust:<n>`).
 static RUST_REQ: AtomicU64 = AtomicU64::new(1);
 
-/// Línea NDJSON `secrets.put` (`value` None = borrar). Es la única que lleva el valor: no se registra nunca.
+/// Línea NDJSON `secrets.put` (`value` None = borrar, se envía como "": el core también acepta null). Es la única que lleva el valor: no se registra nunca.
 fn put_line(n: u64, account: &str, value: Option<&str>) -> String {
     serde_json::json!({
         "id": format!("rust:{n}"), "type": "req", "method": "secrets.put",
-        "params": { "account": account, "value": value }
+        "params": { "account": account, "value": value.unwrap_or("") }
     })
     .to_string()
 }
@@ -366,7 +366,7 @@ mod tests {
         assert_eq!(ls[0]["method"], "secrets.put");
         assert_eq!(ls[0]["params"]["account"], "conn:x");
         assert_eq!(ls[0]["params"]["value"], "sk-\"1\"");
-        assert!(ls[1]["params"]["value"].is_null());
+        assert_eq!(ls[1]["params"]["value"], "");
         let id = |i: usize| ls[i]["id"].as_str().unwrap().strip_prefix("rust:").unwrap().parse::<u64>().unwrap();
         assert!(id(1) > id(0));
     }

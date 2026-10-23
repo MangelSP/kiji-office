@@ -47,7 +47,7 @@ describe("Perfil con conexiones", () => {
     await waitFor(() => expect(within_options(screen.getByLabelText("Modelo de relevo"))).toContain("gemma-3"));
     fireEvent.change(screen.getByLabelText("Modelo de relevo"), { target: { value: "gemma-3" } });
     fireEvent.click(screen.getByRole("button", { name: "Añadir al relevo" }));
-    expect(screen.getByText("LM Studio / gemma-3")).toBeTruthy();
+    expect(screen.getByText("LM Studio · gemma-3")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
     await waitFor(() => expect(calls("agent.update")).toHaveLength(1));
     expect(calls("agent.update")[0]![1]).toEqual({ projectId: "p1", agentId: "a2", relayOrder: ["opus", "conn:c1/gemma-3"] });
@@ -63,6 +63,26 @@ describe("Perfil con conexiones", () => {
     fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
     await waitFor(() => expect(calls("agent.update")).toHaveLength(1));
     expect(calls("agent.update")[0]![1]).toEqual({ projectId: "p1", agentId: "a2", connectionId: "c1", model: "qwen3-coder" });
+  });
+});
+
+describe("nombres de conexión y avisos", () => {
+  it("el modelo conn:<id>/<m> se pinta como nombre · modelo y el warning de agent.update se muestra", async () => {
+    mocks.request.mockImplementation(async (m: string) => {
+      if (m === "connection.list") return [LM];
+      if (m === "connection.models") return ["qwen3-coder"];
+      if (m === "agent.update") return { ...CLAU, name: "Clau2", warning: "el modelo no aparece en la lista de la conexión" };
+      return [];
+    });
+    seed({ agents: [{ ...CLAU, current_model: "conn:c1/qwen3-coder" }], tasks: [] } as never);
+    useStore.setState({ connections: [LM] as never });
+    render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
+    expect(screen.getAllByText("LM Studio · qwen3-coder").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/conn:c1/)).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Perfil" }));
+    fireEvent.change(await screen.findByLabelText("Nombre"), { target: { value: "Clau2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await screen.findByText(/Aviso: el modelo no aparece en la lista de la conexión/);
   });
 });
 

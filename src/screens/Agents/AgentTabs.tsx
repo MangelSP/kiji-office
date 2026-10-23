@@ -2,6 +2,7 @@
 // o el detalle del agente con Tareas, Métricas, Perfil y Registro. Controlado por `selectedId` (escena y caja de pedido).
 import { useEffect, useId, useState, type KeyboardEvent } from "react";
 import type { Agent } from "../../store/agents";
+import { useModelLabel } from "../Connections/useModelLabel";
 import AgentLog from "./AgentLog";
 import AgentMetricsView, { ContextBar, useAgentMetrics } from "./AgentMetricsView";
 import AgentProfile from "./AgentProfile";
@@ -69,6 +70,7 @@ export default function AgentTabs({ selectedId, onSelect }: Props) {
 }
 
 function Overview({ agents, onSelect }: { agents: Agent[]; onSelect: (id: string) => void }) {
+  const label = useModelLabel();
   const tasks = useAgentsStore((s) => s.tasks);
   const metrics = useAgentsStore((s) => s.metricsByAgent);
   if (agents.length === 0) return <p className="muted">No hay agentes todavía.</p>;
@@ -87,7 +89,7 @@ function Overview({ agents, onSelect }: { agents: Agent[]; onSelect: (id: string
               <span className="ag-ov-main">
                 <strong>{a.name}</strong>
                 <span className="muted small">
-                  {ROLE_LABEL[a.role ?? ""] ?? a.role ?? ""} · <span className="ag-chip">{m?.model ?? a.current_model ?? a.model ?? "—"}</span>
+                  {ROLE_LABEL[a.role ?? ""] ?? a.role ?? ""} · <span className="ag-chip">{label(m?.model ?? a.current_model ?? a.model ?? "—")}</span>
                 </span>
               </span>
               <span className="ag-ov-stats muted small">
@@ -112,6 +114,7 @@ function AgentView({ agent, sub, onSub }: { agent: Agent; sub: SubTab; onSub: (s
   const id = String(agent.id);
   const { metrics, runs } = useAgentMetrics(id);
   const live = runs.find((r) => r.live);
+  const label = useModelLabel();
   const st = statusInfo(agent.status);
   const model = live?.model ?? metrics?.model ?? agent.current_model ?? agent.model;
   const used = live?.contextTokens ?? metrics?.lastContextTokens ?? 0;
@@ -129,7 +132,7 @@ function AgentView({ agent, sub, onSub }: { agent: Agent; sub: SubTab; onSub: (s
           <p className="muted small">
             {ROLE_LABEL[agent.role ?? ""] ?? agent.role ?? "sin rol"}
             {" · "}
-            <span className="ag-chip">{model ?? "—"}</span>
+            <span className="ag-chip">{model ? label(model) : "—"}</span>
             {" · "}
             <span className="ag-status-dot" style={{ background: st.dot }} aria-hidden="true" /> {st.label}
             {" · "}

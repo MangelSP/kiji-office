@@ -125,7 +125,7 @@ export function applyEvent(event: CoreEvent) {
       if (pid && isObject(p) && "id" in p) {
         const row = p as unknown as RelayRow;
         s.addRelay(row);
-        const text = relayNotice(row, projectOf(useStore.getState(), pid).agents);
+        const text = relayNotice(row, projectOf(useStore.getState(), pid).agents, useStore.getState().connections);
         const name = s.projects.find((x) => x.projectId === pid)?.name;
         s.setNotice(name && pid !== s.activeProjectId ? `${name}: ${text}` : text);
       }

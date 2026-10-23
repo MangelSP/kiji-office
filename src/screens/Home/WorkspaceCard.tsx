@@ -1,5 +1,7 @@
 // Tarjeta de un workspace abierto en el Home: robots, runs, cola, gasto, tokens, tareas por estado y último relevo.
 import type { WorkspaceSummary } from "../../../shared/protocol";
+import { useStore } from "../../store";
+import { useModelLabel } from "../Connections/useModelLabel";
 import { relayWho } from "../../store/providers";
 import { TASK_STATES } from "../../store/tasks";
 import { fmtTokens, fmtUsd, paletteHex, STATE_LABEL, statusInfo, timeAgo } from "../Agents/format";
@@ -45,6 +47,8 @@ export function TaskBar({ byStatus }: { byStatus: Record<string, number> }) {
 type Props = { w: WorkspaceSummary; onEnter: () => void; onClose: () => void };
 
 export default function WorkspaceCard({ w, onEnter, onClose }: Props) {
+  const connections = useStore((s) => s.connections);
+  const label = useModelLabel();
   const t = w.tokensToday;
   const relay = w.lastRelay;
   const cache = t.cacheRead + t.cacheWrite;
@@ -65,7 +69,7 @@ export default function WorkspaceCard({ w, onEnter, onClose }: Props) {
           {w.agents.map((a) => {
             const st = statusInfo(a.status);
             return (
-              <li key={a.id} className="hm-robot" title={`${a.name} · ${a.model} · ${st.label}`}>
+              <li key={a.id} className="hm-robot" title={`${a.name} · ${label(a.model)} · ${st.label}`}>
                 <span className="hm-avatar" style={{ background: paletteHex(a.color) }} aria-hidden="true">
                   <span className="hm-avatar-dot" style={{ background: st.dot }} />
                 </span>
@@ -111,7 +115,7 @@ export default function WorkspaceCard({ w, onEnter, onClose }: Props) {
       <p className="hm-muted hm-small">Última actividad: {timeAgo(w.lastActivityAt)}</p>
       {relay && (
         <p className="hm-muted hm-small">
-          Último relevo: {relayWho(relay, w.agents).change} · {timeAgo(relay.createdAt)}
+          Último relevo: {relayWho(relay, w.agents, connections).change} · {timeAgo(relay.createdAt)}
         </p>
       )}
 

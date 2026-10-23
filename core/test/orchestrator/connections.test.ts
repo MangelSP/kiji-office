@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ApiLoopAdapter } from '../../src/adapters/apiLoop.js';
 import { ClaudeAdapter } from '../../src/adapters/claude.js';
+import { missingAccounts } from '../../src/orchestrator/secrets.js';
 import { validateBaseUrl, makeAdapterFactory, classifyPing } from '../../src/orchestrator/connections.js';
 import { makeHarness, makeNodeRepo, type Harness } from './helpers.js';
 import { removeRepo } from '../git/helpers.js';
@@ -109,6 +110,35 @@ describe('connection.* y secretos', () => {
     const everything = JSON.stringify([view, h.emitted, await h.call('providers.status'), await h.call('providers.test', { provider: 'ollama' })]);
     expect(everything).not.toContain(KEY);
     expect(everything).not.toContain('SECRETVALUE');
+  });
+
+  it('secrets.put con value null o "" borra la clave, has_secret=0 y emite connections.changed', async () => {
+    h = makeHarness();
+    const c = await h.call('connection.create', { name: 'Groq', preset: 'groq' });
+    const account = `conn:${c.id}`;
+    for (const empty of [null, '']) {
+      await h.call('secrets.put', { account, value: KEY }, 'rust:1');
+      expect(h.orch.ctx.secrets.get(account)).toBe(KEY);
+      expect((await h.call('connection.list'))[0].hasSecret).toBe(true);
+      const before = h.emitted.filter((e) => e.name === 'connections.changed').length;
+      await h.call('secrets.put', { account, value: empty }, 'rust:2');
+      expect(h.orch.ctx.secrets.has(account)).toBe(false);
+      expect((await h.call('connection.list'))[0].hasSecret).toBe(false);
+      expect(h.emitted.filter((e) => e.name === 'connections.changed').length).toBeGreaterThan(before);
+    }
+    await expect(h.call('secrets.put', { account, value: 5 }, 'rust:3')).rejects.toThrow(/texto/);
+  });
+
+  it('missingAccounts pide toda conexión con auth != none sin valor en memoria, aunque has_secret sea 0', async () => {
+    h = makeHarness();
+    const a = await h.call('connection.create', { name: 'Groq', preset: 'groq' });
+    const n = await h.call('connection.create', { name: 'Local', preset: 'ollama' });
+    expect(a.hasSecret).toBe(false);
+    expect(missingAccounts(h.orch.ctx)).toEqual([`conn:${a.id}`]);
+    expect(missingAccounts(h.orch.ctx)).not.toContain(`conn:${n.id}`);
+    await h.call('secrets.put', { account: `conn:${a.id}`, value: KEY }, 'rust:1');
+    expect(missingAccounts(h.orch.ctx)).toEqual([]);
+    expect((await h.call('connection.list')).find((x: any) => x.id === a.id).hasSecret).toBe(true);
   });
 
   it('crea openai/gemini automáticamente si existe la variable de entorno (una sola vez) y resuelve el alias', async () => {

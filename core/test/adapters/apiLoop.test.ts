@@ -398,6 +398,34 @@ describe('ApiLoopAdapter: herramientas y permisos', () => {
     expect(requests[3]!.body.messages.at(-1).content).toMatch(/sensible/);
   });
 
+  it('grep con un patrón catastrófico (a+)+$ termina rápido y sin bloquear', async () => {
+    writeFileSync(join(cwd, 'bomba.txt'), `${'a'.repeat(5000)}b\n`);
+    writeFileSync(join(cwd, 'hola.txt'), 'hola mundo\n');
+    mkdirSync(join(cwd, '.git'));
+    writeFileSync(join(cwd, '.git', 'x.txt'), 'hola secreto\n');
+    script = [callSse('grep', { pattern: '(a+)+$' }), callSse('grep', { pattern: '-e hola' }), callSse('grep', { pattern: 'hola' }), callSse('grep', { pattern: '(' }), textSse('fin')];
+    const t0 = Date.now();
+    await collect(adapter(), spec());
+    expect(Date.now() - t0).toBeLessThan(8000);
+    expect(requests[1]!.body.messages.at(-1).content).toBe('Sin coincidencias.'); // termina, sin colgarse
+    expect(requests[2]!.body.messages.at(-1).content).toBe('Sin coincidencias.'); // el patrón empieza por "-": no es una opción
+    const g = requests[3]!.body.messages.at(-1).content;
+    expect(g).toContain('hola.txt:1:hola mundo');
+    expect(g).not.toContain('.git');
+    expect(requests[4]!.body.messages.at(-1).content).toMatch(/no válida|error de grep/);
+  });
+
+  it('read_file rechaza archivos de más de 2 MB y binarios, con mensaje claro', async () => {
+    writeFileSync(join(cwd, 'grande.txt'), 'x'.repeat(2 * 1024 * 1024 + 1));
+    writeFileSync(join(cwd, 'img.bin'), Buffer.from([1, 2, 0, 3]));
+    writeFileSync(join(cwd, 'ok.txt'), 'texto');
+    script = [callSse('read_file', { path: 'grande.txt' }), callSse('read_file', { path: 'img.bin' }), callSse('read_file', { path: 'ok.txt' }), textSse('fin')];
+    await collect(adapter(), spec());
+    expect(requests[1]!.body.messages.at(-1).content).toMatch(/límite es 2048 KB/);
+    expect(requests[2]!.body.messages.at(-1).content).toMatch(/binario/);
+    expect(requests[3]!.body.messages.at(-1).content).toBe('texto');
+  });
+
   it('readOnly: solo ofrece read_file, list_dir y grep, y rechaza el resto', async () => {
     script = [callSse('write_file', { path: 'hola.txt', content: 'x' }), callSse('run_command', { command: 'pwd' }), textSse('fin')];
     await collect(adapter(), spec({ readOnly: true }));

@@ -2,6 +2,8 @@
 // Aquí nunca entra una clave: el valor escrito en el formulario va directo a `secret_set` (llavero) y no se guarda.
 import type { StateCreator } from "zustand";
 import type { ConnectionCreateParams, ConnectionTest, ConnectionView, DiscoveredServer } from "../../shared/protocol";
+import { errorMessage } from "./core";
+import { secretDelete, tauriError } from "../screens/Wizard/tauri";
 import { presetInfo } from "../screens/Connections/presets";
 import type { AppState } from "./index";
 
@@ -20,7 +22,9 @@ export type ConnectionsSlice = {
   /** "Conectar" de un servidor encontrado: crea la conexión (sin clave) y lanza la prueba. */
   connectDiscovered: (server: DiscoveredServer) => Promise<ConnectionView | undefined>;
   testConnection: (id: string, model?: string) => Promise<ConnectionTest | undefined>;
-  deleteConnection: (id: string) => Promise<boolean>;
+  /** Borra primero la clave del llavero y luego la conexión; intenta ambas aunque una falle. null = todo bien, si no el error. */
+  removeConnection: (id: string, hasSecret: boolean) => Promise<string | null>;
+  deleteConnection: (id: string, hasSecret?: boolean) => Promise<boolean>;
 };
 
 export const createConnectionsSlice: StateCreator<AppState, [], [], ConnectionsSlice> = (set, get) => ({
@@ -68,10 +72,27 @@ export const createConnectionsSlice: StateCreator<AppState, [], [], ConnectionsS
     return res;
   },
 
-  deleteConnection: async (id) => {
-    const ok = await get().callSafe("connection.delete", { id });
-    if (ok === undefined) return false;
+  removeConnection: async (id, hasSecret) => {
+    const errors: string[] = [];
+    if (hasSecret) {
+      try {
+        await secretDelete(`conn:${id}`);
+      } catch (err) {
+        errors.push(`No se pudo borrar la clave del llavero: ${tauriError(err)}`);
+      }
+    }
+    try {
+      await get().call("connection.delete", { id });
+    } catch (err) {
+      errors.push(`No se pudo borrar la conexión: ${errorMessage(err)}`);
+    }
     await get().refreshConnections();
-    return true;
+    return errors.length ? errors.join(" ") : null;
+  },
+
+  deleteConnection: async (id, hasSecret = false) => {
+    const err = await get().removeConnection(id, hasSecret);
+    if (err) set({ notice: err });
+    return err === null;
   },
 });

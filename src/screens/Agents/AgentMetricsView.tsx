@@ -1,6 +1,7 @@
 // Subpestaña "Métricas": modelo, tokens, contexto, coste y runs recientes, en vivo con `liveRuns`.
 import type { AgentMetrics, RunMetrics } from "../../store/metrics";
 import type { Agent } from "../../store/agents";
+import { useModelLabel } from "../Connections/useModelLabel";
 import { contextSegments, fmtTokens, fmtUsd, pct } from "./format";
 import { useAgentsStore } from "./useAgentsStore";
 
@@ -49,6 +50,7 @@ export default function AgentMetricsView({ agent }: { agent: Agent }) {
       </p>
     );
   }
+  const label = useModelLabel();
   const liveNow = runs.find((r) => r.live);
   const model = liveNow?.model ?? metrics.model ?? agent.current_model ?? agent.model;
   return (
@@ -57,7 +59,7 @@ export default function AgentMetricsView({ agent }: { agent: Agent }) {
         <div>
           <dt>Modelo en uso</dt>
           <dd>
-            <span className="ag-chip">{model ?? "—"}</span> {liveNow && <span className="muted small">en vivo</span>}
+            <span className="ag-chip">{model ? label(model) : "—"}</span> {liveNow && <span className="muted small">en vivo</span>}
           </dd>
         </div>
         <div>
@@ -116,7 +118,7 @@ export default function AgentMetricsView({ agent }: { agent: Agent }) {
                     {r.runId.slice(0, 6)}
                     {r.live && <span className="ag-live"> en vivo</span>}
                   </th>
-                  <td>{r.model}</td>
+                  <td>{label(r.model)}</td>
                   <td>{fmtTokens(r.input)}</td>
                   <td>{fmtTokens(r.output)}</td>
                   <td>{fmtTokens(r.cacheRead + r.cacheWrite)}</td>

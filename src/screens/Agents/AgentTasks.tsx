@@ -4,6 +4,7 @@ import Markdown from "../../components/Markdown";
 import { accessLabel } from "../../components/TaskList";
 import type { Agent } from "../../store/agents";
 import type { Task } from "../../store/tasks";
+import { useModelLabel } from "../Connections/useModelLabel";
 import { CLAUDE_MODELS } from "../CreateAgent/options";
 import { fmtDuration, fmtUsd, isBoss, queueInfo, STATE_LABEL } from "./format";
 import { useAgentsStore } from "./useAgentsStore";
@@ -56,6 +57,7 @@ function TaskCard({ task: t, agent, others }: { task: TaskView; agent: Agent; ot
   const [target, setTarget] = useState("");
   const [switching, setSwitching] = useState(false);
 
+  const label = useModelLabel();
   const model = live?.model ?? t.model ?? undefined;
   const cost = live?.costUsd ?? t.cost_usd ?? undefined;
   const queue = queueInfo(t, queueChange);
@@ -99,7 +101,7 @@ function TaskCard({ task: t, agent, others }: { task: TaskView; agent: Agent; ot
           )}
           {queue?.budget && <span className="ag-badge ag-badge-budget">bloqueada por tope de gasto</span>}
           {access && <span className="tag muted">{access}</span>}
-          {model && <span className="ag-chip">{model}</span>}
+          {model && <span className="ag-chip">{label(model)}</span>}
           {cost !== undefined && <span className="muted small">{fmtUsd(cost)}</span>}
           {live && <span className="muted small">en vivo</span>}
         </p>

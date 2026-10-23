@@ -8,6 +8,7 @@ import { useStore } from "../../store";
 import Led from "../Connections/Led";
 import { useConnectionModels } from "../Connections/useConnectionModels";
 import "../Connections/Connections.css";
+import { modelLabel } from "../../store/modelLabel";
 import { useAgentsStore } from "./useAgentsStore";
 
 export const PERSONA_MAX = 4000;
@@ -24,11 +25,6 @@ function initialRelay(agent: Agent): string[] {
 
 const isConnTarget = (m: string) => /^conn:[^/]+\/.+/.test(m);
 
-/** "conn:<id>/qwen3" → "LM Studio / qwen3" (con el nombre de la conexión). */
-function relayLabel(m: string, nameOf: (id: string) => string): string {
-  const hit = /^conn:([^/]+)\/(.+)$/.exec(m);
-  return hit ? `${nameOf(hit[1]!)} / ${hit[2]}` : m;
-}
 
 /** Selector para añadir `conn:<id>/<modelo>` al orden de relevo. */
 function RelayAdder({ connections, relay, onAdd }: { connections: ConnectionView[]; relay: string[]; onAdd: (target: RelayTarget) => void }) {
@@ -108,6 +104,7 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [warning, setWarning] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshSkills();
@@ -160,6 +157,7 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
     setSaved(false);
     const ok = await updateAgent({ agentId: String(agent.id), ...patch });
     setSaving(false);
+    setWarning(ok ? (ok.warning ?? null) : null);
     if (ok) setSaved(true);
     else setError(useStore.getState().notice ?? "El core no aceptó los cambios.");
   };
@@ -273,7 +271,7 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
               {relay.map((m, i) => (
                 <li key={m}>
                   <span className="ag-relay-n">{i + 1}</span>
-                  <span className="ag-chip">{relayLabel(m, connNameOf)}</span>
+                  <span className="ag-chip">{modelLabel(m, connections)}</span>
                   <button type="button" className="btn btn-ghost" aria-label={`Subir ${m}`} disabled={i === 0} onClick={() => move(i, -1)}>
                     ↑
                   </button>
@@ -364,6 +362,11 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
       {saved && !dirty && (
         <p className="ag-ok" role="status">
           Guardado.
+        </p>
+      )}
+      {warning && (
+        <p className="cx-warn" role="status">
+          Aviso: {warning}
         </p>
       )}
       <div className="row">

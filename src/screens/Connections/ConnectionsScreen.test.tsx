@@ -225,3 +225,85 @@ describe("formulario de 3 pasos", () => {
     expect(calls("connection.create")).toHaveLength(0);
   });
 });
+
+describe("borrado sin huérfanos y cambio de host", () => {
+  const order = () => [...mocks.invoke.mock.invocationCallOrder.map((n, i) => [n, mocks.invoke.mock.calls[i]![0] as string] as const), ...mocks.request.mock.invocationCallOrder.map((n, i) => [n, mocks.request.mock.calls[i]![0] as string] as const)]
+    .sort((a, b) => a[0] - b[0])
+    .map((x) => x[1])
+    .filter((m) => m === "secret_delete" || m === "connection.delete");
+
+  it("Cancelar: borra primero la clave y luego la conexión", async () => {
+    const onClose = vi.fn();
+    render(<ConnectionForm onClose={onClose} />);
+    fireEvent.click(screen.getByRole("radio", { name: /OpenRouter/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    fireEvent.change(screen.getByLabelText("Clave"), { target: { value: SECRET } });
+    fireEvent.click(screen.getByRole("button", { name: "Probar" }));
+    await screen.findByLabelText("Resultado de la prueba");
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(order()).toEqual(["secret_delete", "connection.delete"]);
+    expect(mocks.invoke).toHaveBeenCalledWith("secret_delete", { user: "conn:new-1" });
+  });
+
+  it("Cancelar: si falla el llavero igual borra la conexión y muestra el error sin cerrar", async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "secret_delete") throw "llavero bloqueado";
+    });
+    const onClose = vi.fn();
+    render(<ConnectionForm onClose={onClose} />);
+    fireEvent.click(screen.getByRole("radio", { name: /OpenRouter/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    fireEvent.change(screen.getByLabelText("Clave"), { target: { value: SECRET } });
+    fireEvent.click(screen.getByRole("button", { name: "Probar" }));
+    await screen.findByLabelText("Resultado de la prueba");
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/llavero bloqueado/));
+    expect(calls("connection.delete")).toHaveLength(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("Borrar una tarjeta con clave: primero el llavero y luego la conexión; si el core falla, la clave ya no queda", async () => {
+    list = [conn({ id: "c9", name: "Remota", auth: "bearer", hasSecret: true })];
+    render(<ConnectionsScreen />);
+    await screen.findByLabelText("Remota");
+    fireEvent.click(screen.getByRole("button", { name: "Borrar Remota" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sí, borrar" }));
+    await waitFor(() => expect(calls("connection.delete")).toHaveLength(1));
+    expect(order()).toEqual(["secret_delete", "connection.delete"]);
+    expect(mocks.invoke).toHaveBeenCalledWith("secret_delete", { user: "conn:c9" });
+  });
+
+  it("removeConnection intenta ambas aunque la primera falle y devuelve los dos errores", async () => {
+    mocks.invoke.mockRejectedValue("sin acceso");
+    mocks.request.mockImplementation(async (m: string) => {
+      if (m === "connection.delete") throw new Error("la conexión no existe");
+      return [];
+    });
+    const err = await useStore.getState().removeConnection("c1", true);
+    expect(err).toMatch(/sin acceso/);
+    expect(err).toMatch(/no existe/);
+    expect(calls("connection.delete")).toHaveLength(1);
+  });
+
+  it("al cambiar el host de una conexión con clave avisa y pide confirmación antes de guardar", async () => {
+    const c = conn({ id: "c7", name: "Mi API", preset: "custom", baseUrl: "https://api.buena.com/v1", auth: "bearer", hasSecret: true });
+    render(<ConnectionForm initial={c} onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://evil.example.org/v1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    const dlg = await screen.findByRole("alertdialog");
+    expect(dlg.textContent).toMatch(/Tu clave se enviará a evil\.example\.org/);
+    expect(calls("connection.update")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /Sí, enviar la clave a evil\.example\.org/ }));
+    await waitFor(() => expect(calls("connection.update")[0]![1]).toMatchObject({ id: "c7", baseUrl: "https://evil.example.org/v1" }));
+  });
+
+  it("mismo host (solo cambia la ruta) no pide confirmación", async () => {
+    const c = conn({ id: "c7", preset: "custom", baseUrl: "https://api.buena.com/v1", auth: "bearer", hasSecret: true });
+    render(<ConnectionForm initial={c} onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://api.buena.com/v2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await waitFor(() => expect(calls("connection.update")).toHaveLength(1));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+});

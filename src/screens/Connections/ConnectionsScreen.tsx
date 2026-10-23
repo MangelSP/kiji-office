@@ -2,7 +2,6 @@
 import { useEffect, useState } from "react";
 import type { ConnectionTest, ConnectionView, DiscoveredServer } from "../../../shared/protocol";
 import { useStore } from "../../store";
-import { secretDelete } from "../Wizard/tauri";
 import ConnectionForm from "./ConnectionForm";
 import Led from "./Led";
 import PresetIcon from "./PresetIcon";
@@ -56,9 +55,8 @@ function ConnectionCard({ conn, onEdit }: { conn: ConnectionView; onEdit: () => 
   };
 
   const remove = async () => {
-    const ok = await deleteConnection(conn.id);
+    await deleteConnection(conn.id, conn.hasSecret);
     setConfirming(false);
-    if (ok && conn.hasSecret) await secretDelete(`conn:${conn.id}`).catch(() => undefined);
   };
 
   return (

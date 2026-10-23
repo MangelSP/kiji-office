@@ -2,7 +2,8 @@
 //  - `providers`: estado de cupo de cada IA (`providers.status`, `limits.changed`, global) y relevos (por proyecto).
 //  - `office`: último evento de cada agente (para los globos de la escena) y borradores de la caja de pedido.
 import type { StateCreator } from "zustand";
-import type { ProviderStatus, RelayRow } from "../../shared/protocol";
+import type { ConnectionView, ProviderStatus, RelayRow } from "../../shared/protocol";
+import { modelLabel } from "./modelLabel";
 import { bubbleText } from "../scenes/bubbleText";
 import type { Agent, Id } from "./agents";
 import type { AppState } from "./index";
@@ -90,10 +91,10 @@ function agentName(agents: readonly Pick<Agent, "id" | "name">[], id: string | n
 }
 
 /** "Clau: sonnet → haiku" o "Clau → Nico" (si cambió de agente). */
-export function relayWho(row: RelayRow, agents: readonly Pick<Agent, "id" | "name">[]): { who: string; change: string } {
+export function relayWho(row: RelayRow, agents: readonly Pick<Agent, "id" | "name">[], connections: readonly Pick<ConnectionView, "id" | "name">[] = []): { who: string; change: string } {
   const from = agentName(agents, row.fromAgentId);
   const to = agentName(agents, row.toAgentId);
-  const models = `${row.fromModel ?? "?"} → ${row.toModel ?? "?"}`;
+  const models = `${row.fromModel ? modelLabel(row.fromModel, connections) : "?"} → ${row.toModel ? modelLabel(row.toModel, connections) : "?"}`;
   if (row.fromAgentId && row.toAgentId && row.fromAgentId !== row.toAgentId) {
     return { who: from ?? "Un robot", change: `${from ?? "?"} → ${to ?? "?"}` };
   }
@@ -103,18 +104,18 @@ export function relayWho(row: RelayRow, agents: readonly Pick<Agent, "id" | "nam
 const two = (n: number) => String(n).padStart(2, "0");
 
 /** "01:20 · Clau: sonnet → haiku · límite semanal de Sonnet" */
-export function relayLine(row: RelayRow, agents: readonly Pick<Agent, "id" | "name">[]): string {
+export function relayLine(row: RelayRow, agents: readonly Pick<Agent, "id" | "name">[], connections: readonly Pick<ConnectionView, "id" | "name">[] = []): string {
   const d = new Date(row.createdAt);
-  const { who, change } = relayWho(row, agents);
+  const { who, change } = relayWho(row, agents, connections);
   return `${two(d.getHours())}:${two(d.getMinutes())} · ${who}: ${change} · ${row.detail || REASON_LABEL[row.reason]}`;
 }
 
 /** Aviso corto: "Clau pasó de sonnet a haiku". */
-export function relayNotice(row: RelayRow, agents: readonly Pick<Agent, "id" | "name">[]): string {
-  const { who } = relayWho(row, agents);
+export function relayNotice(row: RelayRow, agents: readonly Pick<Agent, "id" | "name">[], connections: readonly Pick<ConnectionView, "id" | "name">[] = []): string {
+  const { who } = relayWho(row, agents, connections);
   if (row.fromAgentId && row.toAgentId && row.fromAgentId !== row.toAgentId) {
     return `${who} pasó el trabajo a ${agentName(agents, row.toAgentId) ?? "otro robot"}`;
   }
-  if (row.fromModel && row.toModel) return `${who} pasó de ${row.fromModel} a ${row.toModel}`;
+  if (row.fromModel && row.toModel) return `${who} pasó de ${modelLabel(row.fromModel, connections)} a ${modelLabel(row.toModel, connections)}`;
   return `${who} cambió de IA`;
 }

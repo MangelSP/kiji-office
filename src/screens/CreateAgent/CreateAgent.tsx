@@ -20,6 +20,7 @@ type Props = {
 export default function CreateAgent({ onClose, onCreated }: Props) {
   const agents = useScoped((s) => s.agents);
   const call = useScoped((s) => s.call);
+  const setNotice = useScoped((s) => s.setNotice);
   const projectId = useScoped((s) => s.projectId);
   const refreshAgents = useScoped((s) => s.refreshAgents);
   const connections = useScoped((s) => s.connections);
@@ -88,7 +89,7 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
     setBusy(true);
     try {
       const finalName = name.trim();
-      await call("agent.create", {
+      const created = await call<{ warning?: string } | undefined>("agent.create", {
         projectId,
         name: finalName,
         provider,
@@ -98,6 +99,7 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
         ...(conn ? { connectionId: conn.id } : {}),
       });
       await refreshAgents(); // el robot aparece en la oficina con su paleta
+      if (typeof created?.warning === "string") setNotice(`${finalName}: ${created.warning}`);
       onCreated?.(finalName);
       onClose();
     } catch (err) {

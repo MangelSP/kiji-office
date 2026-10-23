@@ -60,11 +60,11 @@ export function maskSecrets(ctx: Ctx, text: string): string {
   return out;
 }
 
-/** Cuentas `conn:*` de las conexiones con clave que aún no están en memoria. */
+/** Cuentas `conn:*` de toda conexión con auth != none sin valor en memoria (has_secret solo se sabe al llegar el valor). */
 export function missingAccounts(ctx: Ctx): string[] {
   return ctx.repos.connections
     .list()
-    .filter((c) => c.auth !== 'none' && c.has_secret === 1 && !ctx.secrets.has(connAccount(c.id)))
+    .filter((c) => c.auth !== 'none' && !ctx.secrets.has(connAccount(c.id)))
     .filter((c) => aliasOf(c) === null || !ctx.secrets.has(aliasOf(c)!))
     .map((c) => connAccount(c.id));
 }
@@ -84,13 +84,15 @@ export function secretsHandlers(ctx: Ctx): Record<string, Handler> {
       const p = asParams(params, 'secrets.put');
       const account = str(p.account, 'account', 'secrets.put');
       if (!CONN_ACCOUNT_RE.test(account)) throw new Error('secrets.put: cuenta no válida (se espera conn:<uuid>)');
-      if (typeof p.value !== 'string') throw new Error('secrets.put: "value" debe ser texto');
-      if (p.value.length > SECRET_MAX_LEN) throw new Error('secrets.put: valor demasiado largo');
+      // null o '' = borrar (Rust manda '' al borrar; null se acepta por compatibilidad)
+      if (p.value !== null && p.value !== undefined && typeof p.value !== 'string') throw new Error('secrets.put: "value" debe ser texto');
+      const value: string = typeof p.value === 'string' ? p.value : '';
+      if (value.length > SECRET_MAX_LEN) throw new Error('secrets.put: valor demasiado largo');
       const conn = ctx.repos.connections.get(account.slice('conn:'.length));
       if (!conn) throw new Error('secrets.put: la conexión no existe');
-      if (p.value === '') ctx.secrets.delete(account);
-      else ctx.secrets.set(account, p.value);
-      const has = p.value === '' ? 0 : 1;
+      if (value === '') ctx.secrets.delete(account);
+      else ctx.secrets.set(account, value);
+      const has = value === '' ? 0 : 1;
       if (conn.has_secret !== has) {
         ctx.repos.connections.update(conn.id, { has_secret: has });
         notifyConnections(ctx);

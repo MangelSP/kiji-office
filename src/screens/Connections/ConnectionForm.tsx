@@ -1,11 +1,11 @@
 // Alta/edición de una conexión en 3 pasos: (1) preset, (2) URL + clave + Probar, (3) modelo y contexto.
 // La clave escrita vive SOLO en el estado de este componente: se guarda en el llavero con `secret_set` (cuenta
 // `conn:<id>`), se vacía al instante y no pasa por el store ni por el core.
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ConnectionAuth, ConnectionPreset, ConnectionTest, ConnectionView } from "../../../shared/protocol";
 import { useStore } from "../../store";
 import { errorMessage } from "../../store/core";
-import { secretDelete, secretSet, tauriError } from "../Wizard/tauri";
+import { secretSet, tauriError } from "../Wizard/tauri";
 import { AUTH_LABEL, OLLAMA_CONTEXT_WARNING, PRESETS, presetInfo, toolQualityText } from "./presets";
 import PresetIcon from "./PresetIcon";
 
@@ -14,10 +14,20 @@ type Props = { initial?: ConnectionView; onClose: () => void };
 const STEP_LABEL = { models: "Modelos", chat: "Chat", tools: "Herramientas" } as const;
 const DEFAULT_CONTEXT = 8192;
 
+/** Host (con puerto) de una URL, o null si no se puede leer. */
+export const hostOf = (url: string): string | null => {
+  try {
+    return new URL(url.trim()).host.toLowerCase();
+  } catch {
+    return null;
+  }
+};
+
 export default function ConnectionForm({ initial, onClose }: Props) {
   const uid = useId();
   const call = useStore((s) => s.call);
   const refresh = useStore((s) => s.refreshConnections);
+  const removeConnection = useStore((s) => s.removeConnection);
 
   const [step, setStep] = useState<1 | 2 | 3>(initial ? 2 : 1);
   const [preset, setPreset] = useState<ConnectionPreset>(initial?.preset ?? "ollama");
@@ -36,6 +46,9 @@ export default function ConnectionForm({ initial, onClose }: Props) {
   const [query, setQuery] = useState("");
   const [ctx, setCtx] = useState(String(initial?.contextWindow ?? (initial ? DEFAULT_CONTEXT : 4096)));
   const [error, setError] = useState<string | null>(null);
+  // Extra A: si cambia el host de una conexión con clave, hay que confirmarlo antes de guardar.
+  const [pendingHost, setPendingHost] = useState<{ host: string; retry: () => Promise<void> } | null>(null);
+  const ackHost = useRef<string | null>(null);
 
   const info = presetInfo(preset);
   const needsKey = auth !== "none";
@@ -50,8 +63,13 @@ export default function ConnectionForm({ initial, onClose }: Props) {
   };
 
   /** Crea (o actualiza) la conexión y guarda la clave si se escribió una. Devuelve el id, o null si algo falló. */
-  const save = async (): Promise<string | null> => {
+  const save = async (retry?: () => Promise<void>): Promise<string | null> => {
     setError(null);
+    const newHost = hostOf(baseUrl);
+    if (initial?.hasSecret && retry && newHost !== null && newHost !== hostOf(initial.baseUrl) && ackHost.current !== newHost) {
+      setPendingHost({ host: newHost, retry });
+      return null;
+    }
     try {
       let cid = id;
       if (cid === null) {
@@ -89,7 +107,7 @@ export default function ConnectionForm({ initial, onClose }: Props) {
     if (problem) return setError(problem);
     setTesting(true);
     setTest(null);
-    const cid = await save();
+    const cid = await save(runTest);
     if (cid) {
       try {
         const res = await call<ConnectionTest>("connection.test", { id: cid, ...(model ? { model } : {}) });
@@ -108,7 +126,7 @@ export default function ConnectionForm({ initial, onClose }: Props) {
     const problem = validate();
     if (problem) return setError(problem);
     setBusy(true);
-    const cid = await save();
+    const cid = await save(next);
     setBusy(false);
     if (cid) setStep(3);
   };
@@ -150,13 +168,10 @@ export default function ConnectionForm({ initial, onClose }: Props) {
   const cancel = async () => {
     // Una conexión creada a medias en esta sesión no se queda huérfana.
     if (!initial && id !== null) {
-      try {
-        await call("connection.delete", { id });
-        if (secretSaved) await secretDelete(`conn:${id}`);
-      } catch {
-        /* mejor esfuerzo */
-      }
-      void refresh();
+      setBusy(true);
+      const err = await removeConnection(id, secretSaved);
+      setBusy(false);
+      if (err) return setError(err); // no se cierra: el usuario ve qué quedó sin borrar
     }
     onClose();
   };
@@ -311,6 +326,31 @@ export default function ConnectionForm({ initial, onClose }: Props) {
             <label htmlFor={`${uid}-ctx`}>Ventana de contexto (tokens)</label>
             <input id={`${uid}-ctx`} type="number" min={512} step={512} value={ctx} onChange={(e) => setCtx(e.target.value)} />
             {preset === "ollama" && <p className="cx-warn small">{OLLAMA_CONTEXT_WARNING}</p>}
+          </div>
+        </div>
+      )}
+
+      {pendingHost && (
+        <div className="cx-warn" role="alertdialog" aria-label="Confirmar nuevo servidor">
+          <p>
+            <strong>Tu clave se enviará a {pendingHost.host}.</strong> Antes se enviaba a {hostOf(initial?.baseUrl ?? "") ?? "otro servidor"}. Confírmalo solo si confías en ese servidor.
+          </p>
+          <div className="row">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                ackHost.current = pendingHost.host;
+                const retry = pendingHost.retry;
+                setPendingHost(null);
+                void retry();
+              }}
+            >
+              Sí, enviar la clave a {pendingHost.host}
+            </button>
+            <button type="button" className="btn" onClick={() => setPendingHost(null)}>
+              No, revisar la URL
+            </button>
           </div>
         </div>
       )}

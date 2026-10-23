@@ -7,6 +7,7 @@ import { presetInfo } from "../screens/Connections/presets";
 import "../screens/Connections/Connections.css";
 import { useScoped } from "../store/scoped";
 import type { Agent } from "../store/agents";
+import { modelLabel } from "../store/modelLabel";
 import { relayLine } from "../store/providers";
 import type { Task } from "../store/tasks";
 import { isBusy } from "./OfficeComposer";
@@ -160,6 +161,7 @@ function SwitchBlock() {
   const tasks = useScoped((s) => s.tasks);
   const agents = useScoped((s) => s.agents);
   const unavailable = useScoped((s) => s.unavailable["task.switch"]);
+  const connections = useScoped((s) => s.connections);
   const switchTask = useScoped((s) => s.switchTask);
   const setNotice = useScoped((s) => s.setNotice);
   const [picked, setPicked] = useState<Record<string, string>>({});
@@ -197,7 +199,7 @@ function SwitchBlock() {
               <p className="card-title">{t.title}</p>
               <p className="muted small">
                 {nameOf(t.agent_id) ?? "sin asignar"}
-                {t.model ? ` · ${t.model}` : ""}
+                {t.model ? ` · ${modelLabel(t.model, connections)}` : ""}
                 {t.status === "paused_limit" ? " · pausada por límite" : ""}
               </p>
               <div className="row">
@@ -287,7 +289,7 @@ export default function ProvidersPanel() {
         <ul className="plain relays" aria-label="Historial de relevos">
           {relays.slice(0, 8).map((r) => (
             <li key={r.id} className="small">
-              {relayLine(r, agents)}
+              {relayLine(r, agents, connections)}
             </li>
           ))}
         </ul>
