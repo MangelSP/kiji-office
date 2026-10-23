@@ -1,6 +1,7 @@
 // Apertura de la base SQLite (node:sqlite) y migraciones por PRAGMA user_version.
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { type BoardTaskInput, boardColumnFor, findingIsFailure } from '../board.js';
 
 // El bundle (core/esbuild.mjs) inyecta el contenido de schema.sql en __KIJI_SCHEMA_SQL__. Sin bundle (tsc, vitest)
 // se lee junto al .js compilado (`npm run build` lo copia, ver core/package.json) o desde src/.
@@ -129,6 +130,37 @@ CREATE INDEX integrations_project ON integrations(project_id, id);
 CREATE INDEX integrations_task ON integrations(task_id, id);
 `;
 
+// Migración 6 (0.4a, PLAN-0.4-pizarra.md): columna de la pizarra Scrum y modo manual. Las tareas existentes se
+// rellenan con la columna que `boardColumnFor` calcula para su estado actual.
+const MIGRATION_6 = `
+ALTER TABLE tasks ADD COLUMN board_column TEXT NOT NULL DEFAULT 'refinement' CHECK (board_column IN (
+  'refinement', 'refined', 'doing_dev', 'committed', 'doing_qa', 'bug', 'fix', 'functional', 'done', 'done_prod'));
+ALTER TABLE tasks ADD COLUMN board_manual INTEGER NOT NULL DEFAULT 0 CHECK (board_manual IN (0, 1));
+`;
+
+function migration6(db: DatabaseSync): void {
+  db.exec(MIGRATION_6);
+  const tasks = db.prepare(
+    `SELECT t.id, t.status, t.agent_id, t.acceptance, t.branch, a.role AS role,
+            EXISTS (SELECT 1 FROM task_files f WHERE f.task_id = t.id) AS has_files
+     FROM tasks t LEFT JOIN agents a ON a.id = t.agent_id`,
+  ).all() as unknown as Array<BoardTaskInput & { id: string; role: string | null; has_files: number }>;
+  const findings = db.prepare(
+    `SELECT payload FROM events WHERE task_id = ? AND kind = 'git' AND json_extract(payload, '$.finding') IS NOT NULL ORDER BY id`,
+  );
+  const set = db.prepare('UPDATE tasks SET board_column = ? WHERE id = ?');
+  for (const t of tasks) {
+    const payloads = (findings.all(t.id) as Array<{ payload: string }>).map((r) => {
+      try { return JSON.parse(r.payload) as Record<string, unknown>; } catch { return {}; }
+    });
+    const column = boardColumnFor(t, {
+      agentRole: t.role, hasFiles: t.has_files === 1, from: null, current: null,
+      hasFindings: payloads.length > 0, lastFindingIsFailure: payloads.length > 0 && findingIsFailure(payloads.at(-1)!),
+    });
+    set.run(column, t.id);
+  }
+}
+
 // Migraciones en orden; la posición + 1 es el valor de user_version tras aplicarla.
 // Para cambiar el esquema en el futuro: añadir un elemento al final, nunca editar los anteriores.
 export const migrations: Array<(db: DatabaseSync) => void> = [
@@ -137,6 +169,7 @@ export const migrations: Array<(db: DatabaseSync) => void> = [
   (db) => db.exec(MIGRATION_3),
   (db) => db.exec(MIGRATION_4),
   (db) => db.exec(MIGRATION_5),
+  migration6,
 ];
 
 export function openDb(path: string): DatabaseSync {

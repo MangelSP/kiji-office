@@ -8,6 +8,7 @@ import { memoryHandlers } from './memory.js';
 import { notificationHandlers } from './notifications.js';
 import { objectiveHandlers } from './objectives.js';
 import { agentHandlers } from './agents.js';
+import { boardHandlers } from './board.js';
 import { approvalHandlers } from './approvals.js';
 import type { AdapterFactory, Ctx, Handler } from './context.js';
 import { eventHandlers } from './events.js';
@@ -104,6 +105,7 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     ...metricsHandlers(ctx),
     ...skillHandlers(ctx),
     ...taskHandlers(ctx),
+    ...boardHandlers(ctx),
     ...objectiveHandlers(ctx),
     ...integrationHandlers(ctx),
     ...memoryHandlers(ctx),

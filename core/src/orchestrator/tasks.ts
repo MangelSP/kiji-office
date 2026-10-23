@@ -1,8 +1,10 @@
 // Tareas: máquina de estados (PLAN D4) y handlers task.create / list / assign. task.start / stop están en runs.ts.
 import { posix } from 'node:path';
-import type { ToolStep } from '../../../shared/protocol.js';
+import type { BoardTaskFields, ToolStep } from '../../../shared/protocol.js';
 import { FileClaimError, type EventRow, type ObjectiveRow, type ProjectRow, type TaskRow, type TaskStatus } from '../db/repos.js';
 import { type Ctx, type Handler, asParams, assertSameProject, optionalProject, projectIdOf, requireProject, str } from './context.js';
+import { syncBoard } from './board.js';
+import { boardFlagFor } from '../board.js';
 import { logEvent } from './events.js';
 import { contextPct } from './metrics.js';
 import { notify } from './notifications.js';
@@ -45,7 +47,7 @@ export function isReadOnlyTask(ctx: Ctx, taskId: string): boolean {
   return ctx.repos.taskFiles.list(taskId).length === 0;
 }
 
-export type TaskView = TaskRow & {
+export type TaskView = TaskRow & BoardTaskFields & {
   /** Proyecto al que pertenece (0.2c). */
   projectId: string;
   /** En la cola global esperando hueco (0.2c, C3); la tarea conserva su estado (`assigned`, `paused_limit`...). */
@@ -79,6 +81,7 @@ export function taskView(ctx: Ctx, task: TaskRow): TaskView {
   const position = queuePosition(ctx, task.id);
   return {
     ...task,
+    board_flag: boardFlagFor(task.status),
     projectId: ctx.repos.objectives.get(task.objective_id)?.project_id ?? '',
     queued: position !== null,
     queue_position: position,
@@ -185,12 +188,14 @@ export function transition(
       agentId: task.agent_id,
       payload: { task_id: taskId, from, to, ...(reason ? { reason } : {}) },
     });
+    syncBoard(ctx, taskId, { statusFrom: from });
     if (to === 'review') {
       const project = projectOfTask(ctx, task);
       notify(ctx, { projectId: project.id, level: 'info', title: `Clau terminó: «${task.title}»`, body: 'Lista para revisar.' });
     }
   } else if (Object.keys(patch).length > 0) {
     ctx.repos.tasks.update(taskId, patch);
+    syncBoard(ctx, taskId); // p. ej. cambia el agente (rol) sin cambiar de estado
   }
   return publishTask(ctx, taskId);
 }
@@ -312,6 +317,7 @@ export function taskHandlers(ctx: Ctx): Record<string, Handler> {
         }
         throw err;
       }
+      syncBoard(ctx, created.id, { created: true });
       return publishTask(ctx, created.id);
     },
 

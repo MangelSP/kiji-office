@@ -131,7 +131,7 @@ export function buildState(ctx: Ctx, projectId: string): Record<string, unknown>
       return { id: o.id, text: clip(o.text, 300), status: o.status, tasksByStatus: by };
     }),
     tasks: shown.map((t) => ({
-      id: t.id, objectiveId: t.objective_id, title: clip(t.title, 120), status: t.status, agentId: t.agent_id,
+      id: t.id, objectiveId: t.objective_id, title: clip(t.title, 120), status: t.status, column: t.board_column, agentId: t.agent_id,
       role: roleOfTask(t), files: ctx.repos.taskFiles.list(t.id, true).map((f) => f.path).slice(0, 12),
       readOnly: ctx.repos.taskFiles.list(t.id).length === 0, queuePosition: queuePosition(ctx, t.id),
       retriesUsed: retriesUsed(ctx, projectId, t.id), costUsd: Number(ctx.repos.runs.costByTask(t.id).toFixed(4)),

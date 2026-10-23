@@ -10,6 +10,7 @@ import { commitAll, mergeFfOnly, rebaseOnto, revertRange, runTests } from '../gi
 import { runGitRaw } from '../git/run.js';
 import { branchName, removeWorktree } from '../git/worktree.js';
 import { type Ctx, type Handler, asParams, assertSameProject, optionalProject, projectIdOf, str } from './context.js';
+import { markIntegrationTests, refreshBoard } from './board.js';
 import { logEvent } from './events.js';
 import { notify } from './notifications.js';
 import { getTask, isReadOnlyTask, projectOfTask, publishTask, recordFinding, transition } from './tasks.js';
@@ -77,6 +78,7 @@ async function assertMainRepoClean(project: ProjectRow, action: string): Promise
 /** Registra un intento fallido: fila `failed`, evento `integration.changed` y aviso. */
 function fail(ctx: Ctx, project: ProjectRow, task: TaskRow, title: string, detail: string, extra: { reason: IntegrationFailReason; files?: string[]; output?: string }): IntegrationView {
   const row = ctx.repos.integrations.create({ projectId: project.id, taskId: task.id, status: 'failed', detail: detail.slice(0, DETAIL_MAX) });
+  refreshBoard(ctx, task.id); // si los tests dejaron la tarea en Doing (QA) y sigue aprobada, vuelve a Prueba funcional
   notify(ctx, { projectId: project.id, level: 'warn', title: `No se pudo integrar «${task.title}»`, body: title });
   return publishIntegration(ctx, row.id, extra);
 }
@@ -119,6 +121,7 @@ export async function integrateTask(ctx: Ctx, taskId: string): Promise<Integrati
       const command = project.test_command?.trim() ?? '';
       if (command !== '') {
         phase(ctx, project.id, taskId, 'tests');
+        markIntegrationTests(ctx, taskId);
         let exitCode: number;
         let output: string;
         let timedOut = false;

@@ -3,6 +3,7 @@
 // Los campos JSON (acceptance, depends_on, resume_hint, input) se tratan como string:
 // quien llama hace JSON.stringify/parse. Solo events.payload se serializa aquí.
 import { randomUUID } from 'node:crypto';
+import type { BoardColumn } from '../../../shared/protocol.js';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 
 // ---------- Tipos de fila ----------
@@ -49,6 +50,8 @@ export interface TaskRow {
   id: string; objective_id: string; title: string; description: string; agent_id: string | null;
   status: TaskStatus; branch: string | null; worktree_path: string | null; acceptance: string | null;
   depends_on: string | null; sort_order: number; updated_at: number;
+  // 0.4a (migración 6): pizarra
+  board_column: BoardColumn; board_manual: 0 | 1;
 }
 export interface TaskFileRow { task_id: string; project_id: string; path: string; active: 0 | 1 }
 export interface RunRow {
@@ -334,6 +337,7 @@ export function createRepos(db: DatabaseSync) {
   // --- tasks ---
   const TASK_FIELDS = [
     'title', 'description', 'agent_id', 'status', 'branch', 'worktree_path', 'acceptance', 'depends_on', 'sort_order',
+    'board_column', 'board_manual',
   ] as const;
   const tasks = {
     create(t: {
@@ -467,6 +471,12 @@ export function createRepos(db: DatabaseSync) {
      *  - beforeId: eventos con id < beforeId, los más recientes primero en la selección (historial hacia atrás).
      *  - ninguno: los últimos `limit`.
      */
+    /** Hallazgos guardados de la tarea (eventos `git` con `finding`), en orden ascendente; el payload ya parseado. */
+    findingsByTask(taskId: string): Array<Record<string, unknown>> {
+      return all<{ payload: string }>(
+        `SELECT payload FROM events WHERE task_id = ? AND kind = 'git' AND json_extract(payload, '$.finding') IS NOT NULL ORDER BY id`, taskId,
+      ).map((r) => { try { return JSON.parse(r.payload) as Record<string, unknown>; } catch { return {}; } });
+    },
     /** Texto final del último `done` de la tarea (evento `status` con `type: 'done'`), o null. */
     lastDoneText(taskId: string): string | null {
       const row = one<{ text: string | null }>(
