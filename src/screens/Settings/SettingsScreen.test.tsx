@@ -40,11 +40,20 @@ const SPECS: SettingSpec[] = [
   spec("update_auto_check", "1", "actualizaciones"),
 ];
 
+const EXT = {
+  mcp: [
+    { name: "pg", scope: "user", projectId: null, transport: "stdio", command: "npx", envNames: [], headerNames: [], source: "/h/.claude.json" },
+    { name: "pm", scope: "plugin", projectId: null, transport: "http", url: "https://x", envNames: [], headerNames: [], source: "/h/p/.mcp.json", managedBy: "plugin:stripe" },
+  ],
+  skills: [{ name: "frontend-design", description: "Diseño", scope: "user", projectId: null, path: "/h/.claude/skills/frontend-design", isSymlink: false }],
+  warnings: [],
+};
+
 function reply(overrides: Record<string, (p: unknown) => unknown> = {}) {
   mocks.request.mockImplementation(async (method: string, params: unknown) => {
     if (overrides[method]) return overrides[method]!(params);
     if (method === "settings.all") return SPECS;
-    if (method === "skills.list") return [{ name: "frontend-design", description: "Diseño" }];
+    if (method === "extensions.list") return EXT;
     return null;
   });
 }
@@ -114,6 +123,24 @@ describe("SettingsScreen", () => {
     expect(await screen.findByText("frontend-design")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Quitar /Users/m/skills" }));
     await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("settings.set", { key: "extra_skill_roots", value: "[]" }));
+  });
+
+  it("MCP: desinstalar pide confirmación con el archivo y avisa de la copia; los de plugin no se pueden", async () => {
+    reply({ "extensions.remove": () => ({ removed: true, file: "/h/.claude.json", backup: "/h/.claude.json.kiji-backup-X" }) });
+    render(<SettingsScreen onClose={() => {}} />);
+    go("Skills");
+    await screen.findByText("frontend-design");
+    fireEvent.click(screen.getByRole("tab", { name: "MCP" }));
+    expect(((await screen.findByRole("button", { name: "Desinstalar pm" })) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Desinstalar pg" }));
+    const dlg = await screen.findByRole("dialog");
+    expect(dlg.textContent).toContain("/h/.claude.json");
+    expect(dlg.textContent).toContain("copia de seguridad");
+    expect(dlg.textContent).toContain("reiniciarse");
+    expect(mocks.request).not.toHaveBeenCalledWith("extensions.remove", expect.anything());
+    fireEvent.click(within(dlg).getByRole("button", { name: "Desinstalar" }));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("extensions.remove", { kind: "mcp", scope: "user", name: "pg", projectId: undefined }));
+    expect((await screen.findByText(/kiji-backup-X/)).textContent).toContain("Copia de seguridad");
   });
 
   it("sin settings.all en el core: aviso «aún no disponible», sin romper", async () => {

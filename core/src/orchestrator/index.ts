@@ -12,6 +12,7 @@ import { boardHandlers } from './board.js';
 import { approvalHandlers } from './approvals.js';
 import type { AdapterFactory, Ctx, Handler } from './context.js';
 import { eventHandlers } from './events.js';
+import { extensionHandlers } from './extensions.js';
 import { statsHandlers } from './stats.js';
 import { METRICS_NOTIFY_MS, METRICS_WRITE_MS, metricsHandlers } from './metrics.js';
 import { type ConnectionDeps, autoCreateKeyConnections, connectionHandlers, createConnectionService, makeAdapterFactory } from './connections.js';
@@ -107,6 +108,7 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     ...metricsHandlers(ctx),
     ...statsHandlers(ctx),
     ...skillHandlers(ctx),
+    ...extensionHandlers(ctx),
     ...taskHandlers(ctx),
     ...boardHandlers(ctx),
     ...objectiveHandlers(ctx),

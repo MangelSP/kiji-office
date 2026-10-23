@@ -56,6 +56,9 @@ export type MethodName =
   // 0.2a (PLAN-0.2a.md)
   | 'agent.metrics'
   | 'skills.list'
+  // Extensiones de Claude Code del usuario (MCP y skills): listar y desinstalar
+  | 'extensions.list'
+  | 'extensions.remove'
   | 'providers.status'
   | 'relays.list'
   | 'task.switch'
@@ -132,7 +135,8 @@ export type EventName =
   // 0.4a
   | 'board.moved'
   // 0.4b
-  | 'settings.changed';
+  | 'settings.changed'
+  | 'extensions.changed';
 
 // ---------------------------------------------------------------------------
 // 0.2a: métricas, cupo, relevo y perfil (PLAN-0.2a.md, "Contrato core ⇄ UI")
@@ -212,6 +216,40 @@ export type RelayRow = {
 };
 
 export type SkillInfo = { name: string; description: string };
+
+// Extensiones de Claude Code del usuario (no las de los robots de Kiji). Nunca llevan credenciales: solo nombres de variables.
+export type ExtensionScope = 'user' | 'local' | 'project' | 'plugin';
+export type McpEntry = {
+  name: string;
+  scope: ExtensionScope;
+  projectId: string | null;
+  transport: 'stdio' | 'http' | 'sse';
+  /** Solo stdio: el ejecutable (sin argumentos). */
+  command?: string;
+  /** Solo http/sse: URL sin usuario, contraseña ni query. */
+  url?: string;
+  /** Nombres (nunca valores) de las variables de entorno y de las cabeceras configuradas. */
+  envNames: string[];
+  headerNames: string[];
+  /** Archivo del que sale la entrada. */
+  source: string;
+  /** `plugin:<nombre>` si lo gestiona un plugin (no se puede quitar). */
+  managedBy?: string;
+};
+export type SkillEntry = {
+  name: string;
+  description: string;
+  scope: 'user' | 'project' | 'plugin';
+  projectId: string | null;
+  path: string;
+  isSymlink: boolean;
+  target?: string;
+  managedBy?: string;
+};
+export type ExtensionsWarning = { file: string; message: string };
+export type ExtensionsList = { mcp: McpEntry[]; skills: SkillEntry[]; warnings: ExtensionsWarning[] };
+export type ExtensionsRemoveParams = { kind: 'mcp' | 'skill'; scope: ExtensionScope; name: string; projectId?: string };
+export type ExtensionsRemoveResult = { removed: true; backup?: string; trashPath?: string; file: string };
 
 export type ToolStep = { name: string; target: string; ok: boolean | null; startedAt: number; endedAt: number | null };
 

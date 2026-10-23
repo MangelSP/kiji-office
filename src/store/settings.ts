@@ -110,16 +110,6 @@ export async function fetchModelUsage(range: StatsRange): Promise<ModelStatsResu
   }
 }
 
-export async function fetchSkills(): Promise<SkillInfo[] | string> {
-  if (useSettings.getState().demo) return DEMO_SKILLS;
-  try {
-    const list = await useStore.getState().call<SkillInfo[]>("skills.list");
-    return Array.isArray(list) ? list : [];
-  } catch (err) {
-    return err instanceof CoreError && err.code === "unknown_method" ? "skills.list: aún no disponible en el core" : errorMessage(err);
-  }
-}
-
 // --- Datos de ejemplo (?demo=1) -------------------------------------------------------------------------
 
 const mu = (model: string, provider: string, runs: number, input: number, output: number, costUsd: number, agents: string[]): ModelUsage => ({

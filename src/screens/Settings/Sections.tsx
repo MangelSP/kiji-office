@@ -1,14 +1,14 @@
 // Cuerpos de cada sección de Ajustes. Cada campo guarda con su propio `settings.set`.
 import { open as pickFolder } from "@tauri-apps/plugin-dialog";
 import { useEffect, useId, useState } from "react";
-import type { SkillInfo } from "../../../shared/protocol";
 import UpdateDialog, { checkForUpdate, errText, type UpdateInfo } from "../../components/UpdateDialog";
 import { useStore } from "../../store";
-import { fetchSkills, useSettings, useSetting } from "../../store/settings";
+import { useSettings, useSetting } from "../../store/settings";
 import { claudeProblem } from "../Wizard/claudeInstall";
 import KeyField from "../Wizard/KeyField";
 import { detectClis, tauriError, type CliInfo } from "../Wizard/tauri";
 import "../Wizard/Wizard.css";
+import Extensions from "./Extensions";
 import SettingField, { FieldFrame, useSettingSave } from "./SettingField";
 
 export type SectionProps = { onClose: () => void; onWizard?: () => void; onAbout?: () => void };
@@ -190,34 +190,10 @@ function SkillRoots() {
 }
 
 export function Skills() {
-  const [skills, setSkills] = useState<SkillInfo[] | string | null>(null);
-  const roots = useSetting("extra_skill_roots");
-  useEffect(() => {
-    let alive = true;
-    void fetchSkills().then((s) => alive && setSkills(s));
-    return () => {
-      alive = false;
-    };
-  }, [roots]);
   return (
     <>
+      <Extensions />
       <SkillRoots />
-      <div className="st-field">
-        <span className="st-label">Skills disponibles</span>
-        {skills === null && <p className="st-hint">Cargando…</p>}
-        {typeof skills === "string" && <p className="st-hint">{skills}</p>}
-        {Array.isArray(skills) && skills.length === 0 && <p className="st-hint">No hay skills instaladas.</p>}
-        {Array.isArray(skills) && skills.length > 0 && (
-          <ul className="st-list" aria-label="Skills disponibles">
-            {skills.map((s) => (
-              <li key={s.name}>
-                <strong>{s.name}</strong>
-                <span className="st-hint">{s.description}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
     </>
   );
 }

@@ -225,3 +225,54 @@
 .st-field > .st-btn {
   align-self: flex-start;
 }
+.st-tabs {
+  display: flex;
+  gap: 4px;
+}
+.st-tab {
+  padding: 4px 14px;
+  font: inherit;
+  color: inherit;
+  background: #1b1d2b;
+  border: 2px solid #3a3e56;
+  cursor: pointer;
+}
+.st-tab.is-active {
+  border-color: #f0b35a;
+}
+.st-chip {
+  padding: 0 6px;
+  font-size: 12px;
+  border: 1px solid #3a3e56;
+  background: #262a3d;
+}
+.st-grow {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.st-full {
+  flex-basis: 100%;
+}
+.st-origin {
+  font-size: 11px;
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}
+.st-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+.st-modal-box {
+  max-width: 520px;
+  padding: 16px;
+  background: #1b1d2b;
+  border: 2px solid #f0b35a;
+}
+.st-modal-box code {
+  overflow-wrap: anywhere;
+}
