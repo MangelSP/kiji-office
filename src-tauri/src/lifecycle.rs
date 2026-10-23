@@ -1,5 +1,5 @@
 // Ciclo de vida de la ventana: bandeja del sistema, segundo plano y aviso al cerrar.
-// Rust no decide: al cerrar o pedir salir emite `app.close-requested` y la UI (CloseGuard) responde con
+// Rust no decide: al cerrar o pedir salir emite `app-close-requested` y la UI (CloseGuard) responde con
 // `app_close_ack` (ya me ocupo), y luego `app_hide`, `app_quit` o nada (cancelar).
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -49,7 +49,7 @@ pub fn request_close(app: &AppHandle, kind: &str) {
     // La UI necesita una ventana visible para mostrar el diálogo.
     show_main(app);
     state.awaiting_ack.store(true, Ordering::SeqCst);
-    let _ = app.emit("app.close-requested", serde_json::json!({ "kind": kind }));
+    let _ = app.emit("app-close-requested", serde_json::json!({ "kind": kind }));
     let (app, awaiting) = (app.clone(), state.awaiting_ack.clone());
     std::thread::spawn(move || {
         std::thread::sleep(ACK_TIMEOUT);
