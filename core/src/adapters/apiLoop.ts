@@ -37,8 +37,9 @@ export const TOOLS_GUIDE = [
 ].join('\n');
 
 type Msg = Record<string, any>;
-type Call = { id: string; name: string; args: string };
-type Turn = { text: string; calls: Call[]; usage?: { prompt: number; completion: number }; finish?: string };
+/** `extra`: campos desconocidos del tool_call (p. ej. `extra_content.google.thought_signature` de Gemini 3), que se reenvían intactos. */
+type Call = { id: string; name: string; args: string; extra?: Record<string, unknown> };
+type Turn = { text: string; calls: Call[]; extra?: Record<string, unknown>; usage?: { prompt: number; completion: number }; finish?: string };
 
 /** Error ya traducido a evento terminal. */
 class Terminal extends Error {
@@ -46,6 +47,28 @@ class Terminal extends Error {
     super('terminal');
   }
 }
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Mezcla `src` en `dst` (objetos en profundidad, el resto se reemplaza): los campos extra pueden llegar repartidos en varios deltas. */
+function mergeExtra(dst: Record<string, unknown>, src: Record<string, unknown>): void {
+  for (const [k, v] of Object.entries(src)) {
+    const cur = dst[k];
+    if (isObj(v) && isObj(cur)) mergeExtra(cur, v);
+    else dst[k] = isObj(v) ? structuredClone(v) : v;
+  }
+}
+
+const pickExtra = (o: Record<string, unknown>, known: readonly string[]): Record<string, unknown> | undefined => {
+  const r: Record<string, unknown> = {};
+  for (const k of Object.keys(o)) if (!known.includes(k)) r[k] = o[k];
+  return Object.keys(r).length > 0 ? r : undefined;
+};
+
+const TOOL_CALL_KNOWN = ['index', 'id', 'type', 'function'] as const;
+const FUNCTION_KNOWN = ['name', 'arguments'] as const;
+// Campos del delta/mensaje que ya tratamos (o que no deben viajar de vuelta al proveedor).
+const DELTA_KNOWN = ['role', 'content', 'tool_calls', 'reasoning_content', 'reasoning', 'refusal', 'function_call', 'audio', 'annotations'] as const;
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
@@ -214,7 +237,11 @@ export class ApiLoopAdapter implements AgentAdapter {
         messages.push({
           role: 'assistant',
           content: res.text || null,
-          tool_calls: calls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.args } })),
+          ...(res.extra ?? {}),
+          tool_calls: calls.map((c) => {
+            const { function: fx, ...rest } = (c.extra ?? {}) as Record<string, any>;
+            return { ...rest, id: c.id, type: 'function', function: { ...(fx ?? {}), name: c.name, arguments: c.args } };
+          }),
         });
         for (const c of calls) {
           if (this.aborted) return;
@@ -240,6 +267,8 @@ export class ApiLoopAdapter implements AgentAdapter {
           messages.push({ role: 'tool', tool_call_id: c.id, content: result.output });
         }
 
+        // El resumen sustituye TODO el hilo cuando ya no queda ninguna llamada en curso (todas las tool_calls tienen su
+        // resultado), así que no se pierde ninguna thought_signature pendiente: Gemini solo las exige en el turno actual.
         if (lastPrompt > this.opts.contextWindow * SUMMARY_THRESHOLD) {
           await this.summarize(messages, tools, lastPrompt);
           push({ type: 'text', delta: `\n[Contexto al ${Math.round((lastPrompt / this.opts.contextWindow) * 100)} %: se resumió el hilo para seguir.]\n` });
@@ -349,12 +378,21 @@ export class ApiLoopAdapter implements AgentAdapter {
           turn.text += d.content;
           cb.text?.(d.content);
         }
+        if (isObj(d)) {
+          const ex = pickExtra(d, DELTA_KNOWN);
+          if (ex) mergeExtra((turn.extra ??= {}), ex);
+        }
         if (Array.isArray(d.tool_calls)) {
           for (const tc of d.tool_calls) {
             let idx: number = typeof tc.index === 'number' ? tc.index : slots.length - 1;
             // sin `index` (algunos servidores): un `id` nuevo abre otra llamada
             if (typeof tc.index !== 'number' && (idx < 0 || (tc.id && tc.id !== slots[idx]!.id))) idx = slots.length;
             const slot = (slots[idx] ??= { id: '', name: '', args: '' });
+            if (isObj(tc)) {
+              const ex = pickExtra(tc, TOOL_CALL_KNOWN);
+              const fx = isObj(tc.function) ? pickExtra(tc.function, FUNCTION_KNOWN) : undefined;
+              if (ex || fx) mergeExtra((slot.extra ??= {}), { ...ex, ...(fx ? { function: fx } : {}) });
+            }
             if (tc.id) slot.id = tc.id;
             if (tc.function?.name) slot.name += tc.function.name;
             if (typeof tc.function?.arguments === 'string') slot.args += tc.function.arguments;

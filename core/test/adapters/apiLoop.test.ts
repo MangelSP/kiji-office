@@ -177,6 +177,23 @@ describe('ApiLoopAdapter: protocolo', () => {
     expect(requests[0]!.headers.authorization).toBe('Bearer gsk_secret123');
   });
 
+  it('Gemini: extra_content.google.thought_signature se reenvía intacto en el historial', async () => {
+    writeFileSync(join(cwd, 'a.txt'), 'AAA');
+    script = [sseFile('gemini-thought-signature.sse'), textSse('fin')];
+    const evs = await collect(adapter(), spec());
+    expect(ofType(evs, 'done')).toHaveLength(1);
+    const asst = requests[1]!.body.messages.find((m: any) => m.role === 'assistant');
+    expect(asst.tool_calls[0].extra_content).toEqual({ google: { thought_signature: 'SIG_abc/+==' } });
+    expect(asst.tool_calls[0]).toMatchObject({ id: 'c1', type: 'function', function: { name: 'list_dir', arguments: '{"path":"."}' } });
+    // sin campos extra (otros proveedores) no se añade nada
+    script = [callSse('list_dir', { path: '.' }), textSse('fin')];
+    requests = [];
+    await collect(adapter(), spec());
+    const plain = requests[1]!.body.messages.find((m: any) => m.role === 'assistant');
+    expect(Object.keys(plain.tool_calls[0]).sort()).toEqual(['function', 'id', 'type']);
+    expect(Object.keys(plain).sort()).toEqual(['content', 'role', 'tool_calls']);
+  });
+
   it('x-api-key va en su cabecera', async () => {
     script = [textSse('x')];
     await collect(adapter({ auth: 'x-api-key', apiKey: 'k-12345' }), spec());
