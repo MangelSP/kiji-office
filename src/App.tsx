@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import CloseGuard from "./components/CloseGuard";
+import { UpdateAutoCheck } from "./components/UpdateDialog";
 import { HaltedBanner } from "./components/StopAllButton";
 import NoticeBar from "./components/NoticeBar";
 import AboutScreen from "./screens/About/AboutScreen";
@@ -58,6 +59,7 @@ function App() {
   return (
     <>
       <CloseGuard />
+      <UpdateAutoCheck />
       <WorkspaceTabs onWizard={() => setWizard(true)} onAbout={() => setAboutOpen((v) => !v)} aboutOpen={aboutOpen} />
       <HaltedBanner />
       <NoticeBar />

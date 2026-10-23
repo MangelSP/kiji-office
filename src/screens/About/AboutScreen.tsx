@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import pkg from "../../../package.json";
 import changelog from "../../../CHANGELOG.md?raw";
 import Markdown from "../../components/Markdown";
+import UpdateDialog, { checkForUpdate, errText, type UpdateInfo } from "../../components/UpdateDialog";
 import "./About.css";
 
 export const TELEMETRY_TEXT =
@@ -23,6 +24,23 @@ async function appVersion(): Promise<string> {
 export default function AboutScreen({ onClose }: { onClose?: () => void }) {
   const [version, setVersion] = useState(pkg.version);
   const [showLog, setShowLog] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState<string | null>(null);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+
+  const checkUpdates = async () => {
+    setChecking(true);
+    setUpdateMsg(null);
+    try {
+      const u = await checkForUpdate();
+      if (u) setUpdate(u);
+      else setUpdateMsg("Ya tienes la última versión.");
+    } catch (e) {
+      setUpdateMsg(errText(e));
+    } finally {
+      setChecking(false);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -55,11 +73,13 @@ export default function AboutScreen({ onClose }: { onClose?: () => void }) {
         <button type="button" className="ws-btn" aria-expanded={showLog} onClick={() => setShowLog((v) => !v)}>
           {showLog ? "Ocultar registro de cambios" : "Ver registro de cambios"}
         </button>
-        {/* Lo cablea el paso de actualizaciones automáticas. */}
-        <button type="button" className="ws-btn" disabled title="Disponible en una próxima versión">
-          Buscar actualizaciones
+        <button type="button" className="ws-btn" disabled={!isTauri() || checking} onClick={() => void checkUpdates()}
+          title={isTauri() ? undefined : "Solo disponible en la aplicación de escritorio"}>
+          {checking ? "Buscando…" : "Buscar actualizaciones"}
         </button>
       </div>
+      {updateMsg && <p role="status" className="ab-muted">{updateMsg}</p>}
+      {update && <UpdateDialog update={update} onClose={() => setUpdate(null)} />}
       {showLog && <Markdown text={changelog} label="Registro de cambios" />}
 
       <section>

@@ -26,6 +26,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": false,
     "targets": [
       "app",
       "dmg",
@@ -55,6 +56,14 @@
       "nsis": {
         "installMode": "currentUser"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/REEMPLAZAR_OWNER/REEMPLAZAR_REPO/releases/latest/download/latest.json"
+      ],
+      "pubkey": "REEMPLAZAR_CLAVE_PUBLICA"
     }
   }
 }

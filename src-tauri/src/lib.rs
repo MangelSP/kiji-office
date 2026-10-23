@@ -3,6 +3,7 @@ mod detect;
 mod keyring;
 mod lifecycle;
 mod notify;
+mod updater;
 
 use tauri::{Manager, RunEvent, WindowEvent};
 
@@ -12,6 +13,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(notify::NotifyState::default())
         .manage(core_process::CoreState::default())
         .manage(lifecycle::LifecycleState::default())
@@ -41,6 +44,8 @@ pub fn run() {
             lifecycle::app_hide,
             lifecycle::app_quit,
             lifecycle::tray_set_busy,
+            updater::check_update,
+            updater::install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
