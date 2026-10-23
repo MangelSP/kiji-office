@@ -129,6 +129,10 @@ export function createRepos(db: DatabaseSync) {
     get: (id: string) => one<ProjectRow>('SELECT * FROM projects WHERE id = ?', id),
     getByPath: (path: string) => one<ProjectRow>('SELECT * FROM projects WHERE path = ?', path),
     list: () => all<ProjectRow>('SELECT * FROM projects ORDER BY created_at, id'),
+    update(id: string, patch: { baseBranch?: string; testCommand?: string | null }): ProjectRow {
+      patchRow(db, 'projects', id, { base_branch: patch.baseBranch, test_command: patch.testCommand }, ['base_branch', 'test_command']);
+      return projects.get(id)!;
+    },
   };
 
   // --- agents ---

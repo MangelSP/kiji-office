@@ -3,9 +3,9 @@
 import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { ProjectRow } from '../db/repos.js';
-import { runGitRaw } from '../git/run.js';
+import { assertSafeRef, runGitRaw } from '../git/run.js';
 import { pruneWorktrees } from '../git/worktree.js';
-import { type Ctx, type Handler, asParams, str } from './context.js';
+import { type Ctx, type Handler, asParams, requireProject, str } from './context.js';
 import { logEvent } from './events.js';
 import { setRobotStatus } from './status.js';
 import { transition } from './tasks.js';
@@ -84,5 +84,32 @@ export function projectHandlers(ctx: Ctx): Record<string, Handler> {
     },
 
     'project.get': () => ctx.activeProject,
+
+    /** `{test_command?, base_branch?}` sobre el proyecto activo. La rama base debe existir como rama local. */
+    'project.update': async (params) => {
+      const p = asParams(params, 'project.update');
+      const project = requireProject(ctx);
+      const patch: { baseBranch?: string; testCommand?: string | null } = {};
+
+      if (p.base_branch !== undefined) {
+        const branch = str(p.base_branch, 'base_branch', 'project.update').trim();
+        assertSafeRef(branch, 'base_branch');
+        // show-ref solo acepta el nombre exacto de una rama local (rev-parse admitiría main~1, main@{0}…).
+        const r = await runGitRaw(project.path, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]);
+        if (r.exitCode !== 0) throw new Error(`project.update: la rama base "${branch}" no existe en ${project.path}`);
+        patch.baseBranch = branch;
+      }
+      if (p.test_command !== undefined) {
+        if (p.test_command !== null && typeof p.test_command !== 'string') throw new Error('project.update: "test_command" debe ser texto o null');
+        const cmd = (p.test_command ?? '').trim();
+        if (cmd.length > 1000 || /[\r\n\0]/.test(cmd)) throw new Error('project.update: "test_command" debe ser una sola línea de menos de 1000 caracteres');
+        patch.testCommand = cmd === '' ? null : cmd;
+      }
+      if (patch.baseBranch === undefined && patch.testCommand === undefined) {
+        throw new Error('project.update: indica "base_branch" y/o "test_command"');
+      }
+      ctx.activeProject = ctx.repos.projects.update(project.id, patch);
+      return ctx.activeProject;
+    },
   };
 }

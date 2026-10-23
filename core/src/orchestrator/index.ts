@@ -8,8 +8,10 @@ import { agentHandlers } from './agents.js';
 import { approvalHandlers } from './approvals.js';
 import type { AdapterFactory, Ctx, Handler } from './context.js';
 import { eventHandlers } from './events.js';
+import { type ProviderDeps, providerHandlers } from './providers.js';
 import { projectHandlers } from './projects.js';
 import { runHandlers, stopAll, whenIdle } from './runs.js';
+import { settingsHandlers } from './settings.js';
 import { taskHandlers } from './tasks.js';
 
 export interface OrchestratorOptions {
@@ -19,6 +21,8 @@ export interface OrchestratorOptions {
   adapterFactory?: AdapterFactory;
   /** Tiempo máximo del comando de tests (ms). Por defecto 5 minutos. */
   testTimeoutMs?: number;
+  /** Dependencias de `providers.test` (fetch, SDK y entorno), inyectables en las pruebas. */
+  providerDeps?: ProviderDeps;
 }
 
 export const defaultAdapterFactory: AdapterFactory = (agent) => {
@@ -40,6 +44,8 @@ export function createOrchestrator(opts: OrchestratorOptions) {
   };
   const handlers: Record<string, Handler> = {
     ...projectHandlers(ctx),
+    ...settingsHandlers(ctx),
+    ...providerHandlers(ctx, opts.providerDeps),
     ...agentHandlers(ctx),
     ...taskHandlers(ctx),
     ...runHandlers(ctx),
