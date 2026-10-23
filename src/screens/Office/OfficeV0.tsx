@@ -147,23 +147,28 @@ export default function OfficeV0() {
 
       {narrow && approvals}
 
-      <section className="panel scene-panel" aria-label="Oficina">
-        <div className="scene-stage">
-          <OfficeScene selectedId={selectedId} onSelect={setSelectedId} />
-          <OfficeComposer selectedId={selectedId} onSelect={setSelectedId} />
+      {/* Arriba: la oficina (con su caja de pedido y la tira de robots) y, a su derecha, el panel del robot elegido. */}
+      <div className="office-top">
+        <div className="office-left">
+          <section className="panel scene-panel" aria-label="Oficina">
+            <div className="scene-stage">
+              <OfficeScene selectedId={selectedId} onSelect={setSelectedId} />
+              <OfficeComposer selectedId={selectedId} onSelect={setSelectedId} />
+            </div>
+          </section>
+          <AgentStrip selectedId={selectedId} onSelect={setSelectedId} />
         </div>
-      </section>
-
-      <AgentStrip selectedId={selectedId} onSelect={setSelectedId} />
+        <aside className="office-agent" aria-label="Panel del robot">
+          {unavailableAgentList && <p className="muted">Aún no disponible: el core no implementa agent.list.</p>}
+          <AgentTabs selectedId={selectedId} onSelect={setSelectedId} />
+        </aside>
+      </div>
 
       <div className="office-grid">
         <div className="col">
-          {unavailableAgentList && <p className="muted">Aún no disponible: el core no implementa agent.list.</p>}
-          <AgentTabs selectedId={selectedId} onSelect={setSelectedId} />
-        </div>
-
-        <div className="col">
           <ProvidersPanel />
+        </div>
+        <div className="col">
           {!narrow && approvals}
 
           <section className="panel project-compact" aria-labelledby="proj-title">

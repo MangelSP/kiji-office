@@ -1,82 +1,76 @@
-// Vista previa del robot: mini canvas PixiJS con el fotograma `idle` animado de la paleta elegida.
-// Reutiliza los sprites reales de src/assets/sprites/ si existen y, si no, los placeholders de la escena.
+// Vista previa del robot: el fotograma `idle` animado de la paleta elegida, dibujado en un canvas 2D.
+// No usa PixiJS a propósito: una segunda `Application` en la misma página rompía el renderizador de la oficina
+// (BatcherPipe "reading 'geometry'") y la escena se quedaba en negro.
 import { useEffect, useRef, useState } from "react";
-import { AnimatedSprite, Application, TextureStyle } from "pixi.js";
 import { ROBOT_H, ROBOT_W } from "../../scenes/officeLayout";
-import { loadOfficeAssets, type OfficeAssets } from "../../scenes/spriteAssets";
 import { ROBOT_STATE_TABLE } from "../../scenes/robotStates";
 import { COLORS } from "./options";
-
-TextureStyle.defaultOptions.scaleMode = "nearest";
 
 const ZOOM = 5;
 const W = ROBOT_W * ZOOM;
 const H = ROBOT_H * ZOOM;
 
+type Rect = { x: number; y: number; w: number; h: number };
+type SheetJson = { frames?: Record<string, { frame: Rect }>; animations?: Record<string, string[]> };
+
+const pngUrls = import.meta.glob("../../assets/sprites/robot-*.png", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
+const jsonData = import.meta.glob("../../assets/sprites/robot-*.json", { eager: true, import: "default" }) as Record<string, SheetJson>;
+const byName = <T,>(rec: Record<string, T>) => new Map(Object.entries(rec).map(([p, v]) => [p.split("/").pop()!.replace(/\.(png|json)$/, ""), v]));
+const pngs = byName(pngUrls);
+const sheets = byName(jsonData);
+
+/** Rectángulos del `idle` de una hoja (por `animations` o por prefijo del nombre del fotograma). */
+export function idleFrames(sheet: SheetJson | undefined): Rect[] {
+  if (!sheet?.frames) return [];
+  const names = sheet.animations?.idle ?? Object.keys(sheet.frames).filter((n) => n.startsWith("idle")).sort();
+  return names.map((n) => sheet.frames![n]?.frame).filter((r): r is Rect => !!r);
+}
+
 export default function RobotPreview({ palette }: { palette: string }) {
-  const host = useRef<HTMLDivElement>(null);
-  const setPalette = useRef<((p: string) => void) | null>(null);
-  const latest = useRef(palette);
-  latest.current = palette;
+  const canvas = useRef<HTMLCanvasElement>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    let inited = false;
-    let destroyed = false;
-    let assets: OfficeAssets | null = null;
-    const app = new Application();
-
-    // A prueba de StrictMode: si el cleanup llega antes de acabar el init, se destruye al terminar.
-    const destroyApp = () => {
-      if (destroyed || !inited) return;
-      destroyed = true;
-      setPalette.current = null;
-      app.destroy(true, { children: true });
-      assets?.destroy();
+    const ctx = canvas.current?.getContext("2d");
+    const url = pngs.get(`robot-${palette}`);
+    const frames = idleFrames(sheets.get(`robot-${palette}`));
+    if (!ctx || !url || frames.length === 0) {
+      setFailed(true);
+      return;
+    }
+    setFailed(false);
+    let stopped = false;
+    let timer = 0;
+    let i = 0;
+    const img = new Image();
+    // `speed` es la velocidad de AnimatedSprite: fotogramas por tic a 60 fps.
+    const ms = Math.max(60, Math.round(1000 / (ROBOT_STATE_TABLE.idle.speed * 60)));
+    const draw = () => {
+      if (stopped) return;
+      const f = frames[i % frames.length];
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, W, H);
+      // Anclado abajo y al centro, como en la escena.
+      const dw = f.w * ZOOM;
+      const dh = f.h * ZOOM;
+      ctx.drawImage(img, f.x, f.y, f.w, f.h, Math.round((W - dw) / 2), H - dh, dw, dh);
+      i += 1;
+      const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!reduce && frames.length > 1) timer = window.setTimeout(draw, ms);
     };
-
-    void (async () => {
-      try {
-        await app.init({ width: W, height: H, backgroundAlpha: 0, antialias: false, roundPixels: true, resolution: 1 });
-        inited = true;
-        if (cancelled) return destroyApp();
-        assets = await loadOfficeAssets(app.renderer);
-        if (cancelled) return destroyApp();
-        const idle = ROBOT_STATE_TABLE.idle;
-        const sprite = new AnimatedSprite({ textures: assets.robotFrames(latest.current).idle, autoPlay: false });
-        sprite.anchor.set(0.5, 1);
-        sprite.scale.set(ZOOM);
-        sprite.position.set(W / 2, H);
-        sprite.loop = idle.loop;
-        sprite.animationSpeed = idle.speed;
-        sprite.play();
-        app.stage.addChild(sprite);
-        const a = assets;
-        setPalette.current = (p) => {
-          sprite.textures = a.robotFrames(p).idle;
-          sprite.play();
-        };
-        host.current?.appendChild(app.canvas);
-      } catch {
-        if (!cancelled) setFailed(true); // sin WebGL: se muestra solo la muestra de color
-      }
-    })();
-
+    img.onload = draw;
+    img.onerror = () => !stopped && setFailed(true);
+    img.src = url;
     return () => {
-      cancelled = true;
-      destroyApp();
+      stopped = true;
+      window.clearTimeout(timer);
     };
-  }, []);
-
-  useEffect(() => {
-    setPalette.current?.(palette);
   }, [palette]);
 
   const hex = COLORS.find((c) => c.id === palette)?.hex ?? "#888";
   return (
     <div className="ca-preview" role="img" aria-label={`Vista previa del robot, paleta ${palette}`}>
-      <div ref={host} className="ca-preview-canvas" style={{ width: W, height: H }} />
+      <canvas ref={canvas} className="ca-preview-canvas" width={W} height={H} style={{ width: W, height: H, imageRendering: "pixelated" }} />
       {failed && <div className="ca-preview-fallback" style={{ background: hex }} />}
     </div>
   );

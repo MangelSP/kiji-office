@@ -2,7 +2,7 @@
   min-height: 100vh;
   padding: 24px 16px;
   box-sizing: border-box;
-  max-width: 1320px;
+  max-width: 1720px;
   margin: 0 auto;
 }
 .office-head {
@@ -111,4 +111,30 @@
 }
 .office-grid > .col > .btn {
   align-self: flex-start;
+}
+
+/* Oficina a la izquierda y panel del robot a la derecha desde 1100 px; por debajo, uno encima del otro. */
+.office-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.office-left {
+  min-width: 0;
+}
+.office-agent {
+  min-width: 0;
+}
+@media (min-width: 1100px) {
+  .office-top {
+    grid-template-columns: minmax(0, 3fr) minmax(380px, 2fr);
+    align-items: start;
+  }
+  .office-agent {
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 32px);
+    overflow: auto;
+  }
 }
