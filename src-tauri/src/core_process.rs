@@ -170,18 +170,66 @@ struct Inner {
 #[derive(Default)]
 pub struct CoreState(Mutex<Inner>);
 
-/// Ruta de `core/dist/index.js`. En debug sale de la raíz del repo (fijada en tiempo de compilación,
-/// no depende del cwd). En release se espera como recurso empaquetado (se resolverá bien en 0.3 con el sidecar).
+/// Triple de Rust del host (solo para localizar `binaries/node-<triple>` en debug).
+#[cfg(debug_assertions)]
+fn host_triple() -> &'static str {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "aarch64-apple-darwin"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "x86_64-apple-darwin"
+    } else if cfg!(all(windows, target_arch = "x86_64")) {
+        "x86_64-pc-windows-msvc"
+    } else if cfg!(all(windows, target_arch = "aarch64")) {
+        "aarch64-pc-windows-msvc"
+    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+        "aarch64-unknown-linux-gnu"
+    } else {
+        "x86_64-unknown-linux-gnu"
+    }
+}
+
+/// Node que ejecuta el core. Release: el sidecar junto al ejecutable (`Contents/MacOS/node`). Debug: el sidecar
+/// descargado en `src-tauri/binaries/node-<triple>` si existe; si no, el `node` del sistema.
+fn node_path() -> Result<PathBuf, String> {
+    #[cfg(not(debug_assertions))]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let dir = exe.parent().ok_or("el ejecutable no tiene carpeta")?;
+        let p = dir.join(if cfg!(windows) { "node.exe" } else { "node" });
+        if p.is_file() { Ok(p) } else { Err(format!("no existe el sidecar {}", p.display())) }
+    }
+    #[cfg(debug_assertions)]
+    {
+        let ext = if cfg!(windows) { ".exe" } else { "" };
+        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("binaries/node-{}{ext}", host_triple()));
+        if p.is_file() {
+            return Ok(p);
+        }
+        detect::find_binary("node").ok_or_else(|| "no se encontró `node` (se necesita Node >= 22.13)".to_string())
+    }
+}
+
+/// Entrada del core. Release: recurso empaquetado `core/kiji-core.mjs`. Debug: `core/dist/index.js` del repo
+/// (fijado en tiempo de compilación, no depende del cwd) o, si no existe, `core/dist/kiji-core.mjs`.
 fn core_entry(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
     let path = {
         let _ = app;
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../core/dist/index.js")
+        let dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../core/dist");
+        if dist.join("index.js").is_file() { dist.join("index.js") } else { dist.join("kiji-core.mjs") }
     };
     #[cfg(not(debug_assertions))]
-    let path = app.path().resource_dir().map_err(|e| e.to_string())?.join("core/dist/index.js");
+    let path = app.path().resource_dir().map_err(|e| e.to_string())?.join("core/kiji-core.mjs");
     path.canonicalize()
         .map_err(|_| format!("no existe {} (¿falta `npm run build:core`?)", path.display()))
+}
+
+/// PATH del core: carpeta del sidecar al frente (Gemini CLI, que es una app Node, funciona sin Node instalado)
+/// y después el PATH ampliado.
+fn child_path(node: &std::path::Path) -> std::ffi::OsString {
+    let mut dirs: Vec<PathBuf> = node.parent().map(|d| d.to_path_buf()).into_iter().collect();
+    dirs.extend(std::env::split_paths(&detect::extended_path()));
+    std::env::join_paths(dirs).unwrap_or_default()
 }
 
 /// Emite un evento sintético con la misma forma que los del core (`{type:"event",name,payload}`).
@@ -193,7 +241,7 @@ fn emit_event(app: &AppHandle, name: &str, payload: serde_json::Value) {
 /// Lanza el core y sus hilos de relé. Debe llamarse con el Mutex tomado.
 fn spawn(app: &AppHandle, inner: &mut Inner) -> Result<(), String> {
     let entry = core_entry(app)?;
-    let node = detect::find_binary("node").ok_or("no se encontró `node` (se necesita Node >= 22.13)")?;
+    let node = node_path()?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| format!("no se pudo crear el directorio de datos: {e}"))?;
     let db = data_dir.join("kiji.db");
@@ -209,7 +257,11 @@ fn spawn(app: &AppHandle, inner: &mut Inner) -> Result<(), String> {
         }
     }
     // PATH ampliado: el core lanzará claude/codex/git y una app GUI de macOS no hereda el PATH de la shell.
-    cmd.env("PATH", detect::extended_path());
+    cmd.env("PATH", child_path(&node));
+    // Ruta del `claude` nativo instalado por el usuario (el adaptador la usa como pathToClaudeCodeExecutable).
+    if let Some(claude) = detect::find_native("claude") {
+        cmd.env("KIJI_CLAUDE_PATH", claude);
+    }
     // El llavero es la única fuente de claves.
     let mut secrets: Vec<String> = Vec::new();
     for (user, var) in keyring::ALLOWED {
@@ -389,6 +441,13 @@ pub async fn core_restart(app: AppHandle, state: State<'_, CoreState>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn path_del_hijo_empieza_por_el_sidecar() {
+        let dir = std::env::temp_dir();
+        let p = child_path(&dir.join("node"));
+        assert_eq!(std::env::split_paths(&p).next().unwrap(), dir);
+    }
 
     #[test]
     fn linea_secrets_put() {
