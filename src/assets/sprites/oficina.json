@@ -1,0 +1,71 @@
+{
+  "size": {
+    "w": 320,
+    "h": 180
+  },
+  "tile": 16,
+  "scale": 3,
+  "nota": "Puntos = donde apoyan los pies del robot (ancla abajo-centro), en px lógicos.",
+  "desks": [
+    {
+      "x": 128,
+      "y": 112
+    },
+    {
+      "x": 190,
+      "y": 112
+    },
+    {
+      "x": 252,
+      "y": 112
+    },
+    {
+      "x": 128,
+      "y": 164
+    },
+    {
+      "x": 190,
+      "y": 164
+    },
+    {
+      "x": 252,
+      "y": 164
+    }
+  ],
+  "boss": {
+    "x": 46,
+    "y": 146
+  },
+  "bossZone": {
+    "x": 0,
+    "y": 68,
+    "w": 90,
+    "h": 112
+  },
+  "standing": [
+    {
+      "x": 296,
+      "y": 92
+    },
+    {
+      "x": 296,
+      "y": 132
+    },
+    {
+      "x": 296,
+      "y": 172
+    }
+  ],
+  "robot": {
+    "w": 32,
+    "h": 40,
+    "anchor": {
+      "x": 0.5,
+      "y": 1
+    }
+  },
+  "layers": {
+    "background": "oficina.png",
+    "front": "oficina-frente.png"
+  }
+}

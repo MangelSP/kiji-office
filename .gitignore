@@ -13,3 +13,6 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 src-tauri/gen/schemas
+
+# hoja de contacto del generador de sprites
+tools/sprites/out/
