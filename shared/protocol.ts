@@ -67,7 +67,16 @@ export type MethodName =
   | 'project.update'
   | 'project.close'
   | 'project.reopen'
-  | 'workspaces.overview';
+  | 'workspaces.overview'
+  // 0.2b: Conexiones (PLAN-0.2b.md, parte 1; migración 4)
+  | 'connection.list'
+  | 'connection.create'
+  | 'connection.update'
+  | 'connection.delete'
+  | 'connection.test'
+  | 'connection.models'
+  | 'connections.discover'
+  | 'secrets.put';
 
 /** Eventos de 0.1 (sección 4) más los propios del servidor. */
 export type EventName =
@@ -87,7 +96,11 @@ export type EventName =
   // 0.2c
   | 'queue.changed'
   | 'workspaces.changed'
-  | 'budget.reached';
+  | 'budget.reached'
+  // 0.2b
+  | 'connections.changed'
+  /** core → Rust (nunca llega a la UI): pide las claves `conn:<id>` del llavero. */
+  | 'secrets.request';
 
 // ---------------------------------------------------------------------------
 // 0.2a: métricas, cupo, relevo y perfil (PLAN-0.2a.md, "Contrato core ⇄ UI")
@@ -140,7 +153,8 @@ export type LimitWindow = {
 export type ProviderId = 'claude' | 'ollama' | 'openai' | 'gemini';
 
 export type ProviderStatus = {
-  id: ProviderId;
+  /** 'claude' | 'ollama' | 'openai' | 'gemini' (0.2a) o 'conn:<uuid>' (una tarjeta por conexión, 0.2b). */
+  id: ProviderId | `conn:${string}`;
   label: string;
   /** claude: CLI o clave; ollama: responde; openai/gemini: hay clave. */
   configured: boolean;
@@ -171,6 +185,8 @@ export type ToolStep = { name: string; target: string; ok: boolean | null; start
 
 export type AgentUpdateParams = {
   agentId: string;
+  /** 0.2b: conexión del agente; null = Claude nativo (Agent SDK). Con conexión, `model` es libre (de connection.models). */
+  connectionId?: string | null;
   name?: string;
   model?: string;
   color?: string;
@@ -313,3 +329,73 @@ export type WorkspaceTotals = {
 
 /** `workspaces.overview` y payload de `workspaces.changed` (como mucho 1 por segundo). */
 export type WorkspaceOverview = { workspaces: WorkspaceSummary[]; totals: WorkspaceTotals };
+
+
+// ---------------------------------------------------------------------------
+// 0.2b: Conexiones — cualquier IA compatible con OpenAI Chat Completions (PLAN-0.2b.md, D14–D18)
+// ---------------------------------------------------------------------------
+
+export type ConnectionPreset =
+  | 'ollama' | 'lmstudio' | 'llamacpp' | 'vllm'
+  | 'openai' | 'groq' | 'together' | 'deepseek' | 'mistral' | 'gemini' | 'openrouter' | 'litellm' | 'custom';
+export type ConnectionAuth = 'none' | 'bearer' | 'x-api-key';
+export type ToolQuality = 'unknown' | 'ok' | 'weak' | 'none';
+
+export type ConnectionView = {
+  id: string;
+  name: string;
+  preset: ConnectionPreset;
+  baseUrl: string;
+  auth: ConnectionAuth;
+  /** Hay clave en el llavero (cuenta `conn:<id>`). La clave NUNCA viaja a la UI. */
+  hasSecret: boolean;
+  defaultModel: string | null;
+  contextWindow: number;
+  toolQuality: ToolQuality;
+  lastTestAt: number | null;
+  lastTestOk: boolean | null;
+  /** Nombres de los agentes que la usan (de todos los proyectos). */
+  agents: string[];
+  /** Precios opcionales por modelo, USD por millón de tokens. Vacío = gratis / desconocido. */
+  prices: Record<string, { in: number; out: number }>;
+};
+
+export type ConnectionTestStep = { name: 'models' | 'chat' | 'tools'; ok: boolean; detail: string };
+export type ConnectionTest = {
+  ok: boolean;
+  detail: string;
+  steps: ConnectionTestStep[];
+  models?: string[];
+  toolQuality?: ToolQuality;
+  latencyMs?: number;
+};
+export type DiscoveredServer = {
+  preset: ConnectionPreset;
+  baseUrl: string;
+  models: string[];
+  alreadyConnected: boolean;
+  /** Binario detectado pero el puerto no responde ("ejecuta `ollama serve`"). */
+  installedNotRunning?: boolean;
+};
+
+export type ConnectionCreateParams = {
+  name: string;
+  preset: ConnectionPreset;
+  baseUrl?: string;
+  auth?: ConnectionAuth;
+  defaultModel?: string;
+  contextWindow?: number;
+};
+export type ConnectionUpdateParams = {
+  id: string;
+  name?: string;
+  baseUrl?: string;
+  auth?: ConnectionAuth;
+  defaultModel?: string | null;
+  contextWindow?: number;
+  prices?: Record<string, { in: number; out: number }>;
+};
+export type ConnectionTestParams = { id: string; model?: string };
+
+/** Elemento de `agents.relay_order`: alias de Claude o `conn:<uuid>/<modelo>`. */
+export type RelayTarget = 'opus' | 'sonnet' | 'haiku' | `conn:${string}/${string}`;
