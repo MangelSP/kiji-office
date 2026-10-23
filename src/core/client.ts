@@ -37,7 +37,14 @@ export function createCoreClient(timeoutMs = DEFAULT_TIMEOUT_MS) {
     }
   }
 
+  let debugSeen = 0;
   function dispatch(event: CoreEvent) {
+    // Solo desarrollo: los primeros eventos al log de Rust para diagnosticar.
+    if (import.meta.env.DEV && debugSeen < 40) {
+      debugSeen++;
+      const handlersCount = (handlers.get(event.name)?.size ?? 0) + (handlers.get("*")?.size ?? 0);
+      (globalThis as { __kijiLog?: (m: string) => void }).__kijiLog?.(`evento ${event.name} (handlers ${handlersCount})`);
+    }
     // Copia: un handler puede darse de baja mientras se despacha.
     for (const key of [event.name, "*"]) {
       for (const h of [...(handlers.get(key) ?? [])]) {

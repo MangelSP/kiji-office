@@ -1,7 +1,7 @@
-// Caja de pedido dentro de la oficina, superpuesta abajo en la escena (estilo chat de videojuego).
-// Chips con los robots trabajadores para elegir destinatario (sincronizados con el robot seleccionado),
-// campo que crece de 1 a 5 líneas, Enter envía, Shift+Enter salta de línea y borrador por robot.
-import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+// Caja de pedido del agente elegido, al pie de su chat en el panel derecho (estilo del mock Chat): campo que crece
+// de 1 a 5 líneas, Enter envía, Shift+Enter salta de línea, botón Archivos y borrador por robot. Con el jefe elegido
+// el pedido es un «Objetivo para el jefe» (lo planifica y lo reparte); con cualquier otro, una tarea para ese robot.
+import { useCallback, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type Ref } from "react";
 import { parseFiles, parseRequest } from "../screens/Office/request";
 import { useStore } from "../store";
 import { useProjectId, useScoped } from "../store/scoped";
@@ -21,12 +21,13 @@ export function isBusy(agent: Pick<Agent, "id" | "status">, tasks: readonly Pick
 }
 
 export type OfficeComposerProps = {
-  selectedId: string | null;
-  onSelect: (id: string | null) => void;
+  /** Robot al que va el pedido (el elegido en la oficina o en el panel). */
+  agent: Agent;
+  /** Para enfocar el campo desde fuera (clic en un robot de la escena). */
+  inputRef?: Ref<HTMLTextAreaElement>;
 };
 
-export default function OfficeComposer({ selectedId, onSelect }: OfficeComposerProps) {
-  const agents = useScoped((s) => s.agents);
+export default function OfficeComposer({ agent, inputRef }: OfficeComposerProps) {
   const tasks = useScoped((s) => s.tasks);
   const drafts = useScoped((s) => s.drafts);
   const setDraft = useScoped((s) => s.setDraft);
@@ -37,24 +38,29 @@ export default function OfficeComposer({ selectedId, onSelect }: OfficeComposerP
   const projectId = useProjectId();
   const createObjective = useStore((s) => s.createObjective);
   const halted = useStore((s) => s.halted);
-  const [mode, setMode] = useState<"robot" | "objective">("robot");
-  const objective = mode === "objective";
+  const objective = agent.is_boss === true || agent.is_boss === 1;
   const [sending, setSending] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
-  const area = useRef<HTMLTextAreaElement>(null);
+  const area = useRef<HTMLTextAreaElement | null>(null);
   const uid = useId();
+  const setArea = useCallback(
+    (el: HTMLTextAreaElement | null) => {
+      area.current = el;
+      if (typeof inputRef === "function") inputRef(el);
+      else if (inputRef) (inputRef as { current: HTMLTextAreaElement | null }).current = el;
+    },
+    [inputRef],
+  );
 
-  // El jefe planea y revisa: los pedidos van a los demás robots (el primero, por defecto).
-  const workers = agents.filter((a) => !a.is_boss);
-  const target = workers.find((a) => String(a.id) === selectedId) ?? workers[0];
-  const targetId = target ? String(target.id) : "";
-  const busy = target ? isBusy(target, tasks) : false;
+  const target = agent;
+  const targetId = String(agent.id);
+  const busy = isBusy(agent, tasks);
 
   // El objetivo es para el jefe y tiene su propio borrador.
   const draftKey = objective ? "objective" : targetId;
   const draft = drafts[draftKey] ?? { request: "", files: "" };
   const { title, description } = parseRequest(draft.request);
-  const canSend = (objective || !!target) && !sending && !halted && title !== "";
+  const canSend = !sending && !halted && title !== "";
 
   // El campo crece con el texto hasta MAX_LINES líneas; después se desplaza.
   useLayoutEffect(() => {
@@ -81,10 +87,6 @@ export default function OfficeComposer({ selectedId, onSelect }: OfficeComposerP
 
   const send = async () => {
     if (objective) return sendObjective();
-    if (!target) {
-      setNotice("Crea un robot con «+ Robot» para poder enviarle el pedido.");
-      return;
-    }
     if (!canSend) return;
     setSending(true);
     try {
@@ -110,58 +112,20 @@ export default function OfficeComposer({ selectedId, onSelect }: OfficeComposerP
 
   const placeholder = objective
     ? "Cuéntale al jefe qué quieres conseguir…"
-    : !target
-    ? "Crea un robot para poder pedirle cosas"
     : busy
       ? `${target.name} está trabajando; tu pedido quedará en cola`
-      : `Pídele algo a ${target.name}…`;
+      : `Escríbele a ${target.name}…`;
 
   return (
     <section className="composer" aria-label="Caja de pedido">
-      <div className="composer-chips">
-        <div className="composer-mode" role="group" aria-label="Tipo de pedido">
-          {(
-            [
-              ["robot", "Pedido a un robot"],
-              ["objective", "Objetivo para el jefe"],
-            ] as const
-          ).map(([m, label]) => (
-            <button key={m} type="button" className={`composer-chip${mode === m ? " is-on" : ""}`} aria-pressed={mode === m} onClick={() => setMode(m)}>
-              {label}
-            </button>
-          ))}
-        </div>
-        {!objective && (
-          <div className="composer-for" role="group" aria-label="Para quién es el pedido">
-            <span className="composer-to">Para:</span>
-            {workers.length === 0 && <span className="composer-empty">aún no hay robots trabajadores</span>}
-            {workers.map((a) => {
-              const on = String(a.id) === targetId;
-              return (
-                <button
-                  key={String(a.id)}
-                  type="button"
-                  className={`composer-chip${on ? " is-on" : ""}${isBusy(a, tasks) ? " is-busy" : ""}`}
-                  aria-pressed={on}
-                  onClick={() => onSelect(String(a.id))}
-                >
-                  {a.name}
-                </button>
-              );
-            })}
-          </div>
-        )}
-        <span className="composer-hint">Enter envía · Shift+Enter salto de línea</span>
-      </div>
-
+      {objective && <p className="composer-mode">Objetivo para el jefe</p>}
       <div className="composer-row">
         <textarea
-          ref={area}
+          ref={setArea}
           className="composer-input"
           rows={1}
           aria-label="Tu pedido"
           value={draft.request}
-          disabled={!objective && !target}
           placeholder={placeholder}
           onChange={(e) => setDraft(draftKey, { ...draft, request: e.target.value })}
           onKeyDown={onKeyDown}
@@ -173,7 +137,6 @@ export default function OfficeComposer({ selectedId, onSelect }: OfficeComposerP
           aria-controls={`${uid}-files`}
           onClick={() => setShowFiles((v) => !v)}
           hidden={objective}
-          disabled={!target}
         >
           Archivos
         </button>
@@ -186,6 +149,7 @@ export default function OfficeComposer({ selectedId, onSelect }: OfficeComposerP
           {sending ? "Enviando…" : objective ? "Enviar objetivo" : busy ? "A la cola" : "Enviar"}
         </button>
       </div>
+      <span className="composer-hint">Enter envía · Shift+Enter salto de línea</span>
 
       {showFiles && !objective && (
         <div className="composer-files" id={`${uid}-files`}>

@@ -23,6 +23,7 @@ const AGENTS = [
   { id: "a2", name: "Clau", status: "idle" },
   { id: "a3", name: "Nico", status: "idle" },
 ];
+const [BOSS, CLAU, NICO] = AGENTS;
 
 beforeEach(() => {
   mocks.request.mockReset();
@@ -39,24 +40,15 @@ const type = (text: string) => fireEvent.change(box(), { target: { value: text }
 const calls = (method: string) => mocks.request.mock.calls.filter((c) => c[0] === method);
 
 describe("OfficeComposer", () => {
-  it("solo ofrece chips de los robots trabajadores y elige el primero por defecto", () => {
-    render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
-    expect(screen.queryByRole("button", { name: "Jefe" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Clau" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Nico" }).getAttribute("aria-pressed")).toBe("false");
-    expect(box().placeholder).toBe("Pídele algo a Clau…");
-  });
-
-  it("sigue al robot seleccionado en la escena y el clic en un chip avisa", () => {
-    const onSelect = vi.fn();
-    render(<OfficeComposer selectedId="a3" onSelect={onSelect} />);
-    expect(screen.getByRole("button", { name: "Nico" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Clau" }));
-    expect(onSelect).toHaveBeenCalledWith("a2");
+  it("escribe al robot que se le pasa y lo dice en el placeholder", () => {
+    render(<OfficeComposer agent={CLAU} />);
+    expect(box().placeholder).toBe("Escríbele a Clau…");
+    expect(screen.queryByRole("button", { name: "Pedido a un robot" })).toBeNull();
+    expect(screen.queryByText("Objetivo para el jefe")).toBeNull();
   });
 
   it("Enter crea la tarea para el destinatario y la empieza", async () => {
-    render(<OfficeComposer selectedId="a3" onSelect={vi.fn()} />);
+    render(<OfficeComposer agent={NICO} />);
     type("Revisa el login\nsin tocar nada");
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(calls("task.start")).toHaveLength(1));
@@ -73,7 +65,7 @@ describe("OfficeComposer", () => {
 
   it("con la parada global activa Enviar está desactivado y Enter no crea nada", () => {
     useStore.setState({ halted: true });
-    render(<OfficeComposer selectedId="a3" onSelect={vi.fn()} />);
+    render(<OfficeComposer agent={NICO} />);
     type("Revisa el login");
     expect((screen.getByRole("button", { name: "Enviar" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -82,7 +74,7 @@ describe("OfficeComposer", () => {
   });
 
   it("Shift+Enter no envía", () => {
-    render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
+    render(<OfficeComposer agent={CLAU} />);
     type("hola");
     fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
     expect(mocks.request).not.toHaveBeenCalled();
@@ -90,7 +82,7 @@ describe("OfficeComposer", () => {
   });
 
   it("un pedido vacío no se envía", () => {
-    render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
+    render(<OfficeComposer agent={CLAU} />);
     type("   ");
     fireEvent.keyDown(box(), { key: "Enter" });
     expect(mocks.request).not.toHaveBeenCalled();
@@ -98,7 +90,7 @@ describe("OfficeComposer", () => {
 
   it("con el robot ocupado crea la tarea sin empezarla y avisa", async () => {
     seed({ tasks: [{ id: "t0", title: "otra", status: "running", agent_id: "a2" }] });
-    render(<OfficeComposer selectedId="a2" onSelect={vi.fn()} />);
+    render(<OfficeComposer agent={CLAU} />);
     expect(box().placeholder).toBe("Clau está trabajando; tu pedido quedará en cola");
     type("Siguiente cosa");
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -108,7 +100,7 @@ describe("OfficeComposer", () => {
   });
 
   it("el botón Archivos despliega el campo y los archivos viajan en la tarea", async () => {
-    render(<OfficeComposer selectedId="a2" onSelect={vi.fn()} />);
+    render(<OfficeComposer agent={CLAU} />);
     expect(screen.queryByLabelText(/Archivos que puede modificar/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Archivos" }));
     fireEvent.change(screen.getByLabelText(/Archivos que puede modificar/), { target: { value: "src/a.ts, src/b.ts" } });
@@ -119,41 +111,37 @@ describe("OfficeComposer", () => {
   });
 
   it("guarda un borrador por robot", () => {
-    const { rerender } = render(<OfficeComposer selectedId="a2" onSelect={vi.fn()} />);
+    const { rerender } = render(<OfficeComposer agent={CLAU} />);
     type("para Clau");
-    rerender(<OfficeComposer selectedId="a3" onSelect={vi.fn()} />);
+    rerender(<OfficeComposer agent={NICO} />);
     expect(box().value).toBe("");
     type("para Nico");
-    rerender(<OfficeComposer selectedId="a2" onSelect={vi.fn()} />);
+    rerender(<OfficeComposer agent={CLAU} />);
     expect(box().value).toBe("para Clau");
     expect(proj().drafts.a3.request).toBe("para Nico");
   });
 
   it("si la tarea no se pudo crear conserva el borrador", async () => {
     mocks.request.mockRejectedValue(new Error("no hay un proyecto abierto"));
-    render(<OfficeComposer selectedId="a2" onSelect={vi.fn()} />);
+    render(<OfficeComposer agent={CLAU} />);
     type("algo");
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(useStore.getState().notice).toContain("no hay un proyecto abierto"));
     expect(box().value).toBe("algo");
   });
 
-  it("sin robots trabajadores el campo está desactivado", () => {
-    seed({ agents: [AGENTS[0]] });
-    render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
-    expect(box().disabled).toBe(true);
+  it("inputRef da acceso al campo para enfocarlo desde fuera", () => {
+    const ref = { current: null as HTMLTextAreaElement | null };
+    render(<OfficeComposer agent={CLAU} inputRef={ref} />);
+    expect(ref.current).toBe(box());
   });
 });
 
 describe("Objetivo para el jefe", () => {
-  it("el conmutador cambia a objetivo y Enter llama a objective.create sin crear tarea", async () => {
-    render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
-    const robot = screen.getByRole("button", { name: "Pedido a un robot" });
-    const obj = screen.getByRole("button", { name: "Objetivo para el jefe" });
-    expect(robot.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(obj);
-    expect(obj.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.queryByRole("group", { name: "Para quién es el pedido" })).toBeNull();
+  it("con el jefe el pedido es un objetivo: Enter llama a objective.create sin crear tarea", async () => {
+    render(<OfficeComposer agent={BOSS} />);
+    expect(screen.getByText("Objetivo para el jefe")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Archivos" })).toBeNull();
     expect(box().placeholder).toMatch(/qué quieres conseguir/);
     type("Renovar el flujo de pago");
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -164,19 +152,18 @@ describe("Objetivo para el jefe", () => {
   });
 
   it("el borrador del objetivo es independiente del de los robots", () => {
-    render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
+    const { rerender } = render(<OfficeComposer agent={CLAU} />);
     type("para Clau");
-    fireEvent.click(screen.getByRole("button", { name: "Objetivo para el jefe" }));
+    rerender(<OfficeComposer agent={BOSS} />);
     expect(box().value).toBe("");
     type("meta");
-    fireEvent.click(screen.getByRole("button", { name: "Pedido a un robot" }));
+    rerender(<OfficeComposer agent={CLAU} />);
     expect(box().value).toBe("para Clau");
   });
 
   it("si el core aún no tiene objective.create deja el borrador y avisa", async () => {
     mocks.request.mockRejectedValue(Object.assign(new Error("x"), { code: "unknown_method" }));
-    render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Objetivo para el jefe" }));
+    render(<OfficeComposer agent={BOSS} />);
     type("meta");
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(useStore.getState().notice).toContain("objective.create"));

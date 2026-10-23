@@ -13,13 +13,18 @@ vi.mock("../../core/client", () => ({
     }
   },
 }));
-// PixiJS necesita WebGL: en jsdom la vista previa se sustituye por un marcador con la paleta.
-vi.mock("./RobotPreview", () => ({ default: ({ palette }: { palette: string }) => <div data-testid="preview" data-palette={palette} /> }));
+// El canvas 2D de la vista previa no existe en jsdom: se se sustituye por un marcador con la paleta.
+vi.mock("./RobotPreview", () => ({
+  default: ({ palette, accessories }: { palette: string; accessories?: string[] }) => (
+    <div data-testid="preview" data-palette={palette} data-accessories={(accessories ?? []).join(",")} />
+  ),
+}));
 
 import { useStore } from "../../store";
 import { proj, resetStore, seed } from "../../store/testing";
 import CreateAgent from "./CreateAgent";
 import { validateName } from "./options";
+import { loadAccessories } from "../../components/accessories";
 
 const BOSS = { id: "a1", name: "Jefe", provider: "claude", color: "terracota", is_boss: 1 };
 const CLAU = { id: "a2", name: "Clau", provider: "claude", color: "terracota" };
@@ -30,7 +35,10 @@ beforeEach(() => {
   useStore.setState({ connections: [] });
   seed({ agents: [BOSS, CLAU] });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 const nameInput = () => screen.getByLabelText("Nombre") as HTMLInputElement;
 const created = () => mocks.request.mock.calls.filter((c) => c[0] === "agent.create");
@@ -98,6 +106,32 @@ describe("CreateAgent", () => {
     expect(screen.getByRole("button", { name: "Color Verde" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Color Terracota" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByTestId("preview").getAttribute("data-palette")).toBe("verde");
+  });
+
+  it("los accesorios (gorra, audífonos, lentes, corbata) se alternan y salen en la vista previa", () => {
+    render(<CreateAgent onClose={() => {}} />);
+    const names = screen.getAllByRole("button").map((b) => b.textContent).filter((t) => ["Gorra", "Audífonos", "Lentes", "Corbata"].includes(t ?? ""));
+    expect(names).toEqual(["Gorra", "Audífonos", "Lentes", "Corbata"]);
+    fireEvent.click(screen.getByRole("button", { name: "Gorra" }));
+    fireEvent.click(screen.getByRole("button", { name: "Lentes" }));
+    expect(screen.getByRole("button", { name: "Gorra" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("preview").getAttribute("data-accessories")).toBe("gorra,lentes");
+    fireEvent.click(screen.getByRole("button", { name: "Gorra" }));
+    expect(screen.getByTestId("preview").getAttribute("data-accessories")).toBe("lentes");
+  });
+
+  it("al crear guarda los accesorios por agentId (el core aún no los soporta) y no los manda a agent.create", async () => {
+    const nuevo = { id: "a3", name: "Pixel", provider: "claude", model: "sonnet", role: "programador", color: "terracota" };
+    mocks.request.mockImplementation(async (m: string) => (m === "agent.create" ? nuevo : m === "agent.list" ? [BOSS, CLAU, nuevo] : null));
+    const onClose = vi.fn();
+    render(<CreateAgent onClose={onClose} />);
+    fireEvent.change(nameInput(), { target: { value: "Pixel" } });
+    fireEvent.click(screen.getByRole("button", { name: "Audífonos" }));
+    fireEvent.click(screen.getByRole("button", { name: "Corbata" }));
+    submit();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(loadAccessories("a3")).toEqual(["audifonos", "corbata"]);
+    expect(created()[0][1]).not.toHaveProperty("accessories");
   });
 
   it("agent.create recibe {name, provider:'claude', model, role, color}, refresca la lista y cierra", async () => {

@@ -1,9 +1,8 @@
-// Vista de un workspace (proyecto abierto): la oficina (escena + caja de pedido) y, a su derecha, las tarjetas de
-// robots con su detalle; debajo, las IAs en vivo, las aprobaciones y el registro. Todo sale de la partición del proyecto.
+// Vista de un workspace (proyecto abierto): la oficina (solo la escena) y, a su derecha, el panel de robots con su chat,
+// la caja de pedido y el detalle; debajo, las IAs en vivo, las aprobaciones y el registro. Todo sale de la partición del proyecto.
 import { useEffect, useState } from "react";
 import ApprovalCard from "../../components/ApprovalCard";
 import LogPanel from "../../components/LogPanel";
-import OfficeComposer from "../../components/OfficeComposer";
 import ProvidersPanel from "../../components/ProvidersPanel";
 import BoardView from "../Board/BoardView";
 import AgentTabs from "../Agents/AgentTabs";
@@ -70,6 +69,12 @@ function Office({ projectId }: { projectId: string }) {
   }, [projectId, refreshManager, refreshObjectives, refreshIntegrations]);
   const narrow = useNarrow();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Sube con cada clic en un robot de la escena: el panel abre su chat y enfoca la caja de pedido.
+  const [focusSignal, setFocusSignal] = useState(0);
+  const pickInScene = (id: string | null) => {
+    setSelectedId(id);
+    if (id) setFocusSignal((n) => n + 1);
+  };
   const [showCreateAgent, setShowCreateAgent] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [showBoard, setShowBoard] = useState(false);
@@ -142,19 +147,18 @@ function Office({ projectId }: { projectId: string }) {
       <div hidden={showBoard}>
       {narrow && approvals}
 
-      {/* Arriba: la oficina (con su caja de pedido) y, a su derecha, las tarjetas de robots con el detalle del elegido. */}
+      {/* Arriba: la oficina y, a su derecha, el panel del robot elegido (chat con su caja de pedido, tareas, métricas...). */}
       <div className="office-top">
         <div className="office-left">
           <section className="panel scene-panel" aria-label="Oficina">
             <div className="scene-stage">
-              <OfficeScene projectId={projectId} selectedId={selectedId} onSelect={setSelectedId} {...sceneBoard} />
-              <OfficeComposer selectedId={selectedId} onSelect={setSelectedId} />
+              <OfficeScene projectId={projectId} selectedId={selectedId} onSelect={pickInScene} {...sceneBoard} />
             </div>
           </section>
         </div>
         <aside className="office-agent" aria-label="Panel del robot">
           {unavailableAgentList && <p className="muted">Aún no disponible: el core no implementa agent.list.</p>}
-          <AgentTabs selectedId={selectedId} onSelect={setSelectedId} />
+          <AgentTabs selectedId={selectedId} onSelect={setSelectedId} focusSignal={focusSignal} />
         </aside>
       </div>
 

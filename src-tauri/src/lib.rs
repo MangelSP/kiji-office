@@ -34,6 +34,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            ui_log,
             keyring::secret_set,
             keyring::secret_get,
             keyring::secret_delete,
@@ -64,4 +65,12 @@ pub fn run() {
             _ => {}
         }
     });
+}
+
+/// Solo desarrollo: la UI vuelca aquí sus errores y eventos para verlos en el log de `tauri dev`.
+#[tauri::command]
+fn ui_log(msg: String) {
+    if cfg!(debug_assertions) {
+        eprintln!("[ui] {}", msg.chars().take(600).collect::<String>());
+    }
 }

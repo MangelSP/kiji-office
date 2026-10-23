@@ -412,3 +412,197 @@
 .ag-log time {
   font: 12px ui-monospace, Menlo, monospace;
 }
+
+/* Chat con el robot elegido (mock Chat): burbujas #262a3d con un cuadradito del color de quien habla. */
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(34vh, 320px);
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.chat-msg {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.chat-sq {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 6px;
+}
+.chat-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: #262a3d;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.chat-msg.is-mine .chat-bubble {
+  background: #2e2a1f;
+}
+.chat-who {
+  font-family: Silkscreen, ui-monospace, Menlo, monospace;
+  font-weight: 400;
+  font-size: 12px;
+  color: #f0a184;
+}
+.chat-text {
+  white-space: pre-wrap;
+}
+.chat-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.chat-steps-btn {
+  padding: 0 8px;
+  min-height: 24px;
+  font: inherit;
+  font-size: 12px;
+  color: #f1ece2;
+  background: #2d3148;
+  border: 1px solid #4a4f6d;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.chat-steps-btn:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 1px;
+}
+.chat-steps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+.chat-empty {
+  padding: 8px;
+}
+
+/* Cabecera grande del robot elegido y resumen breve de "Todos". */
+.ag-head-avatar {
+  padding: 6px 8px 0;
+  background: #b98b5e;
+  border: 2px solid #1d1b26;
+  border-radius: 4px;
+}
+.ag-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px;
+}
+.ag-summary p {
+  margin: 0;
+}
+
+/* Chat con el robot elegido (mock Chat): burbujas #262a3d con un cuadradito del color de quien habla. */
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(34vh, 320px);
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.chat-msg {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.chat-sq {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 6px;
+}
+.chat-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: #262a3d;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.chat-msg.is-mine .chat-bubble {
+  background: #2e2a1f;
+}
+.chat-who {
+  font-family: Silkscreen, ui-monospace, Menlo, monospace;
+  font-weight: 400;
+  font-size: 12px;
+  color: #f0a184;
+}
+.chat-text {
+  white-space: pre-wrap;
+}
+.chat-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.chat-steps-btn {
+  padding: 0 8px;
+  min-height: 24px;
+  font: inherit;
+  font-size: 12px;
+  color: #f1ece2;
+  background: #2d3148;
+  border: 1px solid #4a4f6d;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.chat-steps-btn:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 1px;
+}
+.chat-steps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+.chat-empty {
+  padding: 8px;
+}
+
+/* Cabecera grande del robot elegido y resumen breve de "Todos". */
+.ag-head-avatar {
+  padding: 6px 8px 0;
+  background: #b98b5e;
+  border: 2px solid #1d1b26;
+  border-radius: 4px;
+}
+.ag-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px;
+}
+.ag-summary p {
+  margin: 0;
+}

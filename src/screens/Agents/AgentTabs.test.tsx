@@ -30,6 +30,7 @@ const TASK = {
   agent_id: "a2", files: ["src/login.ts"], result: "## Hecho\n\nSe arregló <script>alert(1)</script> el **botón**.\n\n| a | b |\n|---|---|\n| 1 | 2 |",
 };
 
+const openTab = (name: string) => fireEvent.click(screen.getByRole("tab", { name }));
 const calls = (method: string) => mocks.request.mock.calls.filter((c) => c[0] === method);
 
 beforeEach(() => {
@@ -57,17 +58,40 @@ describe("AgentTabs", () => {
     expect(screen.getByRole("tab", { name: /^Jefe/ }).getAttribute("aria-selected")).toBe("false");
     fireEvent.click(screen.getByRole("tab", { name: /^Clau/ }));
     expect(onSelect).toHaveBeenCalledWith("a2");
-    fireEvent.click(screen.getByRole("button", { name: "Abrir Jefe" }));
-    expect(onSelect).toHaveBeenCalledWith("a1");
+    // Sin lista duplicada: cada robot sale una sola vez, como pestaña.
+    expect(screen.queryByRole("button", { name: /^Abrir / })).toBeNull();
+    expect(screen.getAllByText("Clau")).toHaveLength(1);
   });
 
-  it("clic en la tarjeta seleccionada o en Todos vuelve a Todos; las flechas cambian de tarjeta", () => {
+  it("con un robot elegido, el resto queda como fila de avatares y Todos vuelve al resumen", () => {
+    const onSelect = vi.fn();
+    const { container } = render(<AgentTabs selectedId="a2" onSelect={onSelect} />);
+    expect(container.querySelector(".strip-card")).toBeNull();
+    expect(container.querySelectorAll(".strip-chip canvas")).toHaveLength(2);
+    expect(screen.getByRole("tab", { name: /^Clau/ }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("tab", { name: /^Jefe/ }));
+    expect(onSelect).toHaveBeenLastCalledWith("a1");
+    fireEvent.click(screen.getByRole("tab", { name: "Todos" }));
+    expect(onSelect).toHaveBeenLastCalledWith(null);
+    // La cabecera grande es la del robot elegido.
+    expect(screen.getByRole("heading", { name: "Clau" })).toBeTruthy();
+  });
+
+  it("en Todos las tarjetas se pliegan a avatares y se vuelven a desplegar", () => {
+    const { container } = render(<AgentTabs selectedId={null} onSelect={vi.fn()} />);
+    expect(container.querySelectorAll(".strip-card")).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: "Plegar a avatares" }));
+    expect(container.querySelector(".strip-card")).toBeNull();
+    expect(container.querySelectorAll(".strip-chip")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar tarjetas" }));
+    expect(container.querySelectorAll(".strip-card")).toHaveLength(3);
+  });
+
+  it("clic en Todos vuelve a Todos; las flechas cambian de robot", () => {
     const onSelect = vi.fn();
     render(<AgentTabs selectedId="a2" onSelect={onSelect} />);
     const clau = screen.getByRole("tab", { name: /^Clau/ });
     expect(clau.getAttribute("aria-selected")).toBe("true");
-    fireEvent.click(clau);
-    expect(onSelect).toHaveBeenLastCalledWith(null);
     fireEvent.click(screen.getByRole("tab", { name: /^Todos/ }));
     expect(onSelect).toHaveBeenLastCalledWith(null);
     clau.focus();
@@ -75,20 +99,23 @@ describe("AgentTabs", () => {
     expect(onSelect).toHaveBeenLastCalledWith("a1");
   });
 
-  it("Todos resume modelo, estado, tareas y coste de cada agente", () => {
+  it("Todos solo da un resumen breve: tareas abiertas, las que esperan y el gasto", () => {
     seed({ metricsByAgent: { a2: { agentId: "a2", model: "haiku", runs: 1, costUsd: 0.25, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, lastContextTokens: 0, lastContextWindow: 0, recent: [] } } } as never);
     render(<AgentTabs selectedId={null} onSelect={vi.fn()} />);
-    const card = screen.getByRole("button", { name: "Abrir Clau" });
-    expect(card.textContent).toContain("haiku");
-    expect(card.textContent).toContain("escribiendo");
-    expect(card.textContent).toContain("1 tarea abierta de 1");
-    expect(card.textContent).toContain("$0,250");
+    const panel = screen.getByRole("tabpanel");
+    expect(panel.textContent).toContain("1 tarea abierta de 1");
+    expect(panel.textContent).toContain("1 espera tu respuesta");
+    expect(panel.textContent).toContain("$0,250 gastados");
+    // El modelo y el estado de cada robot solo salen en su tarjeta, no repetidos aquí.
+    expect(panel.textContent).not.toContain("Clau");
   });
 
   it("cambia de subpestaña y pide las métricas del agente", async () => {
     render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
     await waitFor(() => expect(calls("agent.metrics").map((c) => c[1])).toContainEqual({ agentId: "a2", projectId: "p1" }));
     expect(screen.getByRole("tablist", { name: "Secciones de Clau" }).querySelector(".ag-subtab")).not.toBeNull();
+    expect(screen.getByRole("tab", { name: "Chat" }).getAttribute("aria-selected")).toBe("true");
+    openTab("Tareas");
     expect(screen.getByRole("tab", { name: "Tareas" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Arreglar el login")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Métricas" }));
@@ -123,6 +150,7 @@ describe("AgentTabs", () => {
   it("una tarea en cola muestra «En cola #n» y, si la retiene el tope de gasto, lo dice", () => {
     seed({ tasks: [{ ...TASK, status: "assigned", queued: true, queue_position: 2 }] } as never);
     const { rerender } = render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
+    openTab("Tareas");
     expect(screen.getByText("En cola #2")).toBeTruthy();
     expect(screen.queryByText("bloqueada por tope de gasto")).toBeNull();
     seed({ queue: { t1: { projectId: "p1", taskId: "t1", queued: true, position: 1, blockedBy: "budget" } } });
@@ -158,6 +186,7 @@ describe("AgentTabs", () => {
       throw Object.assign(new Error("no"), { code: "unknown_method" });
     });
     render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
+    openTab("Tareas");
     fireEvent.change(screen.getByLabelText("Cambiar IA de Arreglar el login"), { target: { value: "model:opus" } });
     fireEvent.click(screen.getByRole("button", { name: "Cambiar" }));
     await waitFor(() => expect(calls("task.switch")[0]?.[1]).toEqual({ taskId: "t1", model: "opus", projectId: "p1" }));
@@ -172,6 +201,7 @@ describe("AgentTabs", () => {
       throw Object.assign(new Error("no"), { code: "unknown_method" });
     });
     const { container } = render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
+    openTab("Tareas");
     const details = container.querySelector("details.ag-steps") as HTMLDetailsElement;
     details.open = true;
     fireEvent(details, new Event("toggle"));
@@ -250,19 +280,60 @@ describe("AgentTabs", () => {
   it("el jefe tiene Objetivos, Gerente, Diario y Memoria; un robot trabajador no", () => {
     const { unmount } = render(<AgentTabs selectedId="a1" onSelect={vi.fn()} />);
     const names = within(screen.getByRole("tablist", { name: "Secciones de Jefe" })).getAllByRole("tab").map((t) => t.textContent);
-    expect(names).toEqual(["Tareas", "Objetivos", "Gerente", "Diario", "Memoria", "Métricas", "Perfil", "Registro"]);
+    expect(names).toEqual(["Chat", "Tareas", "Objetivos", "Gerente", "Diario", "Memoria", "Métricas", "Perfil", "Registro"]);
     fireEvent.click(screen.getByRole("tab", { name: "Gerente" }));
     expect(screen.getByRole("switch", { name: "Gerente autónomo" })).toBeTruthy();
     unmount();
     render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
     const worker = within(screen.getByRole("tablist", { name: "Secciones de Clau" })).getAllByRole("tab").map((t) => t.textContent);
-    expect(worker).toEqual(["Tareas", "Métricas", "Perfil", "Registro"]);
+    expect(worker).toEqual(["Chat", "Tareas", "Métricas", "Perfil", "Registro"]);
   });
 
   it("la lista del jefe incluye las tareas de todos los robots, con botones de revisión", () => {
     render(<AgentTabs selectedId="a1" onSelect={vi.fn()} />);
+    openTab("Tareas");
     const card = screen.getByRole("listitem", { name: "Tarea Arreglar el login" });
     expect(card.textContent).toContain("Clau");
     expect(within(card).getByRole("button", { name: "Aprobar Arreglar el login" })).toBeTruthy();
+  });
+
+  it("Chat: tu pedido y la respuesta de Clau como mensajes, con estado, pasos y la caja abajo", async () => {
+    mocks.request.mockImplementation(async (m: string) => {
+      if (m === "task.steps") return [{ name: "Read", target: "src/a.ts", ok: true, startedAt: 1000, endedAt: 2200 }];
+      throw Object.assign(new Error("no"), { code: "unknown_method" });
+    });
+    render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
+    const list = screen.getByRole("list", { name: "Conversación con Clau" });
+    expect(within(list).getByText("TÚ")).toBeTruthy();
+    expect(within(list).getByText(/Revisa el formulario/)).toBeTruthy();
+    expect(within(list).getByText("CLAU")).toBeTruthy();
+    expect(within(list).getByText("En revisión")).toBeTruthy();
+    expect(within(list).getByRole("heading", { name: "Hecho" })).toBeTruthy();
+    fireEvent.click(within(list).getByRole("button", { name: /Pasos/ }));
+    await waitFor(() => expect(within(list).getByText("src/a.ts")).toBeTruthy());
+    expect(screen.getByLabelText("Tu pedido")).toBeTruthy();
+    // Enviar desde el chat crea la tarea para Clau.
+    mocks.request.mockImplementation(async (m: string) => (m === "task.create" ? { id: "t9", title: "x", status: "assigned" } : null));
+    fireEvent.change(screen.getByLabelText("Tu pedido"), { target: { value: "Hazlo otra vez" } });
+    fireEvent.keyDown(screen.getByLabelText("Tu pedido"), { key: "Enter" });
+    await waitFor(() => expect(calls("task.create")[0]?.[1]).toMatchObject({ title: "Hazlo otra vez", agent_id: "a2" }));
+  });
+
+  it("Chat del jefe: sus objetivos como mensajes y la caja de «Objetivo para el jefe»", () => {
+    useStore.setState({ objectives: { p1: [{ id: "o1", projectId: "p1", text: "Renovar el pago", status: "active", createdAt: 1, tasksByStatus: { integrated: 1, todo: 1 } }] } });
+    render(<AgentTabs selectedId="a1" onSelect={vi.fn()} />);
+    const list = screen.getByRole("list", { name: "Conversación con Jefe" });
+    expect(within(list).getByText("Renovar el pago")).toBeTruthy();
+    expect(within(list).getByText(/1 de 2 tareas integradas/)).toBeTruthy();
+    expect(screen.getByText("Objetivo para el jefe")).toBeTruthy();
+  });
+
+  it("al subir focusSignal (clic en un robot de la escena) abre el Chat y enfoca la caja", () => {
+    const { rerender } = render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
+    openTab("Métricas");
+    expect(screen.queryByLabelText("Tu pedido")).toBeNull();
+    rerender(<AgentTabs selectedId="a2" onSelect={vi.fn()} focusSignal={1} />);
+    expect(screen.getByRole("tab", { name: "Chat" }).getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(screen.getByLabelText("Tu pedido"));
   });
 });

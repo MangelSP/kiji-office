@@ -6,6 +6,7 @@ import Led from "../Connections/Led";
 import "../Connections/Connections.css";
 import { toolQualityText } from "../Connections/presets";
 import { useConnectionModels } from "../Connections/useConnectionModels";
+import { ACCESSORIES, saveAccessories } from "../../components/accessories";
 import RobotPreview from "./RobotPreview";
 import { CLAUDE_MODELS, COLORS, NAME_MAX, ROLES, validateName } from "./options";
 import "./CreateAgent.css";
@@ -32,6 +33,7 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
   const [role, setRole] = useState<string>(ROLES[0].id);
   const [name, setName] = useState("");
   const [color, setColor] = useState<string>(COLORS[0].id);
+  const [accessories, setAccessories] = useState<string[]>([]);
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -89,7 +91,7 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
     setBusy(true);
     try {
       const finalName = name.trim();
-      const created = await call<{ warning?: string } | undefined>("agent.create", {
+      const created = await call<{ id?: string | number; warning?: string } | undefined>("agent.create", {
         projectId,
         name: finalName,
         provider,
@@ -98,6 +100,8 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
         color,
         ...(conn ? { connectionId: conn.id } : {}),
       });
+      // El núcleo aún no guarda accesorios (pendiente de núcleo): se recuerdan en localStorage por agentId.
+      if (created?.id !== undefined && accessories.length > 0) saveAccessories(created.id, accessories);
       await refreshAgents(); // el robot aparece en la oficina con su paleta
       if (typeof created?.warning === "string") setNotice(`${finalName}: ${created.warning}`);
       onCreated?.(finalName);
@@ -117,14 +121,87 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
         </h2>
         <div className="ca-body">
           <aside className="ca-side" aria-label="Vista previa">
-            <RobotPreview palette={color} />
+            <RobotPreview palette={color} accessories={accessories} />
             <p className="ca-preview-name">{name.trim() || "Sin nombre"}</p>
             <p className="muted small">
               {roleInfo.label} · {conn ? conn.name : "Claude"} {model}
             </p>
+            <fieldset className="ca-field">
+              <legend>Color</legend>
+              <div className="ca-colors">
+                {COLORS.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className="ca-swatch"
+                    style={{ background: c.hex }}
+                    aria-pressed={color === c.id}
+                    aria-label={`Color ${c.label}`}
+                    title={c.label}
+                    onClick={() => setColor(c.id)}
+                  />
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="ca-field">
+              <legend>Accesorios</legend>
+              <div className="ca-accs">
+                {ACCESSORIES.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    className="ca-acc"
+                    aria-pressed={accessories.includes(a.id)}
+                    onClick={() => setAccessories((cur) => (cur.includes(a.id) ? cur.filter((x) => x !== a.id) : [...cur, a.id]))}
+                  >
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
           </aside>
 
           <form className="ca-form" onSubmit={(e) => void submit(e)} noValidate>
+            <div className="ca-row2">
+            <div className="ca-field">
+                <label htmlFor={`${ids}-name`}>Nombre</label>
+                <input
+                  ref={nameRef}
+                  id={`${ids}-name`}
+                  value={name}
+                  maxLength={NAME_MAX}
+                  autoComplete="off"
+                  onChange={(e) => setName(e.target.value)}
+                  onBlur={() => name !== "" && setTouched(true)}
+                  aria-required="true"
+                  aria-invalid={showNameError}
+                  aria-describedby={showNameError ? nameErrId : undefined}
+                  placeholder="Pixel"
+                />
+                {showNameError && (
+                  <p id={nameErrId} className="ca-error" role="alert">
+                    {nameError}
+                  </p>
+                )}
+              </div>
+  
+            <div className="ca-field">
+                <label htmlFor={`${ids}-role`}>Rol</label>
+                <select id={`${ids}-role`} value={role} onChange={(e) => setRole(e.target.value)} aria-describedby={roleDescId}>
+                  {ROLES.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+                <p id={roleDescId} className="muted small">
+                  {roleInfo.desc}
+                </p>
+              </div>
+  
+            </div>
+
             <fieldset className="ca-field">
               <legend>IA</legend>
               <div className="ca-providers">
@@ -183,60 +260,6 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
                 />
               )}
             </div>
-
-            <div className="ca-field">
-              <label htmlFor={`${ids}-role`}>Rol</label>
-              <select id={`${ids}-role`} value={role} onChange={(e) => setRole(e.target.value)} aria-describedby={roleDescId}>
-                {ROLES.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-              <p id={roleDescId} className="muted small">
-                {roleInfo.desc}
-              </p>
-            </div>
-
-            <div className="ca-field">
-              <label htmlFor={`${ids}-name`}>Nombre</label>
-              <input
-                ref={nameRef}
-                id={`${ids}-name`}
-                value={name}
-                maxLength={NAME_MAX}
-                autoComplete="off"
-                onChange={(e) => setName(e.target.value)}
-                onBlur={() => name !== "" && setTouched(true)}
-                aria-required="true"
-                aria-invalid={showNameError}
-                aria-describedby={showNameError ? nameErrId : undefined}
-                placeholder="Pixel"
-              />
-              {showNameError && (
-                <p id={nameErrId} className="ca-error" role="alert">
-                  {nameError}
-                </p>
-              )}
-            </div>
-
-            <fieldset className="ca-field">
-              <legend>Color</legend>
-              <div className="ca-colors">
-                {COLORS.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className="ca-swatch"
-                    style={{ background: c.hex }}
-                    aria-pressed={color === c.id}
-                    aria-label={`Color ${c.label}`}
-                    title={c.label}
-                    onClick={() => setColor(c.id)}
-                  />
-                ))}
-              </div>
-            </fieldset>
 
             {serverError && (
               <p className="ca-error" role="alert">

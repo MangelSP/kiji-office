@@ -1,13 +1,18 @@
-// Panel de agentes de la columna derecha: tarjetas-pestaña (AgentStrip vertical) y, debajo, el resumen "Todos"
-// o el detalle del agente con Tareas, Métricas, Perfil y Registro. Controlado por `selectedId` (escena y caja de pedido).
-import { useEffect, useId, useState, type KeyboardEvent } from "react";
+// Panel de agentes de la columna derecha: tarjetas compactas (o fila de avatares) con AgentStrip vertical y, debajo, el
+// resumen breve de "Todos" o el robot elegido con Chat, Tareas, Métricas, Perfil y Registro. Controlado por `selectedId`;
+// `focusSignal` sube cuando se elige un robot en la escena: se abre su Chat y se enfoca la caja de pedido.
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Agent } from "../../store/agents";
+import RobotAvatar from "../../components/RobotAvatar";
+import { loadAccessories } from "../../components/accessories";
+import { sheetKey } from "../../scenes/officeLayout";
+import AgentChat from "./AgentChat";
 import { useModelLabel } from "../Connections/useModelLabel";
 import AgentLog from "./AgentLog";
 import AgentMetricsView, { ContextBar, useAgentMetrics } from "./AgentMetricsView";
 import AgentProfile from "./AgentProfile";
 import AgentTasks from "./AgentTasks";
-import { fmtUsd, isBoss, paletteHex, ROLE_LABEL, statusInfo } from "./format";
+import { fmtUsd, isBoss, ROLE_LABEL, statusInfo } from "./format";
 import { useAgentsStore } from "./useAgentsStore";
 import ManagerDiary from "../Manager/ManagerDiary";
 import ManagerSettings from "../Manager/ManagerSettings";
@@ -18,6 +23,7 @@ import AgentStrip from "../../components/AgentStrip"; // también aporta .ag-chi
 import "./AgentTabs.css";
 
 const SUBTABS = [
+  { id: "chat", label: "Chat" },
   { id: "tasks", label: "Tareas" },
   { id: "metrics", label: "Métricas" },
   { id: "profile", label: "Perfil" },
@@ -25,6 +31,7 @@ const SUBTABS = [
 ] as const;
 /** Subpestañas propias del jefe (0.2d): objetivos y Gerente autónomo con su diario y su memoria. */
 const BOSS_SUBTABS = [
+  { id: "chat", label: "Chat" },
   { id: "tasks", label: "Tareas" },
   { id: "objectives", label: "Objetivos" },
   { id: "manager", label: "Gerente" },
@@ -36,7 +43,7 @@ const BOSS_SUBTABS = [
 ] as const;
 type SubTab = (typeof BOSS_SUBTABS)[number]["id"];
 
-type Props = { selectedId: string | null; onSelect: (id: string | null) => void };
+type Props = { selectedId: string | null; onSelect: (id: string | null) => void; focusSignal?: number };
 
 /** Flechas izquierda/derecha, Inicio y Fin mueven el foco entre pestañas (patrón WAI-ARIA). */
 function arrowNav(e: KeyboardEvent<HTMLElement>) {
@@ -51,11 +58,13 @@ function arrowNav(e: KeyboardEvent<HTMLElement>) {
   tabs[next].click();
 }
 
-export default function AgentTabs({ selectedId, onSelect }: Props) {
+export default function AgentTabs({ selectedId, onSelect, focusSignal = 0 }: Props) {
   const uid = useId();
   const agents = useAgentsStore((s) => s.agents);
   const refreshMetrics = useAgentsStore((s) => s.refreshMetrics);
-  const [sub, setSub] = useState<SubTab>("tasks");
+  const [sub, setSub] = useState<SubTab>("chat");
+  const chatInput = useRef<HTMLTextAreaElement | null>(null);
+  const wantFocus = useRef(false);
 
   const agent = selectedId == null ? undefined : agents.find((a) => String(a.id) === selectedId);
   const agentKey = agent ? String(agent.id) : null;
@@ -67,6 +76,19 @@ export default function AgentTabs({ selectedId, onSelect }: Props) {
     else for (const id of agentIds.split("|").filter(Boolean)) void refreshMetrics(id);
   }, [agentKey, agentIds, refreshMetrics]);
 
+  // Clic en un robot de la escena: su chat y el cursor en la caja de pedido.
+  useEffect(() => {
+    if (focusSignal === 0) return;
+    wantFocus.current = true;
+    setSub("chat");
+  }, [focusSignal]);
+  useEffect(() => {
+    if (wantFocus.current && chatInput.current) {
+      chatInput.current.focus();
+      wantFocus.current = false;
+    }
+  });
+
   const tabId = (k: string) => `${uid}-tab-${k}`;
   const panelId = `${uid}-panel`;
 
@@ -76,60 +98,41 @@ export default function AgentTabs({ selectedId, onSelect }: Props) {
 
       <div role="tabpanel" id={panelId} aria-labelledby={tabId(agent ? String(agent.id) : "all")} className="ag-panel">
         {!agent ? (
-          <Overview agents={agents} onSelect={onSelect} />
+          <Overview agents={agents} />
         ) : (
-          <AgentView agent={agent} sub={sub} onSub={setSub} />
+          <AgentView agent={agent} sub={sub} onSub={setSub} chatInput={chatInput} />
         )}
       </div>
     </section>
   );
 }
 
-function Overview({ agents, onSelect }: { agents: Agent[]; onSelect: (id: string) => void }) {
-  const label = useModelLabel();
+/** "Todos": solo un resumen; cada robot ya está en las tarjetas de arriba. */
+function Overview({ agents }: { agents: Agent[] }) {
   const tasks = useAgentsStore((s) => s.tasks);
   const metrics = useAgentsStore((s) => s.metricsByAgent);
   if (agents.length === 0) return <p className="muted">No hay agentes todavía.</p>;
+  const open = tasks.filter((t) => !["integrated", "approved", "failed"].includes(t.status)).length;
+  const waiting = tasks.filter((t) => ["needs_you", "review"].includes(t.status)).length;
+  const cost = agents.reduce((sum, a) => sum + (metrics[String(a.id)]?.costUsd ?? 0), 0);
   return (
-    <ul className="plain ag-overview">
-      {agents.map((a) => {
-        const id = String(a.id);
-        const mine = tasks.filter((t) => String(t.agent_id) === id);
-        const open = mine.filter((t) => !["integrated", "approved", "failed"].includes(t.status)).length;
-        const st = statusInfo(a.status);
-        const m = metrics[id];
-        return (
-          <li key={id}>
-            <button type="button" className="card ag-ov-card" onClick={() => onSelect(id)} aria-label={`Abrir ${a.name}`}>
-              <span className="ag-dot" style={{ background: paletteHex(a.color) }} aria-hidden="true" />
-              <span className="ag-ov-main">
-                <strong>{a.name}</strong>
-                <span className="muted small">
-                  {ROLE_LABEL[a.role ?? ""] ?? a.role ?? ""} · <span className="ag-chip">{label(m?.model ?? a.current_model ?? a.model ?? "—")}</span>
-                </span>
-              </span>
-              <span className="ag-ov-stats muted small">
-                <span>
-                  <span className="ag-status-dot" style={{ background: st.dot }} aria-hidden="true" /> {st.label}
-                </span>
-                <span>
-                  {open} {open === 1 ? "tarea abierta" : "tareas abiertas"} de {mine.length}
-                </span>
-                <span>{m ? fmtUsd(m.costUsd) : "—"}</span>
-              </span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
+    <div className="ag-summary">
+      <p>
+        {open} {open === 1 ? "tarea abierta" : "tareas abiertas"} de {tasks.length}
+        {waiting > 0 && <> · <strong>{waiting} {waiting === 1 ? "espera" : "esperan"} tu respuesta</strong></>}
+        {" · "}
+        {fmtUsd(cost)} gastados
+      </p>
+      <p className="muted small">Elige un robot arriba o en la oficina para hablar con él.</p>
+    </div>
   );
 }
 
-function AgentView({ agent, sub: wanted, onSub }: { agent: Agent; sub: SubTab; onSub: (s: SubTab) => void }) {
+function AgentView({ agent, sub: wanted, onSub, chatInput }: { agent: Agent; sub: SubTab; onSub: (s: SubTab) => void; chatInput: React.Ref<HTMLTextAreaElement> }) {
   const uid = useId();
   const projectId = useProjectId();
   const tabs: readonly { id: SubTab; label: string }[] = isBoss(agent) ? BOSS_SUBTABS : SUBTABS;
-  const sub = tabs.some((t) => t.id === wanted) ? wanted : "tasks";
+  const sub = tabs.some((t) => t.id === wanted) ? wanted : "chat";
   const id = String(agent.id);
   const { metrics, runs } = useAgentMetrics(id);
   const live = runs.find((r) => r.live);
@@ -142,7 +145,7 @@ function AgentView({ agent, sub: wanted, onSub }: { agent: Agent; sub: SubTab; o
   return (
     <div className="ag-agent">
       <header className="ag-head">
-        <span className="ag-dot ag-dot-lg" style={{ background: paletteHex(agent.color) }} aria-hidden="true" />
+        <AgentAvatar agent={agent} />
         <div className="ag-head-main">
           <h3>
             {agent.name}
@@ -184,6 +187,7 @@ function AgentView({ agent, sub: wanted, onSub }: { agent: Agent; sub: SubTab; o
         ))}
       </div>
       <div role="tabpanel" id={`${uid}-panel`} aria-labelledby={`${uid}-${sub}`} className="ag-subpanel">
+        {sub === "chat" && <AgentChat agent={agent} inputRef={chatInput} />}
         {sub === "tasks" && <AgentTasks agent={agent} />}
         {sub === "objectives" && <ObjectivesList projectId={projectId} />}
         {sub === "manager" && <ManagerSettings projectId={projectId} />}
@@ -194,5 +198,15 @@ function AgentView({ agent, sub: wanted, onSub }: { agent: Agent; sub: SubTab; o
         {sub === "log" && <AgentLog agent={agent} />}
       </div>
     </div>
+  );
+}
+
+/** Avatar grande de la cabecera: el robot animado (con «reducir movimiento» se queda quieto). */
+function AgentAvatar({ agent }: { agent: Agent }) {
+  const accessories = useMemo(() => loadAccessories(agent.id), [agent.id]);
+  return (
+    <span className="ag-head-avatar">
+      <RobotAvatar sheet={sheetKey(agent)} zoom={2} animate accessories={accessories} />
+    </span>
   );
 }
