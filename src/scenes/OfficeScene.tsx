@@ -4,10 +4,12 @@ import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
 import { Application, Container, Graphics, Sprite, TextureStyle, type Texture } from "pixi.js";
 import { useStore } from "../store";
 import type { Agent } from "../store/agents";
-import { assignSlots, type OfficeData, OFFICE_H, OFFICE_W, pickRobot, SCALE, sheetKey } from "./officeLayout";
+import { bubbleText, bubbleVisible, stackBubbles, type BubbleSlot } from "./bubbleText";
+import { assignSlots, type OfficeData, OFFICE_H, OFFICE_W, pickRobot, ROBOT_H, SCALE, sheetKey } from "./officeLayout";
 import { drawPlaceholderBackground, drawPlaceholderFront } from "./placeholders";
 import { RobotSprite } from "./RobotSprite";
 import { loadOfficeAssets, type OfficeAssets } from "./spriteAssets";
+import { TAIL_H, ThoughtBubble } from "./ThoughtBubble";
 
 // Píxel perfecto: todas las texturas con vecino más cercano.
 TextureStyle.defaultOptions.scaleMode = "nearest";
@@ -24,11 +26,17 @@ type Props = {
   selectedId?: string | null;
 };
 
+/** Cada cuánto se recalculan los globos (ms). */
+const BUBBLE_REFRESH_MS = 200;
+
 /** Lógica de la escena una vez inicializada la `Application` (separada del ciclo de vida de React). */
 class SceneController {
   private robots = new Map<string, RobotSprite>();
   private robotsLayer = new Container();
   private labelsLayer = new Container();
+  private bubblesLayer = new Container();
+  private bubbles = new Map<string, ThoughtBubble>();
+  private lastBubbleUpdate = -Infinity;
   private selectedId: string | null = null;
   private unsubscribe: () => void;
   onSelect?: (id: string) => void;
@@ -50,7 +58,7 @@ class SceneController {
     world.addChild(layer(assets.background, drawPlaceholderBackground));
     world.addChild(this.robotsLayer);
     world.addChild(layer(assets.front, drawPlaceholderFront));
-    app.stage.addChild(world, this.labelsLayer);
+    app.stage.addChild(world, this.labelsLayer, this.bubblesLayer);
 
     app.ticker.add(this.tick);
     app.canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -109,7 +117,42 @@ class SceneController {
   private tick = () => {
     const now = performance.now();
     for (const r of this.robots.values()) r.tick(now);
+    for (const b of this.bubbles.values()) b.tick(now);
+    if (now - this.lastBubbleUpdate >= BUBBLE_REFRESH_MS) {
+      this.lastBubbleUpdate = now;
+      this.updateBubbles(now);
+    }
   };
+
+  /** Crea, actualiza y quita los globos según el último evento de cada agente; apila los que se solapan. */
+  private updateBubbles(now: number) {
+    const activity = useStore.getState().activity;
+    const slots: BubbleSlot[] = [];
+    const wanted = new Set<string>();
+    for (const r of this.robots.values()) {
+      const ev = activity[r.id];
+      const text = ev && bubbleVisible(ev, r.state === "idle", Date.now()) ? bubbleText(ev) : null;
+      if (!text) continue;
+      wanted.add(r.id);
+      let b = this.bubbles.get(r.id);
+      if (!b) {
+        b = new ThoughtBubble();
+        this.bubbles.set(r.id, b);
+        this.bubblesLayer.addChild(b.view);
+      }
+      b.setText(text, now);
+      const maxLeft = OFFICE_W * SCALE - b.w - 2;
+      const left = Math.min(maxLeft, Math.max(2, Math.round(r.x * SCALE - b.w / 2)));
+      slots.push({ id: r.id, x: left, w: b.w, h: b.h + TAIL_H, bottom: Math.round((r.y - ROBOT_H) * SCALE) - 2 });
+    }
+    for (const [id, b] of this.bubbles) {
+      if (wanted.has(id)) continue;
+      this.bubbles.delete(id);
+      b.destroy();
+    }
+    const tops = stackBubbles(slots);
+    for (const s of slots) this.bubbles.get(s.id)?.place(s.x, Math.max(0, tops.get(s.id) ?? 0));
+  }
 
   destroy() {
     this.unsubscribe();
@@ -117,6 +160,8 @@ class SceneController {
     this.app.canvas.removeEventListener("pointerdown", this.onPointerDown);
     for (const r of this.robots.values()) r.destroy();
     this.robots.clear();
+    for (const b of this.bubbles.values()) b.destroy();
+    this.bubbles.clear();
     this.assets.destroy();
   }
 }

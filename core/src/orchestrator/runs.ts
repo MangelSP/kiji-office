@@ -2,13 +2,18 @@
 // (red de seguridad de propiedad, commit, tests) según cómo termine.
 import { existsSync } from 'node:fs';
 import type { AgentEvent, RunSpec } from '../adapters/types.js';
-import type { TaskRow } from '../db/repos.js';
+import type { AgentRow, TaskRow } from '../db/repos.js';
 import { commitAll, runTests } from '../git/integrate.js';
 import { createWorktree, branchName, changedFiles, diff } from '../git/worktree.js';
 import { denyPending, onPermissionRequest } from './approvals.js';
 import { type Ctx, type Handler, type LiveRun, asParams, str } from './context.js';
 import { logEvent } from './events.js';
+import { applyUsage, finalizeMetrics, newUsageState, preferredModel, writeUsage } from './metrics.js';
 import { forkPoint, foreignFiles, revertFiles } from './ownership.js';
+import { contextWindowFor } from '../adapters/claude.js';
+import { recordRate, scheduleLimitsNotify } from './quota.js';
+import { clearResumeTimers, planAfterRateLimit } from './relay.js';
+import { resolveSkills } from './skills.js';
 import { robotStatusFor, setRobotStatus } from './status.js';
 import { MAX_RESULT_CHARS, getTask, isReadOnlyTask, projectOfTask, taskView, transition } from './tasks.js';
 
@@ -52,11 +57,39 @@ async function stopAdapter(live: LiveRun): Promise<void> {
   }
 }
 
-function buildPrompt(ctx: Ctx, task: TaskRow, files: string[], resuming: boolean): string {
-  const parts: string[] = [];
-  if (resuming) {
-    parts.push('Continúa donde lo dejaste: la tarea se interrumpió por un límite de uso.');
+/** Opciones de `startTask` (relevo, cambio manual y reanudación al reset). */
+export interface StartOptions {
+  /** Modelo de ESTE run; el preferido del agente no cambia. */
+  model?: string;
+  /** Sesión del SDK a reanudar; `null` = ninguna (otro agente); sin indicar = la del último run si la tarea está pausada por límite. */
+  resumeSessionId?: string | null;
+  /** Frase inicial del prompt al reanudar. */
+  resumeNote?: string;
+  /** Prompt de traspaso (otro agente): va delante del pedido. */
+  handover?: string;
+}
+
+const DEFAULT_RESUME_NOTE = 'Continúa donde lo dejaste: la tarea se interrumpió por un límite de uso.';
+
+/** System prompt de un run: rol, nombre y, si la tiene, la personalidad del agente (D12). */
+function systemPromptFor(agent: AgentRow): string {
+  const base = `${ROLE_PROMPTS[agent.role ?? ''] ?? DEFAULT_ROLE_PROMPT}\nTe llamas ${agent.name}.`;
+  return agent.persona.trim() === '' ? base : `${base}\n\nPersonalidad e instrucciones propias de ${agent.name}:\n${agent.persona.trim()}`;
+}
+
+function parseSkillNames(raw: string): string[] {
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
   }
+}
+
+function buildPrompt(ctx: Ctx, task: TaskRow, files: string[], resumeNote?: string, handover?: string): string {
+  const parts: string[] = [];
+  if (handover) parts.push(handover);
+  if (resumeNote) parts.push(resumeNote);
   const description = task.description.trim();
   // La UI manda el texto completo como descripción y su primera línea como título: no se repite.
   if (description === '' || !description.startsWith(task.title.trim())) parts.push(`Tarea: ${task.title}`);
@@ -114,7 +147,7 @@ export function runHandlers(ctx: Ctx): Record<string, Handler> {
 // Arranque
 // ---------------------------------------------------------------------------
 
-export async function startTask(ctx: Ctx, taskId: string) {
+export async function startTask(ctx: Ctx, taskId: string, opts: StartOptions = {}) {
   const task = getTask(ctx, taskId);
   if (ctx.live.has(taskId)) throw new Error('la tarea ya tiene un run en curso');
   if (!STARTABLE.has(task.status)) {
@@ -133,11 +166,13 @@ export async function startTask(ctx: Ctx, taskId: string) {
   const files = ctx.repos.taskFiles.list(task.id).map((f) => f.path);
   const readOnly = isReadOnlyTask(ctx, task.id); // consulta: sin archivos, sin worktree, trabaja en el repo principal
   const resumeHint = readResumeHint(ctx, task);
+  const model = opts.model ?? preferredModel(agent);
 
   // Reserva el hueco ya: dos `task.start` seguidos no pueden crear dos runs.
   const live: LiveRun = {
     taskId, runId: '', agentId: agent.id, projectId: project.id, adapter, worktree: '',
     pending: new Map(), stopping: false, ended: false, finishing: false, finished: Promise.resolve(),
+    model, sessionId: null, usage: newUsageState(model, contextWindowFor(model)), onEnded: null,
   };
   ctx.live.set(taskId, live);
   let running = false; // la tarea ya pasó a `running`
@@ -152,26 +187,33 @@ export async function startTask(ctx: Ctx, taskId: string) {
       worktree = await createWorktree(project.path, task.id, project.base_branch);
     }
     live.worktree = worktree;
-    const run = ctx.repos.runs.create({ taskId, agentId: agent.id });
+    const run = ctx.repos.runs.create({ taskId, agentId: agent.id, model });
     live.runId = run.id;
+    ctx.repos.runs.update(run.id, { context_window: live.usage.contextWindow });
     transition(ctx, taskId, 'running', 'task.start', readOnly ? {} : { branch: branchName(task.id), worktree_path: worktree });
     running = true;
     setRobotStatus(ctx, agent.id, 'thinking');
 
-    const resumeSessionId = task.status === 'paused_limit' ? resumeHint?.sessionId : undefined;
+    const resumeSessionId = opts.resumeSessionId !== undefined
+      ? (opts.resumeSessionId ?? undefined)
+      : task.status === 'paused_limit' ? resumeHint?.sessionId : undefined;
+    const skills = resolveSkills(ctx, parseSkillNames(agent.skills));
     const spec: RunSpec = {
       runId: run.id,
       cwd: worktree,
-      model: agent.model ?? 'sonnet',
-      systemPrompt: `${ROLE_PROMPTS[agent.role ?? ''] ?? DEFAULT_ROLE_PROMPT}\nTe llamas ${agent.name}.`,
-      prompt: buildPrompt(ctx, task, files, resumeSessionId !== undefined),
+      model,
+      systemPrompt: systemPromptFor(agent),
+      prompt: buildPrompt(ctx, task, files, opts.resumeNote ?? (resumeSessionId !== undefined ? DEFAULT_RESUME_NOTE : undefined), opts.handover),
       allowedPaths: files,
       ...(readOnly ? { readOnly: true } : {}),
       budgetUsd: budgetUsd(ctx),
       ...(resumeSessionId ? { resumeSessionId } : {}),
+      ...(skills.length > 0 ? { skills: skills.map((k) => ({ name: k.name, dir: k.dir, description: k.description })) } : {}),
     };
+    if (resumeSessionId) live.sessionId = resumeSessionId;
     const stream = adapter.start(spec);
     live.finished = consume(ctx, live, stream);
+    scheduleLimitsNotify(ctx);
   } catch (err) {
     // Fallo al arrancar: si ya había run/transición se cierra como `failed`; si no, no se ha tocado nada.
     ctx.live.delete(taskId);
@@ -210,7 +252,10 @@ async function consume(ctx: Ctx, live: LiveRun, stream: AsyncIterable<AgentEvent
     await failRun(ctx, live, msg(err)).catch((e) => process.stderr.write(`orquestador: no se pudo marcar la tarea como fallida: ${msg(e)}\n`));
   } finally {
     live.ended = true;
-    ctx.live.delete(live.taskId);
+    if (ctx.live.get(live.taskId) === live) ctx.live.delete(live.taskId); // puede haber un run nuevo de la misma tarea (task.switch)
+    const next = live.onEnded;
+    live.onEnded = null;
+    if (next) await next().catch((e) => process.stderr.write(`orquestador: falló la continuación del run: ${msg(e)}\n`));
   }
 }
 
@@ -226,8 +271,17 @@ async function handleEvent(ctx: Ctx, live: LiveRun, ev: AgentEvent): Promise<boo
       logEvent(ctx, { ...base, kind: 'text', payload: { delta: ev.delta } });
       break;
     case 'tool':
-      logEvent(ctx, { ...base, kind: 'tool', payload: { name: ev.name, status: ev.status, input: ev.input, output: ev.output } });
+      logEvent(ctx, {
+        ...base, kind: 'tool',
+        payload: { name: ev.name, status: ev.status, input: ev.input, output: ev.output, ...(ev.isError ? { is_error: true } : {}) },
+      });
       break;
+    case 'usage':
+      applyUsage(ctx, live, ev);
+      return false; // consumo: no cambia el estado del robot
+    case 'rate':
+      recordRate(ctx, ev);
+      return false;
     case 'permission_request':
       onPermissionRequest(ctx, live, ev);
       return false; // onPermissionRequest ya fija el estado del robot
@@ -256,14 +310,23 @@ function closeRun(
 ): void {
   live.ended = true;
   denyPending(ctx, live, 'el run terminó con la aprobación sin contestar');
+  // Consumo definitivo: el del adaptador (`usage`); sin él (adaptadores sin métricas) vale el `done` como en 0.1.
+  const u = live.usage;
+  if (extra.costUsd !== undefined) u.costUsd = extra.costUsd;
+  if (!u.seen && extra.usage) {
+    u.input = extra.usage.input;
+    u.output = extra.usage.output;
+  }
+  const sessionId = extra.sessionId ?? live.sessionId ?? undefined;
+  writeUsage(ctx, live);
   ctx.repos.runs.update(live.runId, {
     status,
     ended_at: Date.now(),
-    ...(extra.costUsd !== undefined ? { cost_usd: extra.costUsd } : {}),
-    ...(extra.usage ? { input_tokens: extra.usage.input, output_tokens: extra.usage.output } : {}),
-    ...(extra.sessionId ? { provider_session_id: extra.sessionId } : {}),
+    ...(sessionId ? { provider_session_id: sessionId } : {}),
     ...(extra.resumeHint !== undefined ? { resume_hint: JSON.stringify(extra.resumeHint) } : {}),
   });
+  finalizeMetrics(ctx, live);
+  scheduleLimitsNotify(ctx);
 }
 
 async function failRun(ctx: Ctx, live: LiveRun, message: string, ev?: Extract<AgentEvent, { type: 'error' }>): Promise<void> {
@@ -285,10 +348,14 @@ async function onLimit(ctx: Ctx, live: LiveRun, ev: Extract<AgentEvent, { type: 
     worktree: live.worktree,
     branch: task.branch,
     files: ctx.repos.taskFiles.list(task.id).map((f) => f.path),
-    sessionId: ev.sessionId ?? null,
+    sessionId: ev.sessionId ?? live.sessionId ?? null,
     kind: ev.kind,
     resetsAt: ev.resetsAt ?? null,
+    rateLimitType: ev.rateLimitType ?? null,
+    model: live.model,
   };
+  // El límite rechazado también queda en el estado de cupo (por si el `rate` previo no llegó).
+  if (ev.kind === 'rate') recordRate(ctx, { rateLimitType: ev.rateLimitType, status: 'rejected', resetsAt: ev.resetsAt });
   closeRun(ctx, live, 'paused_limit', { sessionId: ev.sessionId, resumeHint: hint });
   await stopAdapter(live);
   logEvent(ctx, {
@@ -297,6 +364,8 @@ async function onLimit(ctx: Ctx, live: LiveRun, ev: Extract<AgentEvent, { type: 
   });
   transition(ctx, live.taskId, 'paused_limit', ev.message);
   setRobotStatus(ctx, live.agentId, 'idle');
+  // Relevo de modelo o reanudación al reset (D10); el presupuesto, los créditos y la cuota nunca relevan.
+  if (ev.kind === 'rate') planAfterRateLimit(ctx, live, ev);
 }
 
 /** `done`: red de seguridad de propiedad -> commit -> tests -> `review`. */
@@ -369,7 +438,7 @@ async function onDone(ctx: Ctx, live: LiveRun, ev: Extract<AgentEvent, { type: '
 // Parada
 // ---------------------------------------------------------------------------
 
-export async function stopTask(ctx: Ctx, taskId: string) {
+export async function stopTask(ctx: Ctx, taskId: string, reason = 'detenida por el usuario') {
   const live = ctx.live.get(taskId);
   if (!live) throw new Error('la tarea no tiene un run en curso');
   if (live.finishing) throw new Error('el run ya terminó y se está guardando el trabajo; espera unos segundos');
@@ -381,11 +450,20 @@ export async function stopTask(ctx: Ctx, taskId: string) {
   });
   ctx.live.delete(taskId);
   setRobotStatus(ctx, live.agentId, 'idle');
-  return transition(ctx, taskId, 'assigned', 'detenida por el usuario');
+  return transition(ctx, taskId, 'assigned', reason);
 }
 
 /** Para todos los runs (apagado del core). Las tareas quedan `running`: el próximo `project.open` las pasa a `blocked`. */
 export async function stopAll(ctx: Ctx): Promise<void> {
+  ctx.closed = true;
+  clearResumeTimers(ctx);
+  if (ctx.limitsNotifyTimer) clearTimeout(ctx.limitsNotifyTimer);
+  ctx.limitsNotifyTimer = null;
+  for (const l of ctx.live.values()) {
+    if (l.usage.notifyTimer) clearTimeout(l.usage.notifyTimer);
+    l.usage.notifyTimer = null;
+    l.onEnded = null; // al apagar no se relanza nada
+  }
   await Promise.allSettled([...ctx.live.values()].map((l) => stopAdapter(l)));
 }
 

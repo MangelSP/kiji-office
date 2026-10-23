@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { AsyncQueue } from '../../src/adapters/queue.js';
 import type { AgentAdapter, AgentEvent, RunSpec } from '../../src/adapters/types.js';
 import { openDb } from '../../src/db/db.js';
-import { createOrchestrator, type Orchestrator } from '../../src/orchestrator/index.js';
+import { createOrchestrator, type Orchestrator, type OrchestratorOptions } from '../../src/orchestrator/index.js';
 import { git, makeRepo } from '../git/helpers.js';
 
 /** Adaptador falso: el test empuja los eventos a mano y ve las respuestas de permisos. No llama a ninguna API. */
@@ -60,7 +60,9 @@ export interface Harness {
   waitFor: (cond: () => boolean, what: string, ms?: number) => Promise<void>;
 }
 
-export function makeHarness(opts: { testTimeoutMs?: number; dbPath?: string } = {}): Harness {
+export function makeHarness(
+  opts: { testTimeoutMs?: number; dbPath?: string } & Pick<OrchestratorOptions, 'skillsDir' | 'metricsNotifyMs' | 'metricsWriteMs' | 'providerDeps'> = {},
+): Harness {
   const emitted: Emitted[] = [];
   const adapters: FakeAdapter[] = [];
   const orch = createOrchestrator({
@@ -72,6 +74,11 @@ export function makeHarness(opts: { testTimeoutMs?: number; dbPath?: string } = 
       return a;
     },
     testTimeoutMs: opts.testTimeoutMs,
+    skillsDir: opts.skillsDir ?? '/nonexistent/kiji-skills', // nunca leer las skills reales de la persona que corre los tests
+    metricsNotifyMs: opts.metricsNotifyMs,
+    metricsWriteMs: opts.metricsWriteMs,
+    // Sin red: Ollama "no responde" salvo que el test pase su propio fetch.
+    providerDeps: opts.providerDeps ?? { fetch: (async () => { throw new Error('sin red en los tests'); }) as unknown as typeof fetch, env: {}, homeDir: '/nonexistent' },
   });
   const waitFor = async (cond: () => boolean, what: string, ms = 8000) => {
     const deadline = Date.now() + ms;

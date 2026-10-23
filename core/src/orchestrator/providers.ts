@@ -1,7 +1,12 @@
 // Prueba de conexión de los proveedores (`providers.test {provider}`) para el asistente de primera vez.
 // Devuelve siempre `{ok, detail}`: `detail` es un texto para la persona usuaria y NUNCA lleva la clave ni cabeceras.
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { query as sdkQuery, type Options } from '@anthropic-ai/claude-agent-sdk';
+import type { LimitWindow, ProviderStatus } from '../../../shared/protocol.js';
 import { type Ctx, type Handler, asParams, str } from './context.js';
+import { limitedUntilOf, modelFamily, modelLimitedUntil } from './quota.js';
 import { ollamaUrl } from './settings.js';
 
 export type ProviderName = 'claude' | 'ollama' | 'openai' | 'gemini';
@@ -26,7 +31,17 @@ export interface ProviderDeps {
   ollamaTimeoutMs?: number;
   apiTimeoutMs?: number;
   claudeTimeoutMs?: number;
+  /** `providers.status`: tiempo máximo del sondeo de Ollama (ms, por defecto 1500) y carpeta personal (para buscar ~/.claude). */
+  ollamaStatusTimeoutMs?: number;
+  homeDir?: string;
 }
+
+/** Cuánto vale un sondeo de Ollama antes de repetirlo (ms). */
+export const OLLAMA_PROBE_TTL_MS = 30_000;
+/** A partir de este uso (0..1) una ventana se muestra como aviso. */
+const WARNING_UTILIZATION = 0.8;
+const WINDOW_ORDER = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'other'] as const;
+const CLAUDE_MODEL_ALIASES = ['opus', 'sonnet', 'haiku'] as const;
 
 /** Valores sensibles a ocultar en cualquier texto que salga hacia la UI: las claves del entorno y todo lo que parezca una. */
 function redact(text: string, env: NodeJS.ProcessEnv): string {
@@ -169,9 +184,91 @@ export function createProviderTester(ctx: Ctx, deps: ProviderDeps = {}) {
   };
 }
 
+/**
+ * `providers.status` (PLAN-0.2a, D9): una tarjeta por proveedor. Solo mira si hay clave en el entorno (nunca la
+ * devuelve ni la registra) y sondea Ollama con un tiempo corto, cacheado 30 s.
+ */
+export function createProviderStatus(ctx: Ctx, deps: ProviderDeps = {}) {
+  const env = () => deps.env ?? process.env;
+  let probe: { url: string; at: number; ok: boolean } | null = null;
+  let inflight: Promise<boolean> | null = null;
+
+  async function ollamaUp(): Promise<boolean> {
+    const url = ollamaUrl(ctx);
+    if (probe && probe.url === url && Date.now() - probe.at < OLLAMA_PROBE_TTL_MS) return probe.ok;
+    inflight ??= (async () => {
+      let ok = false;
+      try {
+        const res = await (deps.fetch ?? fetch)(`${url}/models`, {
+          method: 'GET',
+          signal: AbortSignal.timeout(Math.min(deps.ollamaStatusTimeoutMs ?? 1500, 1500)),
+          redirect: 'error',
+        });
+        ok = res.ok;
+      } catch {
+        ok = false;
+      }
+      probe = { url, at: Date.now(), ok };
+      return ok;
+    })().finally(() => {
+      inflight = null;
+    });
+    return inflight;
+  }
+
+  function claudeStatus(now: number): ProviderStatus {
+    const windows: LimitWindow[] = WINDOW_ORDER.flatMap((t) => {
+      const w = ctx.limits.get(t);
+      return w && (w.resetsAt === null || w.resetsAt > now) ? [{ ...w }] : [];
+    });
+    const configured = Boolean(env().ANTHROPIC_API_KEY) || existsSync(join(deps.homeDir ?? homedir(), '.claude'));
+    let state: ProviderStatus['state'];
+    if (!configured) state = 'off';
+    else if (windows.some((w) => limitedUntilOf(w, now) !== null)) state = 'limited';
+    else if (windows.some((w) => w.status === 'allowed_warning' || (w.utilization ?? 0) >= WARNING_UTILIZATION)) state = 'warning';
+    else state = windows.length > 0 ? 'ok' : 'unknown';
+
+    const project = ctx.activeProject;
+    const agents = project ? ctx.repos.agents.list(project.id) : [];
+    const lives = [...ctx.live.values()].filter((l) => l.projectId === project?.id);
+    const day = new Date(now);
+    day.setHours(0, 0, 0, 0);
+    const today = project ? ctx.repos.runs.listSince(project.id, day.getTime()) : [];
+    const models = CLAUDE_MODEL_ALIASES.map((model) => {
+      const inUse = (a: { id: string; model: string | null }) => lives.find((l) => l.agentId === a.id)?.model ?? a.model ?? 'sonnet';
+      return {
+        model,
+        agents: agents.filter((a) => modelFamily(inUse(a)) === model).map((a) => a.id),
+        liveRuns: lives.filter((l) => modelFamily(l.model) === model).length,
+        costTodayUsd: today.filter((r) => modelFamily(r.model ?? r.agent_model ?? 'sonnet') === model).reduce((n, r) => n + r.cost_usd, 0),
+        limitedUntil: modelLimitedUntil(ctx, model, now),
+      };
+    });
+    return { id: 'claude', label: 'Claude', configured, state, windows, models };
+  }
+
+  const keyStatus = (id: 'openai' | 'gemini', label: string): ProviderStatus => {
+    const configured = Boolean(env()[KEY_ENV[id]]);
+    return { id, label, configured, state: configured ? 'unknown' : 'off', windows: [], models: [] };
+  };
+
+  return async function status(): Promise<ProviderStatus[]> {
+    const up = await ollamaUp();
+    return [
+      claudeStatus(Date.now()),
+      { id: 'ollama', label: 'Ollama', configured: up, state: up ? 'ok' : 'off', windows: [], models: [] },
+      keyStatus('openai', 'OpenAI'),
+      keyStatus('gemini', 'Gemini'),
+    ];
+  };
+}
+
 export function providerHandlers(ctx: Ctx, deps: ProviderDeps = {}): Record<string, Handler> {
   const test = createProviderTester(ctx, deps);
+  const status = createProviderStatus(ctx, deps);
+  ctx.providerStatus = status;
   return {
     'providers.test': async (params) => test(str(asParams(params, 'providers.test').provider, 'provider', 'providers.test')),
+    'providers.status': () => status(),
   };
 }

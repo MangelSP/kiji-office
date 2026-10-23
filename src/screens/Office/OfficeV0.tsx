@@ -1,12 +1,16 @@
-// Pantalla principal v0 (sin pixel art): proyecto, agentes, tareas, aprobaciones y registro en vivo.
+// Pantalla principal: la oficina (escena + caja de pedido), la tira de robots, las pestañas por agente
+// y, a la derecha, las IAs en vivo, las aprobaciones, el proyecto y el registro.
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import AgentStrip from "../../components/AgentStrip";
 import ApprovalCard from "../../components/ApprovalCard";
 import LogPanel from "../../components/LogPanel";
-import TaskList from "../../components/TaskList";
+import OfficeComposer from "../../components/OfficeComposer";
+import ProvidersPanel from "../../components/ProvidersPanel";
+import AgentTabs from "../Agents/AgentTabs";
 import CreateAgent from "../CreateAgent/CreateAgent";
-import { parseFiles, parseRequest } from "./request";
 import OfficeScene from "../../scenes/OfficeScene";
+import type { ProviderStatus } from "../../../shared/protocol";
 import { connectStore, useStore } from "../../store";
 import "../../components/components.css";
 import "./OfficeV0.css";
@@ -19,6 +23,37 @@ const DEMO_AGENTS = [
   { id: "demo-2", name: "Ana", provider: "openai", color: "azul", status: "needs_you" },
   { id: "demo-3", name: "Nico", provider: "gemini", color: "verde", status: "done" },
 ];
+
+const DEMO_PROVIDERS: ProviderStatus[] = [
+  {
+    id: "claude",
+    label: "Claude",
+    configured: true,
+    state: "warning",
+    windows: [
+      { type: "five_hour", status: "allowed", utilization: 0.42, resetsAt: Date.now() + 2.5 * 3_600_000, seenAt: Date.now() },
+      { type: "seven_day", status: "allowed_warning", utilization: 0.78, resetsAt: Date.now() + 3 * 86_400_000, seenAt: Date.now() },
+      { type: "seven_day_sonnet", status: "rejected", utilization: 1, resetsAt: Date.now() + 5 * 3_600_000, seenAt: Date.now() },
+    ],
+    models: [{ model: "sonnet", agents: ["demo-2"], liveRuns: 1, costTodayUsd: 0.42, limitedUntil: null }],
+  },
+  { id: "ollama", label: "Ollama", configured: false, state: "off", windows: [], models: [] },
+];
+
+// Mismo ancho que el CSS: por debajo, una sola columna.
+const NARROW = "(max-width: 1099px)";
+
+function useNarrow() {
+  const [narrow, setNarrow] = useState(() => window.matchMedia?.(NARROW).matches ?? false);
+  useEffect(() => {
+    const mq = window.matchMedia?.(NARROW);
+    if (!mq) return;
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return narrow;
+}
 
 function saludo(hora: number) {
   if (hora < 12) return "Buenos días";
@@ -34,18 +69,21 @@ function coreLabel(status: string, detail?: string) {
 
 export default function OfficeV0() {
   const s = useStore();
-  const [request, setRequest] = useState("");
-  const [files, setFiles] = useState("");
-  const [agentId, setAgentId] = useState("");
-  const [creating, setCreating] = useState(false);
+  const narrow = useNarrow();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
+  const [showLog, setShowLog] = useState(false);
 
   useEffect(() => connectStore(), []);
 
   useEffect(() => {
     if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("demo")) {
-      useStore.getState().setAgents(DEMO_AGENTS);
+      const st = useStore.getState();
+      st.setAgents(DEMO_AGENTS);
+      st.applyLimits(DEMO_PROVIDERS);
+      st.noteActivity("demo-1", "tool", { name: "Read", input: { file_path: "src/store/index.ts" } });
+      st.noteActivity("demo-2", "permission", { decision: "pending" });
+      st.noteActivity("demo-3", "status", { type: "done" });
     }
   }, []);
 
@@ -59,34 +97,21 @@ export default function OfficeV0() {
     }
   };
 
-  // El jefe planea y revisa: las tareas se asignan a los demás robots (el primero, por defecto).
-  const workers = s.agents.filter((a) => !a.is_boss);
-  const selectedAgent = workers.some((a) => String(a.id) === agentId) ? agentId : String(workers[0]?.id ?? "");
-  const { title, description } = parseRequest(request);
-  const canSend = !creating && title !== "";
-
-  const enviar = async (start: boolean) => {
-    if (!canSend) return;
-    if (start && !selectedAgent) {
-      s.setNotice("Crea un robot con «+ Robot» para poder enviarle el pedido.");
-      return;
-    }
-    setCreating(true);
-    const created = await s.createTask({
-      title,
-      description,
-      files: parseFiles(files),
-      agentId: selectedAgent || undefined,
-    });
-    if (created) {
-      setRequest("");
-      setFiles("");
-      if (start) await s.startTask(created.id);
-    }
-    setCreating(false);
-  };
-
   const agentName = (id?: string | number) => s.agents.find((a) => String(a.id) === String(id))?.name;
+
+  const approvals = s.approvals.length > 0 && (
+    <section className="panel" aria-labelledby="appr-title">
+      <h2 id="appr-title">Esperan tu respuesta ({s.approvals.length})</h2>
+      {s.approvals.map((a) => (
+        <ApprovalCard
+          key={String(a.id)}
+          approval={a}
+          agentName={agentName(a.agent_id)}
+          onAnswer={(allow) => s.answerApproval(a.id, allow)}
+        />
+      ))}
+    </section>
+  );
 
   return (
     <main className="office">
@@ -95,6 +120,9 @@ export default function OfficeV0() {
         <h1>
           ¡{saludo(new Date().getHours())}, {NOMBRE}!
         </h1>
+        <button type="button" className="btn" onClick={() => setShowCreateAgent(true)}>
+          + Robot
+        </button>
         <p className="core-status">core: {coreLabel(s.coreStatus, s.coreDetail)}</p>
       </header>
 
@@ -107,135 +135,49 @@ export default function OfficeV0() {
         </div>
       )}
 
+      {narrow && approvals}
+
       <section className="panel scene-panel" aria-label="Oficina">
-        <OfficeScene selectedId={selectedId} onSelect={setSelectedId} />
-        {selectedId && (
-          <p className="muted scene-selected">
-            Seleccionado: <strong>{agentName(selectedId) ?? selectedId}</strong>
-          </p>
-        )}
+        <div className="scene-stage">
+          <OfficeScene selectedId={selectedId} onSelect={setSelectedId} />
+          <OfficeComposer selectedId={selectedId} onSelect={setSelectedId} />
+        </div>
       </section>
+
+      <AgentStrip selectedId={selectedId} onSelect={setSelectedId} />
 
       <div className="office-grid">
         <div className="col">
-          <section className="panel" aria-labelledby="proj-title">
-            <h2 id="proj-title">Proyecto</h2>
-            <p className="muted">{s.project ? s.project.path : "Ningún proyecto abierto."}</p>
-            <button type="button" className="btn btn-primary" onClick={() => void abrirProyecto()}>
-              Abrir proyecto
-            </button>
-          </section>
-
-          <section className="panel" aria-labelledby="agents-title">
-            <div className="panel-head">
-              <h2 id="agents-title">Agentes</h2>
-              <button type="button" className="btn" onClick={() => setShowCreateAgent(true)}>
-                + Robot
-              </button>
-            </div>
-            {s.unavailable["agent.list"] ? (
-              <p className="muted">Aún no disponible: el core no implementa agent.list.</p>
-            ) : s.agents.length === 0 ? (
-              <p className="muted">No hay agentes todavía.</p>
-            ) : (
-              <ul className="plain">
-                {s.agents.map((a) => (
-                  <li key={String(a.id)}>
-                    <strong>{a.name}</strong>{" "}
-                    <span className="muted">
-                      {[a.provider, a.model, a.role].filter(Boolean).join(" · ")}
-                      {a.status ? ` · ${a.status}` : ""}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section className="panel" aria-labelledby="new-task-title">
-            <h2 id="new-task-title">¿Qué quieres que haga?</h2>
-            <p className="muted small">
-              Escribe tu pedido, elige el robot y pulsa Enviar. Si toca archivos, te pedirá permiso antes de hacer algo
-              riesgoso.
-            </p>
-            <form
-              className="form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void enviar(true);
-              }}
-            >
-              <div className="field">
-                <label htmlFor="task-request">Tu pedido</label>
-                <textarea
-                  id="task-request"
-                  rows={5}
-                  value={request}
-                  onChange={(e) => setRequest(e.target.value)}
-                  placeholder="Ej.: Revisa este proyecto y explícame qué hace, cómo está organizado y qué falta."
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="task-files">Archivos que puede modificar (opcional)</label>
-                <input
-                  id="task-files"
-                  value={files}
-                  onChange={(e) => setFiles(e.target.value)}
-                  placeholder="src/a.ts, src/b.ts"
-                  aria-describedby="task-files-help"
-                />
-                <p id="task-files-help" className="muted small field-help">
-                  Déjalo vacío para que solo lea y te responda. Pon archivos (separados por comas) si debe cambiarlos.
-                </p>
-              </div>
-              <div className="field">
-                <label htmlFor="task-agent">Agente</label>
-                <select id="task-agent" value={selectedAgent} onChange={(e) => setAgentId(e.target.value)}>
-                  {workers.map((a) => (
-                    <option key={String(a.id)} value={String(a.id)}>
-                      {a.name}
-                    </option>
-                  ))}
-                  <option value="">Sin asignar</option>
-                </select>
-              </div>
-              <div className="row">
-                <button type="submit" className="btn btn-primary" disabled={!canSend || !selectedAgent}>
-                  {creating ? "Enviando…" : "Enviar y empezar"}
-                </button>
-                <button type="button" className="btn" disabled={!canSend} onClick={() => void enviar(false)}>
-                  Solo crear
-                </button>
-              </div>
-            </form>
-          </section>
+          {s.unavailable["agent.list"] && <p className="muted">Aún no disponible: el core no implementa agent.list.</p>}
+          <AgentTabs selectedId={selectedId} onSelect={setSelectedId} />
         </div>
 
         <div className="col">
-          {s.approvals.length > 0 && (
-            <section className="panel" aria-labelledby="appr-title">
-              <h2 id="appr-title">Esperan tu respuesta ({s.approvals.length})</h2>
-              {s.approvals.map((a) => (
-                <ApprovalCard
-                  key={String(a.id)}
-                  approval={a}
-                  agentName={agentName(a.agent_id)}
-                  onAnswer={(allow) => s.answerApproval(a.id, allow)}
-                />
-              ))}
-            </section>
-          )}
+          <ProvidersPanel />
+          {!narrow && approvals}
 
-          <section className="panel" aria-labelledby="tasks-title">
-            <h2 id="tasks-title">Tareas</h2>
-            {s.unavailable["task.list"] && s.tasks.length === 0 ? (
-              <p className="muted">Aún no disponible: el core no implementa task.list.</p>
-            ) : (
-              <TaskList tasks={s.tasks} agents={s.agents} onStart={s.startTask} onDiff={s.loadDiff} />
-            )}
+          <section className="panel project-compact" aria-labelledby="proj-title">
+            <div className="panel-head">
+              <h2 id="proj-title">Proyecto</h2>
+              <button type="button" className="btn btn-primary" onClick={() => void abrirProyecto()}>
+                Abrir proyecto
+              </button>
+            </div>
+            <p className="muted small project-path">{s.project ? s.project.path : "Ningún proyecto abierto."}</p>
           </section>
 
-          <LogPanel />
+          {showLog ? (
+            <div>
+              <LogPanel />
+              <button type="button" className="btn btn-ghost" onClick={() => setShowLog(false)}>
+                Ocultar el registro
+              </button>
+            </div>
+          ) : (
+            <button type="button" className="btn" aria-expanded={false} onClick={() => setShowLog(true)}>
+              Registro en vivo ({s.events.length}) ▸
+            </button>
+          )}
         </div>
       </div>
       {showCreateAgent && <CreateAgent onClose={() => setShowCreateAgent(false)} />}

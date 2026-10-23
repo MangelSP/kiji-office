@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: vi.fn() }));
 
@@ -210,8 +213,10 @@ describe('ClaudeAdapter — límites y errores', () => {
       yield { type: 'result', subtype: 'success', is_error: true, result: 'Credit balance too low', errors: [], session_id: 'sess-9' };
     });
     const events = await collect(new ClaudeAdapter().start(spec()));
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ type: 'limit', kind: 'rate', resetsAt: 1_800_000_000_000, sessionId: 'sess-9' });
+    // 0.2a: el rechazo produce además un evento `rate` (cupo) antes del `limit` terminal
+    expect(events).toHaveLength(2);
+    expect(events[0]).toEqual({ type: 'rate', rateLimitType: 'five_hour', status: 'rejected', resetsAt: 1_800_000_000_000 });
+    expect(events[1]).toMatchObject({ type: 'limit', kind: 'rate', resetsAt: 1_800_000_000_000, sessionId: 'sess-9', rateLimitType: 'five_hour' });
   });
 
   it('error_max_budget_usd -> limit budget', async () => {
@@ -244,7 +249,10 @@ describe('ClaudeAdapter — límites y errores', () => {
       yield { type: 'rate_limit_event', rate_limit_info: { status: 'rejected' }, session_id: 's' };
       yield { type: 'result', subtype: 'error_max_turns', is_error: true, errors: [], session_id: 's' };
     });
-    expect(await collect(new ClaudeAdapter().start(spec()))).toEqual([expect.objectContaining({ type: 'error' })]);
+    expect(await collect(new ClaudeAdapter().start(spec()))).toEqual([
+      { type: 'rate', status: 'rejected' },
+      expect.objectContaining({ type: 'error' }),
+    ]);
   });
 
   it('result is_error con "overloaded" -> limit rate', async () => {
@@ -268,7 +276,7 @@ describe('ClaudeAdapter — límites y errores', () => {
       yield { type: 'rate_limit_event', rate_limit_info: { status: 'rejected' }, session_id: 's' };
       yield resultOk();
     });
-    expect((await collect(new ClaudeAdapter().start(spec()))).map((e) => e.type)).toEqual(['done']);
+    expect((await collect(new ClaudeAdapter().start(spec()))).map((e) => e.type)).toEqual(['rate', 'done']);
   });
 
   it('el SDK lanza una excepción -> error; con texto de límite -> limit', async () => {
@@ -376,5 +384,188 @@ describe('ClaudeAdapter — send y stop', () => {
     const adapter = new ClaudeAdapter();
     adapter.start(spec());
     expect(() => adapter.start(spec())).toThrow();
+  });
+});
+
+describe('ClaudeAdapter — usage y rate (0.2a)', () => {
+  const assistant = (id: string, usage: object, over: object = {}) => ({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    session_id: 'sess-u',
+    message: { id, model: 'claude-sonnet-4-5', content: [{ type: 'text', text: 'hola' }], usage, ...over },
+  });
+
+  it('cada mensaje assistant con usage emite `usage`: contexto = input + cache_read + cache_creation del turno', async () => {
+    mockQuery(async function* () {
+      yield assistant('m1', { input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 1000, cache_creation_input_tokens: 50 });
+      yield assistant('m2', { input_tokens: 5, output_tokens: 20, cache_read_input_tokens: 1200, cache_creation_input_tokens: 0 });
+      yield resultOk();
+    });
+    const usage = (await collect(new ClaudeAdapter().start(spec({ model: 'sonnet' })))).filter((e) => e.type === 'usage');
+    expect(usage).toHaveLength(2);
+    expect(usage[0]).toMatchObject({
+      model: 'claude-sonnet-4-5', contextTokens: 1150, contextWindow: 200_000, input: 100, output: 10, cacheRead: 1000, cacheWrite: 50, sessionId: 'sess-u',
+    });
+    // acumulado del run; el contexto es solo el del último turno
+    expect(usage[1]).toMatchObject({ contextTokens: 1205, input: 105, output: 30, cacheRead: 2200, cacheWrite: 50 });
+    expect(usage[1]).not.toHaveProperty('final');
+  });
+
+  it('el mismo mensaje repetido por bloque no se suma dos veces; los subagentes no cuentan para el contexto', async () => {
+    mockQuery(async function* () {
+      yield assistant('m1', { input_tokens: 10, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+      yield assistant('m1', { input_tokens: 10, output_tokens: 8, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+      yield { ...assistant('s1', { input_tokens: 9999, output_tokens: 9999 }), parent_tool_use_id: 'tu_x' };
+      yield resultOk();
+    });
+    const usage = (await collect(new ClaudeAdapter().start(spec()))).filter((e) => e.type === 'usage');
+    expect(usage).toHaveLength(2);
+    expect(usage[1]).toMatchObject({ input: 10, output: 8, contextTokens: 10 });
+  });
+
+  it('ventana de contexto: 200000 por defecto y 1000000 si el modelo lleva [1m]', async () => {
+    mockQuery(async function* () {
+      yield assistant('m1', { input_tokens: 1, output_tokens: 1 });
+      yield resultOk();
+    });
+    const a = (await collect(new ClaudeAdapter().start(spec({ model: 'sonnet' })))).find((e) => e.type === 'usage');
+    expect(a).toMatchObject({ contextWindow: 200_000 });
+    mockQuery(async function* () {
+      yield assistant('m1', { input_tokens: 1, output_tokens: 1 });
+      yield resultOk();
+    });
+    const b = (await collect(new ClaudeAdapter().start(spec({ model: 'opus[1m]' })))).find((e) => e.type === 'usage');
+    expect(b).toMatchObject({ contextWindow: 1_000_000 });
+  });
+
+  it('al result, modelUsage da el `usage` final: tokens por categoría, coste y ventana real, antes del `done`', async () => {
+    mockQuery(async function* () {
+      yield assistant('m1', { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 90, cache_creation_input_tokens: 0 });
+      yield resultOk({
+        total_cost_usd: 0.42,
+        modelUsage: {
+          'claude-sonnet-4-5': { inputTokens: 300, outputTokens: 40, cacheReadInputTokens: 900, cacheCreationInputTokens: 60, costUSD: 0.4, contextWindow: 1_000_000, maxOutputTokens: 64000 },
+          'claude-haiku-4-5': { inputTokens: 20, outputTokens: 5, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.02, contextWindow: 200_000, maxOutputTokens: 64000 },
+        },
+      });
+    });
+    const events = await collect(new ClaudeAdapter().start(spec({ model: 'sonnet' })));
+    expect(events.map((e) => e.type)).toEqual(['usage', 'text', 'usage', 'done']);
+    expect(events[2]).toMatchObject({
+      type: 'usage', final: true, model: 'claude-sonnet-4-5', input: 320, output: 45, cacheRead: 900, cacheWrite: 60,
+      contextTokens: 100, contextWindow: 1_000_000, costUsd: 0.42,
+    });
+  });
+
+  it('un result de error (p. ej. presupuesto) también deja el `usage` final antes del evento terminal', async () => {
+    mockQuery(async function* () {
+      yield { type: 'result', subtype: 'error_max_budget_usd', is_error: false, errors: [], total_cost_usd: 0.05, session_id: 's', modelUsage: { sonnet: { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 4, costUSD: 0.05, contextWindow: 200000 } } };
+    });
+    const events = await collect(new ClaudeAdapter().start(spec()));
+    expect(events.map((e) => e.type)).toEqual(['usage', 'limit']);
+    expect(events[0]).toMatchObject({ final: true, costUsd: 0.05, input: 1, output: 2, cacheRead: 3, cacheWrite: 4 });
+  });
+
+  it('rate_limit_event emite `rate` aunque sea allowed o allowed_warning (resetsAt en ms)', async () => {
+    mockQuery(async function* () {
+      yield { type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.31, resetsAt: 1_800_000_000 }, session_id: 's' };
+      yield { type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning', rateLimitType: 'seven_day_opus', utilization: 0.85 }, session_id: 's' };
+      yield resultOk();
+    });
+    expect(await collect(new ClaudeAdapter().start(spec()))).toEqual([
+      { type: 'rate', status: 'allowed', rateLimitType: 'five_hour', utilization: 0.31, resetsAt: 1_800_000_000_000 },
+      { type: 'rate', status: 'allowed_warning', rateLimitType: 'seven_day_opus', utilization: 0.85 },
+      expect.objectContaining({ type: 'done' }),
+    ]);
+  });
+
+  it('rejected: además del `rate` produce el `limit` de siempre, ahora con rateLimitType', async () => {
+    mockQuery(async function* () {
+      yield { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'seven_day_opus', resetsAt: 1_800_000_000 }, session_id: 's' };
+      yield { type: 'result', subtype: 'success', is_error: true, result: 'Usage limit reached', errors: ['Usage limit reached'], session_id: 's' };
+    });
+    const events = await collect(new ClaudeAdapter().start(spec()));
+    expect(events.map((e) => e.type)).toEqual(['rate', 'limit']);
+    // el límite que sale del texto del `result` hereda tipo y hora de reset del aviso previo
+    expect(events[1]).toMatchObject({ kind: 'rate', rateLimitType: 'seven_day_opus', resetsAt: 1_800_000_000_000, sessionId: 's' });
+  });
+
+  it('tool end lleva isError cuando el tool_result es un error', async () => {
+    mockQuery(async function* () {
+      yield { type: 'assistant', parent_tool_use_id: null, message: { id: 'a', content: [{ type: 'tool_use', id: 'tu_1', name: 'Bash', input: { command: 'x' } }] } };
+      yield { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu_1', is_error: true, content: 'falló' }] } };
+      yield resultOk();
+    });
+    const ends = (await collect(new ClaudeAdapter().start(spec()))).filter((e) => e.type === 'tool' && e.status === 'end');
+    expect(ends).toEqual([expect.objectContaining({ name: 'Bash', output: 'falló', isError: true })]);
+  });
+});
+
+describe('ClaudeAdapter — skills del agente (D12)', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'kiji-skillsrc-'));
+    mkdirSync(join(tmp, 'marcador'));
+    writeFileSync(join(tmp, 'marcador', 'SKILL.md'), '---\nname: marcador\ndescription: prueba\n---\nhola');
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  it('monta un plugin local temporal con un enlace por skill, filtra con `skills` y lo borra al terminar', async () => {
+    let seen: any;
+    let pluginDir = '';
+    const calls = mockQuery(async function* ({ options }) {
+      pluginDir = options.plugins[0].path;
+      seen = {
+        manifest: JSON.parse(readFileSync(join(pluginDir, '.claude-plugin', 'plugin.json'), 'utf8')),
+        skill: readFileSync(join(pluginDir, 'skills', 'marcador', 'SKILL.md'), 'utf8'),
+        link: lstatSync(join(pluginDir, 'skills', 'marcador')).isSymbolicLink(),
+      };
+      yield resultOk();
+    });
+    await collect(new ClaudeAdapter().start(spec({ skills: [{ name: 'marcador', dir: join(tmp, 'marcador') }] })));
+    expect(calls[0]!.options.plugins).toEqual([{ type: 'local', path: pluginDir }]);
+    expect(calls[0]!.options.skills).toEqual(['kiji-skills:marcador']);
+    expect(seen.manifest.name).toBe('kiji-skills');
+    expect(seen.skill).toContain('name: marcador');
+    expect(seen.link).toBe(true);
+    expect(existsSync(pluginDir)).toBe(false); // limpiado
+    expect(existsSync(join(tmp, 'marcador', 'SKILL.md'))).toBe(true); // lo original intacto
+  });
+
+  it('Skill se permite sin preguntar, también en solo lectura (que además la recibe en `tools`)', async () => {
+    let decision: any;
+    const calls = mockQuery(async function* ({ options }) {
+      decision = await options.canUseTool('Skill', { skill: 'kiji-skills:marcador' }, ask());
+      yield resultOk();
+    });
+    await collect(new ClaudeAdapter().start(spec({ readOnly: true, skills: [{ name: 'marcador', dir: join(tmp, 'marcador') }] })));
+    expect(decision.behavior).toBe('allow');
+    expect(calls[0]!.options.tools).toEqual(['Read', 'Glob', 'Grep', 'Skill']);
+  });
+
+  it('sin skills no se añade ni plugin ni filtro, y en solo lectura Skill sigue denegada', async () => {
+    let decision: any;
+    const calls = mockQuery(async function* ({ options }) {
+      decision = await options.canUseTool('Skill', {}, ask());
+      yield resultOk();
+    });
+    await collect(new ClaudeAdapter().start(spec({ readOnly: true })));
+    expect(calls[0]!.options.plugins).toBeUndefined();
+    expect(calls[0]!.options.skills).toBeUndefined();
+    expect(calls[0]!.options.tools).toEqual(['Read', 'Glob', 'Grep']);
+    expect(decision.behavior).toBe('deny');
+  });
+
+  it('plan B: si no se puede montar el plugin, nombre, descripción y ruta van al system prompt', async () => {
+    const calls = mockQuery(async function* () {
+      yield resultOk();
+    });
+    await collect(new ClaudeAdapter().start(spec({ skills: [{ name: 'mala/ruta', dir: tmp, description: 'una descripción' }] })));
+    const opts = calls[0]!.options;
+    expect(opts.plugins).toBeUndefined();
+    expect(opts.skills).toBeUndefined();
+    expect(opts.systemPrompt.append).toContain('mala/ruta: una descripción');
+    expect(opts.systemPrompt.append).toContain(join(tmp, 'SKILL.md'));
+    expect(opts.systemPrompt.append).toContain('lee su SKILL.md con Read');
   });
 });

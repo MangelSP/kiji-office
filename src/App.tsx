@@ -1,4 +1,5 @@
 import { useState } from "react";
+import CloseGuard from "./components/CloseGuard";
 import OfficeV0 from "./screens/Office/OfficeV0";
 import Wizard from "./screens/Wizard/Wizard";
 import { readWizardDone } from "./screens/Wizard/wizardState";
@@ -14,17 +15,21 @@ function App() {
 
   if (wizard || (!hasProject && !skipped)) {
     return (
-      <Wizard
-        onClose={() => {
-          setWizard(false);
-          setSkipped(true);
-        }}
-      />
+      <>
+        <Wizard
+          onClose={() => {
+            setWizard(false);
+            setSkipped(true);
+          }}
+        />
+        <CloseGuard />
+      </>
     );
   }
 
   return (
     <>
+      <CloseGuard />
       <div className="app-bar">
         <button type="button" className="app-bar-btn" onClick={() => setWizard(true)}>
           Asistente

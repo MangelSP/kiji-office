@@ -1,0 +1,129 @@
+/* Caja de pedido superpuesta abajo en la escena: panel oscuro translúcido con borde pixel de esquinas cortadas. */
+.composer {
+  --px: #f1ece2;
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: #f1ece2;
+  background: rgba(14, 15, 19, 0.82);
+  border-radius: 0;
+  /* Borde pixel: cuatro lados de 2 px que no llegan a las esquinas. */
+  box-shadow:
+    0 -2px 0 0 var(--px),
+    0 2px 0 0 var(--px),
+    -2px 0 0 0 var(--px),
+    2px 0 0 0 var(--px);
+}
+.composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.composer-to,
+.composer-empty {
+  color: #c9cbe0;
+}
+.composer-chip,
+.composer-btn {
+  min-height: 32px;
+  padding: 0 10px;
+  font: inherit;
+  color: #f1ece2;
+  background: #2d3148;
+  border: 2px solid #4a4f6d;
+  border-radius: 0;
+  cursor: pointer;
+}
+.composer-chip:hover,
+.composer-btn:hover:not(:disabled) {
+  background: #3a3e5c;
+}
+.composer-chip.is-on {
+  color: #1b1d2b;
+  background: #f4c542;
+  border-color: #f4c542;
+  font-weight: 700;
+}
+.composer-chip.is-busy::after {
+  content: " •";
+  color: #ff7a45;
+}
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+.composer-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  max-height: 128px;
+  padding: 7px 10px;
+  box-sizing: border-box;
+  font: inherit;
+  line-height: 1.4;
+  color: #f1ece2;
+  background: #12131d;
+  border: 2px solid #4a4f6d;
+  border-radius: 0;
+  resize: none;
+  overflow-y: auto;
+}
+.composer-input::placeholder {
+  color: #9ea2c0;
+}
+.composer-send {
+  color: #1b1d2b;
+  background: #f4c542;
+  border-color: #f4c542;
+  font-weight: 700;
+}
+.composer-send:hover:not(:disabled) {
+  background: #f7d36b;
+}
+.composer-btn:disabled,
+.composer-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.composer-chip:focus-visible,
+.composer-btn:focus-visible,
+.composer-input:focus-visible,
+.composer-files input:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 1px;
+}
+.composer-files input {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  font: inherit;
+  color: #f1ece2;
+  background: #12131d;
+  border: 2px solid #4a4f6d;
+  border-radius: 0;
+}
+.composer-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: #9ea2c0;
+}
+
+/* Escena estrecha: la caja baja bajo el lienzo para no tapar los robots. */
+@media (max-width: 720px) {
+  .composer {
+    position: static;
+    margin-top: 8px;
+  }
+}

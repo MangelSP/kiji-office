@@ -13,14 +13,15 @@ export const CLAUDE_LIMIT_TEXT = /rate limit|usage limit|overloaded/i;
 const CODEX_TEXT = /usage limit|rate limit|429|quota|insufficient_quota/i;
 
 /** El SDK da `resetsAt` en segundos epoch; el core usa milisegundos. */
-function toMillis(v: unknown): number | undefined {
+export function toMillis(v: unknown): number | undefined {
   if (typeof v !== 'number' || !Number.isFinite(v)) return undefined;
   return v < 1e11 ? Math.round(v * 1000) : v;
 }
 
-function limit(kind: LimitKind, message: string, resetsAt?: number): LimitEvent {
+function limit(kind: LimitKind, message: string, resetsAt?: number, rateLimitType?: string): LimitEvent {
   const ev: LimitEvent = { type: 'limit', kind, message };
   if (resetsAt !== undefined) ev.resetsAt = resetsAt;
+  if (rateLimitType) ev.rateLimitType = rateLimitType;
   return ev;
 }
 
@@ -33,7 +34,7 @@ function fromClaude(raw: Record<string, any>): LimitEvent | null {
     }
     if (info.status === 'rejected') {
       const which = str(info.rateLimitType).replace(/_/g, ' ');
-      return limit('rate', `Límite de uso de Claude alcanzado${which ? ` (${which})` : ''}.`, toMillis(info.resetsAt));
+      return limit('rate', `Límite de uso de Claude alcanzado${which ? ` (${which})` : ''}.`, toMillis(info.resetsAt), str(info.rateLimitType) || undefined);
     }
     return null;
   }

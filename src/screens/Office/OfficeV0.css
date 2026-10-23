@@ -2,7 +2,7 @@
   min-height: 100vh;
   padding: 24px 16px;
   box-sizing: border-box;
-  max-width: 1200px;
+  max-width: 1320px;
   margin: 0 auto;
 }
 .office-head {
@@ -36,9 +36,10 @@
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
-@media (min-width: 860px) {
+/* Dos columnas (pestañas | IAs y aprobaciones) desde 1100 px; por debajo, una sola. */
+@media (min-width: 1100px) {
   .office-grid {
-    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     align-items: start;
   }
 }
@@ -87,6 +88,7 @@
 
 .scene-panel {
   margin-bottom: 16px;
+  padding: 8px;
 }
 .office-scene canvas {
   display: block;
@@ -97,7 +99,16 @@
   image-rendering: pixelated;
   cursor: pointer;
 }
-.scene-selected {
+/* La caja de pedido se superpone al lienzo, así que el escenario es su referencia de posición. */
+.scene-stage {
+  position: relative;
+  max-width: 960px;
+  margin: 0 auto;
+}
+.project-compact .project-path {
   margin: 8px 0 0;
-  text-align: center;
+  overflow-wrap: anywhere;
+}
+.office-grid > .col > .btn {
+  align-self: flex-start;
 }

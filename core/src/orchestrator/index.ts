@@ -8,10 +8,14 @@ import { agentHandlers } from './agents.js';
 import { approvalHandlers } from './approvals.js';
 import type { AdapterFactory, Ctx, Handler } from './context.js';
 import { eventHandlers } from './events.js';
+import { METRICS_NOTIFY_MS, METRICS_WRITE_MS, metricsHandlers } from './metrics.js';
 import { type ProviderDeps, providerHandlers } from './providers.js';
 import { projectHandlers } from './projects.js';
+import { loadLimitsSnapshot } from './quota.js';
+import { relayHandlers } from './relay.js';
 import { runHandlers, stopAll, whenIdle } from './runs.js';
 import { settingsHandlers } from './settings.js';
+import { defaultSkillsDir, skillHandlers } from './skills.js';
 import { taskHandlers } from './tasks.js';
 
 export interface OrchestratorOptions {
@@ -23,6 +27,11 @@ export interface OrchestratorOptions {
   testTimeoutMs?: number;
   /** Dependencias de `providers.test` (fetch, SDK y entorno), inyectables en las pruebas. */
   providerDeps?: ProviderDeps;
+  /** Carpeta de skills del usuario (por defecto ~/.claude/skills). */
+  skillsDir?: string;
+  /** Frecuencias máximas (ms) de `run.metrics` por run y de escritura de métricas en la BD (pruebas). */
+  metricsNotifyMs?: number;
+  metricsWriteMs?: number;
 }
 
 export const defaultAdapterFactory: AdapterFactory = (agent) => {
@@ -41,14 +50,27 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     agentStatus: new Map(),
     live: new Map(),
     approvalIndex: new Map(),
+    limits: new Map(),
+    resumeTimers: new Map(),
+    skillsDir: opts.skillsDir ?? defaultSkillsDir(),
+    metricsNotifyMs: opts.metricsNotifyMs ?? METRICS_NOTIFY_MS,
+    metricsWriteMs: opts.metricsWriteMs ?? METRICS_WRITE_MS,
+    providerStatus: null,
+    limitsNotifyTimer: null,
+    limitsLastNotify: 0,
+    closed: false,
   };
+  loadLimitsSnapshot(ctx);
   const handlers: Record<string, Handler> = {
     ...projectHandlers(ctx),
     ...settingsHandlers(ctx),
     ...providerHandlers(ctx, opts.providerDeps),
     ...agentHandlers(ctx),
+    ...metricsHandlers(ctx),
+    ...skillHandlers(ctx),
     ...taskHandlers(ctx),
     ...runHandlers(ctx),
+    ...relayHandlers(ctx),
     ...approvalHandlers(ctx),
     ...eventHandlers(ctx),
   };

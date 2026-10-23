@@ -1,0 +1,55 @@
+.cg-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 11, 18, 0.7);
+}
+.cg-dialog {
+  width: min(480px, calc(100vw - 32px));
+  background: #242738;
+  border: 1px solid #3a3e56;
+  border-radius: 10px;
+  padding: 20px;
+  box-sizing: border-box;
+}
+.cg-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+.cg-text {
+  margin: 0 0 16px;
+  color: #c9cbe0;
+  line-height: 1.4;
+}
+.cg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.cg-btn {
+  font: inherit;
+  color: #f1ece2;
+  background: #31354d;
+  border: 1px solid #4a4f6d;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.cg-btn:hover {
+  background: #3c415d;
+}
+.cg-btn:focus-visible {
+  outline: 2px solid #f4c542;
+  outline-offset: 2px;
+}
+.cg-danger {
+  background: #7a2e2e;
+  border-color: #a34545;
+}
+.cg-danger:hover {
+  background: #8f3838;
+}

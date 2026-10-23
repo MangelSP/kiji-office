@@ -5,6 +5,7 @@ import { basename, join } from 'node:path';
 import type { ProjectRow } from '../db/repos.js';
 import { assertSafeRef, runGitRaw } from '../git/run.js';
 import { pruneWorktrees } from '../git/worktree.js';
+import { rescheduleResumes } from './relay.js';
 import { type Ctx, type Handler, asParams, requireProject, str } from './context.js';
 import { logEvent } from './events.js';
 import { setRobotStatus } from './status.js';
@@ -80,6 +81,7 @@ export function projectHandlers(ctx: Ctx): Record<string, Handler> {
       }
 
       ctx.activeProject = project;
+      rescheduleResumes(ctx, project); // tareas pausadas por límite: la reanudación al reset sobrevive al reinicio
       return project;
     },
 

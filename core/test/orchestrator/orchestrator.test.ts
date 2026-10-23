@@ -356,6 +356,8 @@ describe('límites, errores y parada', () => {
       sessionId: 'sess-9',
       kind: 'rate',
       resetsAt: 1_900_000_000_000,
+      rateLimitType: null,
+      model: 'sonnet',
     });
     expect(h.robot(worker.id).at(-1)).toBe('idle');
     expect(h.orch.ctx.repos.events.tail(h.orch.ctx.activeProject!.id, { kind: 'limit' })).toHaveLength(1);

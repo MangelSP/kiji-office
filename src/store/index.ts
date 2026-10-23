@@ -1,19 +1,30 @@
 // Store único de la UI (zustand) compuesto por slices simples, y su conexión con los eventos del core.
 import { create } from "zustand";
 import { core } from "../core/client";
-import type { Event as CoreEvent } from "../../shared/protocol";
+import type { Event as CoreEvent, ProviderStatus, RelayRow, RunMetrics } from "../../shared/protocol";
 import { createAgentsSlice, type Agent, type AgentsSlice } from "./agents";
 import { createApprovalsSlice, type Approval, type ApprovalsSlice } from "./approvals";
 import { createCoreSlice, type CoreSlice } from "./core";
 import { createEventsSlice, type EventsSlice } from "./events";
+import { createMetricsSlice, type MetricsSlice } from "./metrics";
+import {
+  createOfficeSlice,
+  createProvidersSlice,
+  relayNotice,
+  type OfficeSlice,
+  type ProvidersSlice,
+} from "./providers";
 import { createTasksSlice, type Task, type TasksSlice } from "./tasks";
 
 export type AppState = CoreSlice &
   AgentsSlice &
   TasksSlice &
   EventsSlice &
-  ApprovalsSlice & {
-    /** Vuelve a pedir agentes y tareas (los métodos que no existan se ignoran en silencio). */
+  ApprovalsSlice &
+  MetricsSlice &
+  ProvidersSlice &
+  OfficeSlice & {
+    /** Vuelve a pedir agentes, tareas, proveedores y relevos (los métodos que no existan se ignoran en silencio). */
     refreshAll: () => Promise<void>;
   };
 
@@ -23,9 +34,12 @@ export const useStore = create<AppState>()((...a) => ({
   ...createTasksSlice(...a),
   ...createEventsSlice(...a),
   ...createApprovalsSlice(...a),
+  ...createMetricsSlice(...a),
+  ...createProvidersSlice(...a),
+  ...createOfficeSlice(...a),
   refreshAll: async () => {
     const s = a[1]();
-    await Promise.all([s.refreshAgents(), s.refreshTasks()]);
+    await Promise.all([s.refreshAgents(), s.refreshTasks(), s.refreshProviders(), s.refreshRelays()]);
   },
 }));
 
@@ -62,6 +76,26 @@ export function applyEvent(event: CoreEvent) {
       break;
     case "approval.requested":
       if (isObject(p) && "id" in p) s.addApproval(p as unknown as Approval);
+      break;
+    case "event.appended":
+      // Alimenta los globos de pensamiento de la escena.
+      if (isObject(p) && p.agent_id != null && typeof p.kind === "string") s.noteActivity(p.agent_id as Agent["id"], p.kind, p.payload);
+      break;
+    case "run.metrics":
+      if (isObject(p) && "runId" in p) s.applyRunMetrics(p as unknown as RunMetrics);
+      break;
+    case "agent.changed":
+      if (isObject(p) && "id" in p) s.upsertAgent(p as unknown as Agent);
+      break;
+    case "limits.changed":
+      if (Array.isArray(p)) s.applyLimits(p as ProviderStatus[]);
+      break;
+    case "relay.happened":
+      if (isObject(p) && "id" in p) {
+        const row = p as unknown as RelayRow;
+        s.addRelay(row);
+        s.setNotice(relayNotice(row, s.agents));
+      }
       break;
   }
 }

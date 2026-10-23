@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -225,7 +226,7 @@ describe('migraciones', () => {
   it('abrir dos veces la misma BD no re-aplica nada y conserva los datos', () => {
     const file = join(dir, 'kiji.db');
     const db1 = openDb(file);
-    expect((db1.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
+    expect((db1.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(2);
     expect((db1.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toBe('wal');
     expect((db1.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys).toBe(1);
     createRepos(db1).projects.create({ path: '/x', name: 'x' });
@@ -233,8 +234,39 @@ describe('migraciones', () => {
 
     // si re-aplicara schema.sql fallaría con "table projects already exists"
     const db2 = openDb(file);
-    expect((db2.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
+    expect((db2.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(2);
     expect(createRepos(db2).projects.getByPath('/x')).toBeDefined();
     db2.close();
+  });
+
+  it('migración 2: desde una BD v1 añade perfil, métricas y relays sin perder datos', () => {
+    const file = join(dir, 'v1.db');
+    const old = new DatabaseSync(file);
+    old.exec('PRAGMA foreign_keys = ON');
+    old.exec(readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8'));
+    old.exec('PRAGMA user_version = 1');
+    old.exec(`INSERT INTO projects (id, path, name, created_at) VALUES ('p', '/x', 'x', 1)`);
+    old.exec(`INSERT INTO agents (id, project_id, name, provider, model, created_at) VALUES ('a', 'p', 'Vieja', 'claude', 'sonnet', 1)`);
+    old.exec(`INSERT INTO objectives (id, project_id, text, created_at) VALUES ('o', 'p', 't', 1)`);
+    old.exec(`INSERT INTO tasks (id, objective_id, title, updated_at) VALUES ('t', 'o', 't', 1)`);
+    old.exec(`INSERT INTO runs (id, task_id, agent_id, started_at, cost_usd) VALUES ('r', 't', 'a', 1, 0.5)`);
+    old.close();
+
+    const db = openDb(file);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(2);
+    const repos = createRepos(db);
+    expect(repos.agents.get('a')).toMatchObject({ name: 'Vieja', persona: '', skills: '[]', auto_relay: 1, relay_order: null });
+    expect(repos.runs.get('r')).toMatchObject({
+      cost_usd: 0.5, model: null, cache_read_tokens: 0, cache_write_tokens: 0, context_tokens: 0, context_window: 200000,
+    });
+    const relay = repos.relays.create({ projectId: 'p', taskId: 't', fromModel: 'opus', toModel: 'sonnet', reason: 'limit', detail: 'x' });
+    expect(repos.relays.list('p')).toEqual([relay]);
+    expect(() => repos.relays.create({ projectId: 'p', reason: 'limit' })).not.toThrow();
+    expect(repos.relays.list('p').map((r) => r.id)).toEqual([2, 1]); // el más nuevo primero
+    repos.agents.update('a', { persona: 'Hablo claro.', skills: '["graphify"]', auto_relay: 0 });
+    expect(repos.agents.get('a')).toMatchObject({ persona: 'Hablo claro.', skills: '["graphify"]', auto_relay: 0 });
+    repos.runs.update('r', { model: 'opus', cache_read_tokens: 7, cache_write_tokens: 3, context_tokens: 100, context_window: 1_000_000 });
+    expect(repos.runs.get('r')).toMatchObject({ model: 'opus', cache_read_tokens: 7, cache_write_tokens: 3, context_tokens: 100, context_window: 1_000_000 });
+    db.close();
   });
 });

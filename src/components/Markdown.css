@@ -1,0 +1,101 @@
+/* Respuestas en Markdown: tema oscuro de la app, código monoespaciado y tablas GFM. */
+.md {
+  padding: 10px 12px;
+  background: #12131d;
+  border-left: 3px solid #f4c542;
+  border-radius: 6px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  text-align: left;
+  color: #f1ece2;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 14px 0 6px;
+  line-height: 1.25;
+  font-size: 16px;
+  color: #f4c542;
+}
+.md h1 {
+  font-size: 18px;
+}
+.md p,
+.md ul,
+.md ol,
+.md blockquote {
+  margin: 8px 0;
+}
+.md ul,
+.md ol {
+  padding-left: 22px;
+}
+.md a {
+  color: #8ec5ff;
+  text-decoration: underline;
+}
+.md a:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 2px;
+}
+.md blockquote {
+  padding-left: 12px;
+  border-left: 3px solid #4a4f6d;
+  color: #c9cbe0;
+}
+.md code {
+  padding: 1px 5px;
+  background: #242738;
+  border-radius: 4px;
+  font: 12.5px/1.5 ui-monospace, Menlo, monospace;
+}
+.md pre {
+  margin: 8px 0;
+  padding: 10px;
+  overflow: auto;
+  background: #0c0d14;
+  border: 1px solid #3a3e56;
+  border-radius: 6px;
+}
+.md pre code {
+  padding: 0;
+  background: none;
+  white-space: pre;
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid #3a3e56;
+}
+.md-table-wrap {
+  margin: 8px 0;
+  overflow-x: auto;
+}
+.md table {
+  border-collapse: collapse;
+  min-width: 50%;
+  font-size: 13px;
+}
+.md th,
+.md td {
+  padding: 5px 10px;
+  border: 1px solid #3a3e56;
+  text-align: left;
+}
+.md th {
+  background: #242738;
+  color: #f4c542;
+}
+.md tbody tr:nth-child(even) {
+  background: #181a27;
+}
+.md-img {
+  color: #c9cbe0;
+  font-style: italic;
+}

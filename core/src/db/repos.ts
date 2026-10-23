@@ -26,6 +26,8 @@ export interface AgentRow {
   id: string; project_id: string; name: string; provider: Provider; api_base: string | null;
   model: string | null; role: string | null; color: string | null; is_boss: 0 | 1;
   relay_order: string | null; created_at: number;
+  // 0.2a (migración 2)
+  persona: string; skills: string; auto_relay: 0 | 1;
 }
 export interface ObjectiveRow {
   id: string; project_id: string; text: string; status: ObjectiveStatus; boss_session_id: string | null; created_at: number;
@@ -40,6 +42,14 @@ export interface RunRow {
   id: string; task_id: string; agent_id: string; provider_session_id: string | null; status: RunStatus;
   cost_usd: number; input_tokens: number; output_tokens: number; resume_hint: string | null;
   started_at: number; ended_at: number | null;
+  // 0.2a (migración 2)
+  model: string | null; cache_read_tokens: number; cache_write_tokens: number;
+  context_tokens: number; context_window: number;
+}
+export type RelayReasonDb = 'limit' | 'manual' | 'resume_after_reset';
+export interface RelayDbRow {
+  id: number; project_id: string; task_id: string | null; from_agent_id: string | null; to_agent_id: string | null;
+  from_model: string | null; to_model: string | null; reason: RelayReasonDb; detail: string; created_at: number;
 }
 export interface MessageRow {
   id: number; run_id: string | null; agent_id: string; role: MessageRole; text: string; created_at: number;
@@ -136,7 +146,9 @@ export function createRepos(db: DatabaseSync) {
   };
 
   // --- agents ---
-  const AGENT_FIELDS = ['name', 'provider', 'api_base', 'model', 'role', 'color', 'is_boss', 'relay_order'] as const;
+  const AGENT_FIELDS = [
+    'name', 'provider', 'api_base', 'model', 'role', 'color', 'is_boss', 'relay_order', 'persona', 'skills', 'auto_relay',
+  ] as const;
   const agents = {
     create(a: {
       projectId: string; name: string; provider: Provider; apiBase?: string | null; model?: string | null;
@@ -152,7 +164,7 @@ export function createRepos(db: DatabaseSync) {
     },
     get: (id: string) => one<AgentRow>('SELECT * FROM agents WHERE id = ?', id),
     list: (projectId: string) =>
-      all<AgentRow>('SELECT * FROM agents WHERE project_id = ? ORDER BY created_at, id', projectId),
+      all<AgentRow>('SELECT * FROM agents WHERE project_id = ? ORDER BY created_at, rowid', projectId),
     getBoss: (projectId: string) =>
       one<AgentRow>('SELECT * FROM agents WHERE project_id = ? AND is_boss = 1', projectId),
     /** patch usa nombres de columna (api_base, is_boss...). Un segundo is_boss=1 en el proyecto lanza error. */
@@ -207,7 +219,7 @@ export function createRepos(db: DatabaseSync) {
     },
     get: (id: string) => one<ObjectiveRow>('SELECT * FROM objectives WHERE id = ?', id),
     list: (projectId: string) =>
-      all<ObjectiveRow>('SELECT * FROM objectives WHERE project_id = ? ORDER BY created_at, id', projectId),
+      all<ObjectiveRow>('SELECT * FROM objectives WHERE project_id = ? ORDER BY created_at, rowid', projectId),
     setStatus(id: string, status: ObjectiveStatus): void {
       db.prepare('UPDATE objectives SET status = ? WHERE id = ?').run(status, id);
     },
@@ -254,15 +266,32 @@ export function createRepos(db: DatabaseSync) {
   // --- runs ---
   const RUN_FIELDS = [
     'provider_session_id', 'status', 'cost_usd', 'input_tokens', 'output_tokens', 'resume_hint', 'ended_at',
+    'model', 'cache_read_tokens', 'cache_write_tokens', 'context_tokens', 'context_window',
   ] as const;
   const runs = {
-    create(r: { taskId: string; agentId: string; providerSessionId?: string | null }): RunRow {
+    create(r: { taskId: string; agentId: string; providerSessionId?: string | null; model?: string | null }): RunRow {
       const id = newId();
       db.prepare(
-        'INSERT INTO runs (id, task_id, agent_id, provider_session_id, started_at) VALUES (?, ?, ?, ?, ?)',
-      ).run(id, r.taskId, r.agentId, r.providerSessionId ?? null, now());
+        'INSERT INTO runs (id, task_id, agent_id, provider_session_id, model, started_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ).run(id, r.taskId, r.agentId, r.providerSessionId ?? null, r.model ?? null, now());
       return runs.get(id)!;
     },
+    /** Últimos runs de un agente, el más nuevo primero. */
+    listByAgent: (agentId: string, limit = 20) =>
+      all<RunRow>('SELECT * FROM runs WHERE agent_id = ? ORDER BY started_at DESC, rowid DESC LIMIT ?', agentId, limit),
+    /** Totales de todos los runs de un agente. */
+    totalsByAgent: (agentId: string) =>
+      one<{ runs: number; cost: number; input: number; output: number; cache_read: number; cache_write: number }>(
+        `SELECT COUNT(*) AS runs, COALESCE(SUM(cost_usd), 0) AS cost, COALESCE(SUM(input_tokens), 0) AS input,
+                COALESCE(SUM(output_tokens), 0) AS output, COALESCE(SUM(cache_read_tokens), 0) AS cache_read,
+                COALESCE(SUM(cache_write_tokens), 0) AS cache_write
+         FROM runs WHERE agent_id = ?`, agentId)!,
+    /** Runs del proyecto que empezaron desde `since` (epoch ms), con el modelo preferido del agente como respaldo. */
+    listSince: (projectId: string, since: number) =>
+      all<{ model: string | null; agent_model: string | null; cost_usd: number }>(
+        `SELECT r.model AS model, a.model AS agent_model, r.cost_usd AS cost_usd
+         FROM runs r JOIN agents a ON a.id = r.agent_id
+         WHERE a.project_id = ? AND r.started_at >= ?`, projectId, since),
     get: (id: string) => one<RunRow>('SELECT * FROM runs WHERE id = ?', id),
     listByTask: (taskId: string) => all<RunRow>('SELECT * FROM runs WHERE task_id = ? ORDER BY started_at, rowid', taskId),
     latestByTask: (taskId: string) =>
@@ -271,6 +300,9 @@ export function createRepos(db: DatabaseSync) {
       patchRow(db, 'runs', id, patch, RUN_FIELDS);
       return runs.get(id);
     },
+    /** Gasto acumulado de una tarea en USD (todos sus runs). */
+    costByTask: (taskId: string) =>
+      one<{ total: number }>('SELECT COALESCE(SUM(cost_usd), 0) AS total FROM runs WHERE task_id = ?', taskId)!.total,
     /** Gasto acumulado de un agente en USD. */
     costByAgent: (agentId: string) =>
       one<{ total: number }>('SELECT COALESCE(SUM(cost_usd), 0) AS total FROM runs WHERE agent_id = ?', agentId)!.total,
@@ -316,6 +348,13 @@ export function createRepos(db: DatabaseSync) {
          ORDER BY id DESC LIMIT 1`, taskId);
       return typeof row?.text === 'string' && row.text !== '' ? row.text : null;
     },
+    /** Eventos de un run de un tipo, en orden ascendente (para `task.steps` y los traspasos). */
+    listByRun: (runId: string, kind: EventKind, limit = 2000) =>
+      all<EventRow>('SELECT * FROM events WHERE run_id = ? AND kind = ? ORDER BY id LIMIT ?', runId, kind, limit),
+    /** Llamadas a herramientas iniciadas en un run. */
+    countToolStarts: (runId: string) =>
+      one<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND kind = 'tool' AND json_extract(payload, '$.status') = 'start'`, runId)!.n,
     tail(projectId: string, o: {
       afterId?: number; beforeId?: number; limit?: number; agentId?: string; kind?: EventKind;
     } = {}): EventRow[] {
@@ -380,6 +419,24 @@ export function createRepos(db: DatabaseSync) {
     },
   };
 
+  // --- relays ---
+  const relays = {
+    create(r: {
+      projectId: string; taskId?: string | null; fromAgentId?: string | null; toAgentId?: string | null;
+      fromModel?: string | null; toModel?: string | null; reason: RelayReasonDb; detail?: string;
+    }): RelayDbRow {
+      const info = db.prepare(
+        `INSERT INTO relays (project_id, task_id, from_agent_id, to_agent_id, from_model, to_model, reason, detail, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(r.projectId, r.taskId ?? null, r.fromAgentId ?? null, r.toAgentId ?? null, r.fromModel ?? null,
+        r.toModel ?? null, r.reason, r.detail ?? '', now());
+      return one<RelayDbRow>('SELECT * FROM relays WHERE id = ?', Number(info.lastInsertRowid))!;
+    },
+    /** El más nuevo primero. */
+    list: (projectId: string, limit = 50) =>
+      all<RelayDbRow>('SELECT * FROM relays WHERE project_id = ? ORDER BY id DESC LIMIT ?', projectId, limit),
+  };
+
   // --- settings ---
   const settings = {
     get: (key: string) => one<{ value: string }>('SELECT value FROM settings WHERE key = ?', key)?.value,
@@ -390,7 +447,7 @@ export function createRepos(db: DatabaseSync) {
     },
   };
 
-  return { projects, agents, objectives, tasks, taskFiles, runs, messages, events, approvals, testRuns, integrations, settings };
+  return { projects, agents, objectives, tasks, taskFiles, runs, messages, events, approvals, testRuns, integrations, relays, settings };
 }
 
 export type Repos = ReturnType<typeof createRepos>;

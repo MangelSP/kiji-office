@@ -1,0 +1,111 @@
+/* Tira de tarjetas de robots. Paleta de la app: fondo #1b1d2b, panel #242738, acento #f4c542. */
+.plain.strip {
+  flex-direction: row;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 2px 8px;
+  scroll-snap-type: x proximity;
+}
+.strip > li {
+  flex: 0 0 188px;
+  scroll-snap-align: start;
+}
+.strip-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 84px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  font: inherit;
+  color: #f1ece2;
+  text-align: left;
+  background: #1b1d2b;
+  /* El borde siempre mide lo mismo: el anillo de selección es un box-shadow y no mueve la tarjeta. */
+  border: 1px solid #3a3e56;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.strip-card:hover {
+  background: #242738;
+}
+.strip-card.is-boss {
+  background: #2c2a22;
+  border-color: #5a4f2a;
+}
+.strip-card.is-selected {
+  box-shadow: 0 0 0 2px #f4c542;
+  border-color: #f4c542;
+}
+.strip-card:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 2px;
+}
+.strip-avatar {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 2px solid rgba(0, 0, 0, 0.35);
+}
+.strip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.strip-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.strip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.strip-status,
+.strip-cost {
+  font-size: 12px;
+}
+.strip-meter {
+  display: flex;
+  gap: 2px;
+}
+.strip-seg {
+  flex: 1;
+  height: 6px;
+  background: #3a3e56;
+  border-radius: 1px;
+}
+.strip-meter.is-ok .strip-seg.is-on {
+  background: #4cc38a;
+}
+.strip-meter.is-warn .strip-seg.is-on {
+  background: #f4c542;
+}
+.strip-meter.is-high .strip-seg.is-on {
+  background: #ff6b57;
+}
+
+/* Elementos compartidos con las pestañas de agente. */
+.ag-chip {
+  display: inline-block;
+  padding: 0 7px;
+  border: 1px solid #4a4f6d;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 18px;
+  color: #f1ece2;
+  background: #2d3148;
+  white-space: nowrap;
+}
+.ag-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}

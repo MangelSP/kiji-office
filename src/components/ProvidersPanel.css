@@ -1,0 +1,98 @@
+.panel h3 {
+  margin: 16px 0 8px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #f4c542;
+}
+.prov-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.prov-head .tag {
+  margin-left: 0;
+}
+.prov-total {
+  margin-left: auto;
+}
+.light {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  background: #8a8f98;
+  box-shadow: 0 0 0 2px #12131d;
+}
+.light-ok {
+  background: #4cc38a;
+}
+.light-warning {
+  background: #f4c542;
+}
+.light-limited {
+  background: #ff6b57;
+}
+.wins {
+  margin-top: 10px;
+  gap: 10px;
+}
+.win-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.bar {
+  height: 8px;
+  margin-top: 4px;
+  background: #12131d;
+  border: 1px solid #3a3e56;
+}
+.bar-fill {
+  height: 100%;
+}
+.bar-low {
+  background: #4cc38a;
+}
+.bar-mid {
+  background: #f4c542;
+}
+.bar-high {
+  background: #ff6b57;
+}
+.win-reset {
+  margin: 2px 0 0;
+}
+.models {
+  margin-top: 10px;
+  gap: 4px;
+}
+.relays {
+  gap: 4px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.switch select {
+  min-height: 44px;
+  padding: 0 8px;
+  font: inherit;
+  color: #f1ece2;
+  background: #1b1d2b;
+  border: 1px solid #4a4f6d;
+  border-radius: 8px;
+}
+.switch select:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 2px;
+}
+.confirm {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid #f4c542;
+  border-radius: 8px;
+}
+.confirm p {
+  margin: 0;
+}
+.panel .prov + .prov {
+  margin-top: 0;
+}

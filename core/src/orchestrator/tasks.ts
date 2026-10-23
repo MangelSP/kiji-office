@@ -1,8 +1,10 @@
 // Tareas: máquina de estados (PLAN D4) y handlers task.create / list / assign. task.start / stop están en runs.ts.
 import { posix } from 'node:path';
-import { FileClaimError, type ObjectiveRow, type ProjectRow, type TaskRow, type TaskStatus } from '../db/repos.js';
+import type { ToolStep } from '../../../shared/protocol.js';
+import { FileClaimError, type EventRow, type ObjectiveRow, type ProjectRow, type TaskRow, type TaskStatus } from '../db/repos.js';
 import { type Ctx, type Handler, asParams, requireProject, str } from './context.js';
 import { logEvent } from './events.js';
+import { contextPct } from './metrics.js';
 
 /**
  * Transiciones permitidas. Todo lo que no figure aquí se rechaza.
@@ -39,17 +41,86 @@ export function isReadOnlyTask(ctx: Ctx, taskId: string): boolean {
   return ctx.repos.taskFiles.list(taskId).length === 0;
 }
 
-export type TaskView = TaskRow & { files: string[]; read_only: boolean; result: string | null };
+export type TaskView = TaskRow & {
+  files: string[];
+  read_only: boolean;
+  result: string | null;
+  /** Modelo del último run (o el del run vivo); si aún no hay runs, el preferido del agente. */
+  model: string | null;
+  /** Gasto de todos los runs de la tarea. */
+  cost_usd: number;
+  /** Contexto usado del último run, en % (0..100). */
+  context_pct: number;
+  /** Llamadas a herramientas del último run. */
+  steps_count: number;
+};
 
-/** Fila de tarea tal como viaja a la UI: columnas de la BD + `files` (rutas que posee), `read_only` y `result` (respuesta final). */
+/**
+ * Fila de tarea tal como viaja a la UI: columnas de la BD + `files` (rutas que posee), `read_only`, `result`
+ * (respuesta final) y, desde 0.2a, `model`, `cost_usd`, `context_pct` y `steps_count`.
+ */
 export function taskView(ctx: Ctx, task: TaskRow): TaskView {
   const files = ctx.repos.taskFiles.list(task.id).map((f) => f.path);
+  const live = ctx.live.get(task.id);
+  const last = ctx.repos.runs.latestByTask(task.id);
+  const agent = task.agent_id ? ctx.repos.agents.get(task.agent_id) : undefined;
+  const tokens = live && live.runId === last?.id ? live.usage.contextTokens : (last?.context_tokens ?? 0);
+  const window = live && live.runId === last?.id ? live.usage.contextWindow : (last?.context_window ?? 0);
   return {
     ...task,
     files,
     read_only: files.length === 0,
     result: ctx.repos.events.lastDoneText(task.id)?.slice(0, MAX_RESULT_CHARS) ?? null,
+    model: live?.model ?? last?.model ?? agent?.model ?? null,
+    cost_usd: ctx.repos.runs.costByTask(task.id),
+    context_pct: contextPct(tokens, window),
+    steps_count: last ? ctx.repos.events.countToolStarts(last.id) : 0,
   };
+}
+
+const TARGET_MAX = 80;
+const DENIED_OUTPUT = /^(Acción prohibida|No puedes modificar|El usuario denegó|Run detenido|Cancelado|Este agente es de solo lectura)/;
+
+/** Objetivo de una llamada a herramienta para mostrarlo en la cronología (archivo, ruta, comando o patrón), recortado. */
+export function stepTarget(input: unknown): string {
+  if (input === null || typeof input !== 'object') return '';
+  const i = input as Record<string, unknown>;
+  for (const k of ['file_path', 'path', 'notebook_path', 'command', 'pattern', 'url']) {
+    const v = i[k];
+    if (typeof v === 'string' && v.trim() !== '') {
+      const t = v.replace(/\s+/g, ' ').trim();
+      return t.length > TARGET_MAX ? `${t.slice(0, TARGET_MAX - 1)}…` : t;
+    }
+  }
+  return '';
+}
+
+/** Cronología de herramientas de un run a partir de sus eventos `tool` (cada `end` cierra el `start` abierto más antiguo del mismo nombre). */
+export function buildSteps(rows: EventRow[]): ToolStep[] {
+  const steps: ToolStep[] = [];
+  const open: number[] = [];
+  for (const row of rows) {
+    let p: { name?: string; status?: string; input?: unknown; output?: unknown; is_error?: boolean };
+    try {
+      p = JSON.parse(row.payload);
+    } catch {
+      continue;
+    }
+    const name = typeof p.name === 'string' ? p.name : 'unknown';
+    if (p.status === 'start') {
+      steps.push({ name, target: stepTarget(p.input), ok: null, startedAt: row.created_at, endedAt: null });
+      open.push(steps.length - 1);
+    } else if (p.status === 'end') {
+      let at = open.findIndex((i) => steps[i]!.name === name);
+      if (at === -1 && name === 'unknown' && open.length > 0) at = 0;
+      if (at === -1) continue;
+      const step = steps[open[at]!]!;
+      open.splice(at, 1);
+      step.endedAt = row.created_at;
+      step.ok = !(p.is_error === true || (typeof p.output === 'string' && DENIED_OUTPUT.test(p.output)));
+    }
+  }
+  return steps;
 }
 
 /** Emite `task.changed` con la fila completa actual. */
@@ -124,7 +195,7 @@ export function normalizeTaskPath(raw: unknown): string {
   return p;
 }
 
-function checkAssignable(ctx: Ctx, project: ProjectRow, agentId: string) {
+export function checkAssignable(ctx: Ctx, project: ProjectRow, agentId: string) {
   const agent = ctx.repos.agents.get(agentId);
   if (!agent || agent.project_id !== project.id) throw new Error(`agente inexistente en este proyecto: ${agentId}`);
   if (agent.is_boss === 1) throw new Error('el jefe planea y revisa, no ejecuta tareas: asigna un trabajador');
@@ -136,6 +207,14 @@ export function taskHandlers(ctx: Ctx): Record<string, Handler> {
     'task.list': () => {
       if (!ctx.activeProject) return [];
       return ctx.repos.tasks.listByProject(ctx.activeProject.id).map((t) => taskView(ctx, t));
+    },
+
+    /** `{taskId}` -> cronología de herramientas del último run. */
+    'task.steps': (params) => {
+      const p = asParams(params, 'task.steps');
+      const task = getTask(ctx, str(p.taskId, 'taskId', 'task.steps'));
+      const last = ctx.repos.runs.latestByTask(task.id);
+      return last ? buildSteps(ctx.repos.events.listByRun(last.id, 'tool')) : [];
     },
 
     'task.create': (params) => {

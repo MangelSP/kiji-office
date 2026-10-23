@@ -8,7 +8,9 @@
 // - `result.subtype === 'error_max_budget_usd'` y las demás señales de D2 pasan por `toLimit`.
 // - Solo se emite UN evento terminal (`done` | `error` | `limit`) por run.
 
-import { realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   query as sdkQuery,
   type CanUseTool,
@@ -19,7 +21,7 @@ import {
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { classifyCommand, classifyPath, isInsideCwd, isPathAllowed, type Risk } from './classify.js';
-import { CLAUDE_LIMIT_TEXT, toLimit } from './limits.js';
+import { CLAUDE_LIMIT_TEXT, toLimit, toMillis } from './limits.js';
 import { AsyncQueue } from './queue.js';
 import type { AgentAdapter, AgentEvent, RunSpec } from './types.js';
 
@@ -80,9 +82,48 @@ const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 const WRITE_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const READ_TOOLS = new Set(READ_ONLY_TOOLS);
 /** Herramientas internas sin efectos sobre el disco ni la red. */
-const SAFE_TOOLS = new Set(['TodoWrite', 'ToolSearch', 'Agent', 'Task', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop']);
+const SAFE_TOOLS = new Set(['Skill', 'TodoWrite', 'ToolSearch', 'Agent', 'Task', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop']);
 
 const MAX_TOOL_OUTPUT = 4000;
+
+/** Ventana de contexto por defecto; la de 1M va marcada con `[1m]` en el id del modelo (D8). Se corrige con `modelUsage`. */
+export const DEFAULT_CONTEXT_WINDOW = 200_000;
+export const LONG_CONTEXT_WINDOW = 1_000_000;
+export const contextWindowFor = (...models: Array<string | undefined>): number =>
+  models.some((m) => typeof m === 'string' && m.toLowerCase().includes('[1m]')) ? LONG_CONTEXT_WINDOW : DEFAULT_CONTEXT_WINDOW;
+
+/** Nombre del plugin local temporal que agrupa las skills del agente (D12): se ven como `kiji-skills:<skill>`. */
+export const SKILLS_PLUGIN = 'kiji-skills';
+
+/**
+ * Monta un plugin local temporal con un enlace simbólico por skill elegida (D12, opción b: con `settingSources: []`
+ * el SDK no descubre ~/.claude/skills, y su opción `skills` solo filtra lo que ya se ve). Devuelve la carpeta.
+ */
+export function createSkillsPlugin(skills: Array<{ name: string; dir: string }>): string {
+  const root = mkdtempSync(join(tmpdir(), 'kiji-skills-'));
+  try {
+    mkdirSync(join(root, '.claude-plugin'));
+    mkdirSync(join(root, 'skills'));
+    writeFileSync(
+      join(root, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: SKILLS_PLUGIN, version: '0.0.1', description: 'Skills elegidas para un agente de Kiji' }),
+    );
+    for (const sk of skills) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(sk.name)) throw new Error(`nombre de skill no válido: ${sk.name}`);
+      symlinkSync(sk.dir, join(root, 'skills', sk.name), 'dir');
+    }
+  } catch (e) {
+    rmSync(root, { recursive: true, force: true });
+    throw e;
+  }
+  return root;
+}
+
+/** Plan B (D12c): la skill descrita en el system prompt, para que el agente lea su SKILL.md con Read. */
+function skillsPromptFallback(skills: Array<{ name: string; dir: string; description?: string }>): string {
+  const lines = skills.map((s) => `- ${s.name}${s.description ? `: ${s.description}` : ''} (${join(s.dir, 'SKILL.md')})`);
+  return `Tienes estas skills; cuando apliquen, lee su SKILL.md con Read y sigue sus instrucciones:\n${lines.join('\n')}`;
+}
 
 type Pending = {
   tool: string;
@@ -103,6 +144,8 @@ export class ClaudeAdapter implements AgentAdapter {
   private spec: RunSpec | null = null;
   private roots: string[] = [];
   private stderrTail = '';
+  private skillsDir: string | null = null;
+  private hasSkills = false;
 
   constructor(private readonly opts: ClaudeAdapterOptions = {}) {}
 
@@ -127,13 +170,27 @@ export class ClaudeAdapter implements AgentAdapter {
     out.onReturn = () => void this.stop();
     input.push(userMessage(spec.prompt));
 
+    let systemPrompt = spec.readOnly ? spec.systemPrompt : `${spec.systemPrompt}\n\n${WORKER_TOOLS_HINT}`;
+    let plugins: Options['plugins'];
+    let skillNames: string[] | undefined;
+    if (spec.skills && spec.skills.length > 0) {
+      try {
+        this.skillsDir = createSkillsPlugin(spec.skills);
+        plugins = [{ type: 'local', path: this.skillsDir }];
+        skillNames = spec.skills.map((s) => `${SKILLS_PLUGIN}:${s.name}`);
+        this.hasSkills = true;
+      } catch {
+        systemPrompt += `\n\n${skillsPromptFallback(spec.skills)}`; // plan B
+      }
+    }
+
     const options: Options = {
       cwd: spec.cwd,
       model: spec.model,
       abortController: this.abortController,
       permissionMode: 'default',
       settingSources: [], // aislamiento: ni CLAUDE.md ni settings del usuario
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: spec.readOnly ? spec.systemPrompt : `${spec.systemPrompt}\n\n${WORKER_TOOLS_HINT}` },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
       disallowedTools: [...NEVER_TOOLS, ...SECRET_READ_RULES],
       maxBudgetUsd: spec.budgetUsd,
       includePartialMessages: true,
@@ -142,7 +199,9 @@ export class ClaudeAdapter implements AgentAdapter {
         this.stderrTail = (this.stderrTail + data).slice(-2000);
       },
     };
-    if (spec.readOnly) options.tools = READ_ONLY_TOOLS; // el jefe solo lee
+    if (plugins) options.plugins = plugins;
+    if (skillNames) options.skills = skillNames; // además de montarlas, oculta las demás skills del listado
+    if (spec.readOnly) options.tools = this.hasSkills ? [...READ_ONLY_TOOLS, 'Skill'] : READ_ONLY_TOOLS; // el jefe solo lee
     if (spec.outputSchema) options.outputFormat = { type: 'json_schema', schema: spec.outputSchema as Record<string, unknown> };
     if (spec.resumeSessionId) options.resume = spec.resumeSessionId;
     if (this.opts.pathToClaudeCodeExecutable) options.pathToClaudeCodeExecutable = this.opts.pathToClaudeCodeExecutable;
@@ -152,6 +211,7 @@ export class ClaudeAdapter implements AgentAdapter {
     try {
       q = sdkQuery({ prompt: input, options });
     } catch (e) {
+      this.removeSkillsDir();
       out.push({ type: 'error', message: errMessage(e), retryable: false });
       out.end();
       return out;
@@ -213,7 +273,7 @@ export class ClaudeAdapter implements AgentAdapter {
       return this.request(opts.toolUseID, toolName, input, opts.signal);
     };
 
-    if (this.spec?.readOnly && !READ_TOOLS.has(toolName)) {
+    if (this.spec?.readOnly && !READ_TOOLS.has(toolName) && !(toolName === 'Skill' && this.hasSkills)) {
       return deny('Este agente es de solo lectura: solo puede usar Read, Glob y Grep.');
     }
 
@@ -273,6 +333,11 @@ export class ClaudeAdapter implements AgentAdapter {
     const streamedText = new Set<string>();
     const streamedThinking = new Set<string>();
     let streamMsgId = '';
+    // Consumo: último `usage` de cada mensaje del hilo principal (el SDK repite el mismo id por cada bloque).
+    const turns = new Map<string, { input: number; output: number; cacheRead: number; cacheWrite: number }>();
+    let lastModel = spec.model;
+    let contextTokens = 0;
+    let contextWindow = contextWindowFor(spec.model);
 
     const finish = (ev: AgentEvent) => {
       if (terminal || this.aborted) return;
@@ -304,6 +369,27 @@ export class ClaudeAdapter implements AgentAdapter {
 
           case 'assistant': {
             const id: string = m.message?.id ?? '';
+            const u = m.message?.usage;
+            if (u && !m.parent_tool_use_id) {
+              const turn = {
+                input: num(u.input_tokens),
+                output: num(u.output_tokens),
+                cacheRead: num(u.cache_read_input_tokens),
+                cacheWrite: num(u.cache_creation_input_tokens),
+              };
+              turns.set(id || `anon-${turns.size}`, turn);
+              lastModel = str(m.message?.model) || lastModel;
+              contextTokens = turn.input + turn.cacheRead + turn.cacheWrite;
+              if (contextWindowFor(spec.model, lastModel) > contextWindow) contextWindow = LONG_CONTEXT_WINDOW;
+              const sum = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+              for (const t of turns.values()) {
+                sum.input += t.input;
+                sum.output += t.output;
+                sum.cacheRead += t.cacheRead;
+                sum.cacheWrite += t.cacheWrite;
+              }
+              out.push({ type: 'usage', model: lastModel, ...sum, contextTokens, contextWindow, ...(sessionId ? { sessionId } : {}) });
+            }
             const blocks: any[] = Array.isArray(m.message?.content) ? m.message.content : [];
             for (const b of blocks) {
               if (b.type === 'thinking' || b.type === 'redacted_thinking') {
@@ -329,6 +415,7 @@ export class ClaudeAdapter implements AgentAdapter {
                   input: undefined,
                   status: 'end',
                   output: toolOutput(b.content),
+                  ...(b.is_error === true ? { isError: true } : {}),
                 });
               }
             }
@@ -338,6 +425,17 @@ export class ClaudeAdapter implements AgentAdapter {
           case 'rate_limit_event':
           case 'system': {
             if (m.type === 'system' && m.subtype !== 'api_retry') break;
+            if (m.type === 'rate_limit_event') {
+              const info = m.rate_limit_info;
+              if (info && typeof info === 'object' && ['allowed', 'allowed_warning', 'rejected'].includes(info.status)) {
+                const rate: Extract<AgentEvent, { type: 'rate' }> = { type: 'rate', status: info.status };
+                if (typeof info.rateLimitType === 'string') rate.rateLimitType = info.rateLimitType;
+                if (typeof info.utilization === 'number' && Number.isFinite(info.utilization)) rate.utilization = info.utilization;
+                const resetsAt = toMillis(info.resetsAt);
+                if (resetsAt !== undefined) rate.resetsAt = resetsAt;
+                out.push(rate);
+              }
+            }
             const lim = toLimit('claude', m);
             if (lim) pendingLimit = lim;
             break;
@@ -345,6 +443,11 @@ export class ClaudeAdapter implements AgentAdapter {
 
           case 'result': {
             if ((m.queued_turn_count ?? 0) > 0 && m.subtype === 'success' && !m.is_error) break; // vendrá otro result
+            const fin = finalUsage(m, lastModel, contextTokens, contextWindow, sessionId);
+            if (fin && !this.aborted) {
+              contextWindow = fin.contextWindow;
+              out.push(fin);
+            }
             const success = m.subtype === 'success' && !m.is_error;
             if (success) {
               const ev: AgentEvent = {
@@ -363,7 +466,9 @@ export class ClaudeAdapter implements AgentAdapter {
               }
               finish(ev);
             } else {
-              const lim = toLimit('claude', m) ?? (pendingLimitApplies(m) ? pendingLimit : null);
+              const own = toLimit('claude', m);
+              // El límite del `result` (por texto) no sabe qué ventana saltó: se completa con el aviso previo.
+              const lim = own && own.kind === 'rate' && pendingLimit?.kind === 'rate' ? { ...pendingLimit, ...own, rateLimitType: pendingLimit.rateLimitType, resetsAt: own.resetsAt ?? pendingLimit.resetsAt } : own ?? (pendingLimitApplies(m) ? pendingLimit : null);
               if (lim) finish({ ...lim, sessionId });
               else finish(resultError(m, sessionId));
             }
@@ -390,8 +495,20 @@ export class ClaudeAdapter implements AgentAdapter {
       } catch {
         /* ya cerrado */
       }
+      this.removeSkillsDir();
       out.end();
     }
+  }
+
+  /** Borra el plugin temporal de skills (solo enlaces simbólicos: no toca las carpetas originales). */
+  private removeSkillsDir(): void {
+    if (!this.skillsDir) return;
+    try {
+      rmSync(this.skillsDir, { recursive: true, force: true });
+    } catch {
+      /* limpieza best-effort */
+    }
+    this.skillsDir = null;
   }
 }
 
@@ -404,6 +521,7 @@ function userMessage(text: string): SDKUserMessage {
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const errMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const withStderr = (msg: string, stderr: string): string => (stderr.trim() ? `${msg}\n${stderr.trim().slice(-500)}` : msg);
 
@@ -431,4 +549,41 @@ function resultError(m: any, sessionId?: string): AgentEvent {
   const status = m.api_error_status;
   const retryable = status === 429 || (typeof status === 'number' && status >= 500) || /overloaded|timed? ?out|ECONN/i.test(message);
   return { type: 'error', message, retryable, sessionId };
+}
+
+/**
+ * Cifras exactas del `result` (`modelUsage`, suma de todos los modelos del run) como un último evento `usage`.
+ * La ventana de contexto es la del modelo principal (el del último mensaje; si no, el de mayor coste).
+ */
+function finalUsage(m: any, lastModel: string, contextTokens: number, fallbackWindow: number, sessionId?: string): Extract<AgentEvent, { type: 'usage' }> | null {
+  const mu = m.modelUsage;
+  if (!mu || typeof mu !== 'object') return null;
+  const entries = Object.entries(mu as Record<string, any>).filter(([, v]) => v && typeof v === 'object');
+  if (entries.length === 0) return null;
+  const sum = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+  for (const [, v] of entries) {
+    sum.input += num(v.inputTokens);
+    sum.output += num(v.outputTokens);
+    sum.cacheRead += num(v.cacheReadInputTokens);
+    sum.cacheWrite += num(v.cacheCreationInputTokens);
+    sum.cost += num(v.costUSD);
+  }
+  const main =
+    entries.find(([k]) => k === lastModel) ??
+    entries.find(([k]) => lastModel !== '' && (k.includes(lastModel) || lastModel.includes(k))) ??
+    [...entries].sort((a, b) => num(b[1].costUSD) - num(a[1].costUSD))[0]!;
+  const window = num(main[1].contextWindow) > 0 ? num(main[1].contextWindow) : fallbackWindow;
+  return {
+    type: 'usage',
+    model: lastModel || main[0],
+    input: sum.input,
+    output: sum.output,
+    cacheRead: sum.cacheRead,
+    cacheWrite: sum.cacheWrite,
+    contextTokens,
+    contextWindow: window,
+    costUsd: typeof m.total_cost_usd === 'number' ? m.total_cost_usd : sum.cost,
+    final: true,
+    ...(sessionId ? { sessionId } : {}),
+  };
 }

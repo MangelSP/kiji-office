@@ -1,8 +1,9 @@
 mod core_process;
 mod detect;
 mod keyring;
+mod lifecycle;
 
-use tauri::RunEvent;
+use tauri::{Manager, RunEvent, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -10,7 +11,17 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(core_process::CoreState::default())
+        .manage(lifecycle::LifecycleState::default())
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    lifecycle::request_close(window.app_handle(), "window");
+                }
+            }
+        })
         .setup(|app| {
+            lifecycle::setup_tray(app.handle())?;
             // Fuera del hilo principal: leer el llavero puede mostrar un aviso del SO y no debe bloquear la ventana.
             let handle = app.handle().clone();
             std::thread::spawn(move || core_process::start(&handle));
@@ -23,13 +34,23 @@ pub fn run() {
             detect::detect_clis,
             core_process::core_send,
             core_process::core_restart,
+            lifecycle::app_close_ack,
+            lifecycle::app_hide,
+            lifecycle::app_quit,
+            lifecycle::tray_set_busy,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|handle, event| {
-        if let RunEvent::Exit = event {
-            core_process::shutdown(handle);
+        match event {
+            // Cmd+Q / salir del Dock: la UI decide (salvo si ya estamos saliendo de verdad).
+            RunEvent::ExitRequested { api, code, .. } if lifecycle::should_intercept_exit(handle, code) => {
+                api.prevent_exit();
+                lifecycle::request_close(handle, "quit");
+            }
+            RunEvent::Exit => core_process::shutdown(handle),
+            _ => {}
         }
     });
 }
