@@ -76,7 +76,22 @@ export type MethodName =
   | 'connection.test'
   | 'connection.models'
   | 'connections.discover'
-  | 'secrets.put';
+  | 'secrets.put'
+  // 0.2d: objetivos, revisión, integración (hito 3) y Gerente autónomo (PLAN-0.2b.md parte 3; migración 5)
+  | 'objective.list'
+  | 'task.review'
+  | 'integration.list'
+  | 'manager.get'
+  | 'manager.set'
+  | 'manager.tick'
+  | 'manager.stopAll'
+  | 'manager.resume'
+  | 'manager.diary'
+  | 'memory.list'
+  | 'memory.add'
+  | 'memory.archive'
+  | 'notifications.list'
+  | 'notifications.markRead';
 
 /** Eventos de 0.1 (sección 4) más los propios del servidor. */
 export type EventName =
@@ -100,7 +115,14 @@ export type EventName =
   // 0.2b
   | 'connections.changed'
   /** core → Rust (nunca llega a la UI): pide las claves `conn:<id>` del llavero. */
-  | 'secrets.request';
+  | 'secrets.request'
+  // 0.2d
+  | 'objective.changed'
+  | 'integration.changed'
+  | 'manager.tick'
+  | 'manager.action'
+  | 'manager.halted'
+  | 'notify';
 
 // ---------------------------------------------------------------------------
 // 0.2a: métricas, cupo, relevo y perfil (PLAN-0.2a.md, "Contrato core ⇄ UI")
@@ -399,3 +421,126 @@ export type ConnectionTestParams = { id: string; model?: string };
 
 /** Elemento de `agents.relay_order`: alias de Claude o `conn:<uuid>/<modelo>`. */
 export type RelayTarget = 'opus' | 'sonnet' | 'haiku' | `conn:${string}/${string}`;
+
+
+// ---------------------------------------------------------------------------
+// 0.2d: objetivos, revisión e integración (hito 3) y Gerente autónomo (PLAN-0.2b.md, D21–D24)
+// ---------------------------------------------------------------------------
+
+export type ObjectiveView = {
+  id: string;
+  projectId: string;
+  text: string;
+  status: 'planning' | 'active' | 'done';
+  createdAt: number;
+  /** Tareas del objetivo por estado. */
+  tasksByStatus: Record<string, number>;
+};
+export type ObjectiveCreateParams = { projectId?: string; text: string };
+
+/** Revisión de una tarea en `review`: aprobar (pasa a `approved`) o pedir cambios con hallazgos. */
+export type TaskReviewParams = { id: string; projectId?: string; verdict: 'approve' | 'changes'; findings?: string[] };
+
+export type IntegrationView = {
+  id: string;
+  projectId: string;
+  taskId: string;
+  beforeSha: string;
+  afterSha: string;
+  status: 'applied' | 'reverted' | 'failed';
+  detail: string;
+  createdAt: number;
+};
+/** `integration.apply {id: taskId}` integra una tarea `approved`: rebase, tests, merge ff-only a la rama base. */
+export type IntegrationApplyParams = { id: string; projectId?: string };
+export type IntegrationRevertParams = { integrationId: string; projectId?: string };
+
+export type AutonomyLevel = 'auto' | 'notify' | 'ask';
+export type ManagerLevels = {
+  plan: AutonomyLevel;
+  assign: AutonomyLevel;
+  start: AutonomyLevel;
+  retry: AutonomyLevel;
+  relay: AutonomyLevel;
+  integrate: AutonomyLevel;
+  spend: AutonomyLevel;
+};
+export type ManagerPolicy = {
+  enabled: boolean;
+  /** Agente del proyecto que hace de cerebro (el jefe u otro); su IA/conexión y modelo deciden. */
+  brain: { agentId: string };
+  levels: ManagerLevels;
+  /** Gasto del día del proyecto a partir del cual `spend` aplica. */
+  spendAskUsd: number;
+  /** Tope duro del día para el gerente + los runs que él arrancó: al llegar, para y avisa. */
+  dayBudgetUsd: number;
+  maxTickMinutes: number;
+  maxTicksPerHour: number;
+  /** "HH:MM" locales: en silencio solo avisa, no arranca nada. */
+  quietHours?: { from: string; to: string };
+  /** Una pregunta sin respuesta en este tiempo se da por NO (fail-closed). */
+  askTimeoutMinutes: number;
+};
+/** Plantillas del deslizador de la UI. */
+export type ManagerPreset = 'prudente' | 'equilibrado' | 'autonomo';
+
+export type ManagerTickView = {
+  id: string;
+  projectId: string;
+  trigger: string;
+  summary: string;
+  costUsd: number;
+  startedAt: number;
+  endedAt: number | null;
+};
+export type ManagerState = {
+  projectId: string;
+  policy: ManagerPolicy | null;
+  halted: boolean;
+  running: boolean;
+  lastTick: ManagerTickView | null;
+  todayCostUsd: number;
+};
+export type ManagerSetParams = { projectId?: string; policy: ManagerPolicy };
+export type ManagerTickParams = { projectId?: string; message?: string };
+
+export type ManagerActionView = {
+  id: number;
+  tickId: string;
+  projectId: string;
+  tool: string;
+  input: string;
+  result: string;
+  level: AutonomyLevel;
+  decidedBy: 'policy' | 'user' | 'timeout' | null;
+  createdAt: number;
+};
+export type ManagerDiaryEntry = ManagerTickView & { actions: ManagerActionView[] };
+
+export type MemoryKind = 'fact' | 'decision' | 'preference' | 'todo';
+export type MemoryRow = {
+  id: number;
+  projectId: string;
+  kind: MemoryKind;
+  text: string;
+  source: 'manager' | 'user';
+  archived: boolean;
+  createdAt: number;
+};
+export type MemoryListParams = { projectId?: string; query?: string; includeArchived?: boolean; limit?: number };
+export type MemoryAddParams = { projectId?: string; kind: MemoryKind; text: string };
+
+export type NotificationLevel = 'info' | 'warn' | 'ask';
+export type NotificationRow = {
+  id: number;
+  projectId: string;
+  level: NotificationLevel;
+  title: string;
+  /** Máx. 120 caracteres, sin rutas absolutas ni contenido de archivos (sale en la pantalla de bloqueo). */
+  body: string;
+  approvalId: string | null;
+  readAt: number | null;
+  createdAt: number;
+};
+/** Evento `notify`: Rust lanza la notificación del sistema; la UI la añade a la campana. */
+export type NotifyEvent = { projectId: string; id: number; level: NotificationLevel; title: string; body: string; approvalId?: string };
