@@ -150,7 +150,16 @@ El puente en Rust filtra cada método antes de pasarlo al core. Lo que no está 
 - **Prueba:** un cliente de prueba en Node, contra el puente por un socket local, con tests de la lista blanca.
   `secrets.put` y `connection.create` tienen que dar error.
 
-### M1. Google Sign-In, puerta, relay y emparejamiento
+### M1. Google Sign-In, puerta, relay y emparejamiento — HECHO (23-10-2026, commit 2b5869e)
+- Probado de punta a punta en local: la app real, la puerta y el relay en local y `tools/mobile-phone-sim.mjs`
+  como móvil. Pasan la vinculación, las peticiones cifradas, las prohibidas rechazadas y una caja repetida
+  descartada.
+- **Sin probar todavía:** Google real (faltan los client IDs) y Coolify real (falta el token y la imagen).
+- **Pendiente de la revisión crítica (no bloquea):**
+  - prueba de posesión de la `pubkey` en el `hello` del relay;
+  - limpiar las apps huérfanas de Coolify si falla la provisión;
+  - podar tokens de FCM caducados y guardarlos fuera de memoria;
+  - límite de ritmo en `/session` (o en el proxy).
 - **Puerta** `gateway/` (D7): validación de Google, lista de correos permitidos, creación del relay por Coolify y
   emisión de pases.
   - **Tests:** token de otra app (`aud` distinto), token caducado, correo sin verificar y correo fuera de la lista
