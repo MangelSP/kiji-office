@@ -184,6 +184,9 @@ describe('flujo completo con adaptador falso', () => {
     const approvalId = approvalEv.payload.id as string;
     expect(h.orch.ctx.repos.approvals.get(approvalId)).toMatchObject({ status: 'pending', tool: 'Bash', task_id: t.id });
     expect(h.robot(worker.id).at(-1)).toBe('needs_you');
+    // `approval.list` la devuelve igual que el evento (para quien se conecta tarde, como el móvil).
+    expect(await h.call('approval.list', {})).toEqual([approvalEv.payload]);
+    expect(await h.call('approval.list', { projectId: 'otro' })).toEqual([]);
 
     // La persona aprueba: el adaptador recibe el id propio del adaptador.
     expect(await h.call('approval.answer', { id: approvalId, allow: true })).toMatchObject({ ok: true });
@@ -191,6 +194,7 @@ describe('flujo completo con adaptador falso', () => {
     expect(task(t.id).status).toBe('running');
     expect(h.orch.ctx.repos.approvals.get(approvalId)!.status).toBe('approved');
     await expect(h.call('approval.answer', { id: approvalId, allow: true })).rejects.toThrow(/desconocida|resuelta/);
+    expect(await h.call('approval.list')).toEqual([]);
 
     // El agente edita su archivo y termina.
     writeFileSync(join(spec.cwd, 'src/a.ts'), 'export const a = 1;\nexport const sum = (x: number, y: number) => x + y;\n');

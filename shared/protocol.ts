@@ -48,6 +48,7 @@ export type MethodName =
   | 'task.stop'
   | 'task.undo'
   | 'approval.answer'
+  | 'approval.list'
   | 'integration.apply'
   | 'integration.revert'
   | 'chat.send'

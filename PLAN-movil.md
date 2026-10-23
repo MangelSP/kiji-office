@@ -140,7 +140,10 @@ El puente en Rust filtra cada método antes de pasarlo al core. Lo que no está 
 
 ## 3. Fases
 
-### M0. El core listo para remoto (en el Mac, sin red todavía)
+### M0. El core listo para remoto (en el Mac, sin red todavía) — HECHO (23-10-2026)
+- Hecho: `approval.list`, `src-tauri/src/remote.rs` (lista blanca, ids `remote:<cliente>:<id>`, difusión de
+  eventos), socket de desarrollo `remote-dev.sock` (0600, solo debug) y `tools/remote-client.mjs`. Test
+  `cargo test -- --ignored puente` contra el core real.
 - Añadir `approval.list` (las pendientes por proyecto) en `core/src/orchestrator/approvals.ts` y en el protocolo.
 - `src-tauri/src/remote.rs`, el puente: la lista blanca de D4, los reenvíos de petición y respuesta con ids propios
   (para no chocar con los de la ventana) y la difusión de eventos.

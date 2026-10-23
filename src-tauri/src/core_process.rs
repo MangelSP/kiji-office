@@ -90,7 +90,15 @@ fn send_put<W: Write>(w: &mut W, account: &str, value: Option<&str>) -> std::io:
 /// ¿Es un mensaje que solo Rust puede enviar (id `rust:*` o método `secrets.put`)? Lo no parseable también se rechaza.
 fn is_reserved(line: &str) -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return true };
-    v["id"].as_str().is_some_and(|i| i.starts_with("rust:")) || v["method"].as_str() == Some("secrets.put")
+    v["id"].as_str().is_some_and(|i| i.starts_with("rust:") || i.starts_with(crate::remote::PREFIX))
+        || v["method"].as_str() == Some("secrets.put")
+}
+
+/// Escribe una línea ya validada en el stdin del core (la usa el puente remoto).
+pub fn send_line(state: &CoreState, line: &str) -> Result<(), String> {
+    let mut g = state.0.lock().unwrap();
+    let stdin = g.stdin.as_mut().ok_or("el core no está en marcha")?;
+    write_line(stdin, line).map_err(|e| format!("no se pudo escribir en el core: {e}"))
 }
 
 /// Qué hacer con una línea de stdout del core.
@@ -318,6 +326,9 @@ fn spawn(app: &AppHandle, inner: &mut Inner) -> Result<(), String> {
                 }
                 Route::Forward => {}
             }
+            if app_out.state::<crate::remote::RemoteState>().dispatch(&line) {
+                continue; // respuesta a un cliente remoto: no es para la ventana
+            }
             log_milestones(&line);
             side_effects(&app_out, &line);
             let _ = app_out.emit("core:line", line);
@@ -442,12 +453,9 @@ pub async fn core_send(state: State<'_, CoreState>, line: String) -> Result<(), 
         return Err("la línea no puede contener saltos de línea".into());
     }
     if is_reserved(line) {
-        return Err("mensaje reservado a Rust (id `rust:*` o `secrets.put`)".into());
+        return Err("mensaje reservado (id `rust:*` o `remote:*`, o `secrets.put`)".into());
     }
-    let mut g = state.0.lock().unwrap();
-    let stdin = g.stdin.as_mut().ok_or("el core no está en marcha")?;
-    write_line(stdin, line)
-        .map_err(|e| format!("no se pudo escribir en el core: {e}"))
+    send_line(&state, line)
 }
 
 /// Reinicia el core (p. ej. tras guardar claves nuevas) y vuelve a poner a cero el contador de fallos.
@@ -522,6 +530,7 @@ mod tests {
         assert!(is_reserved(r#"{"id":"\u0072ust:9","method":"x"}"#));
         assert!(is_reserved("no es json"));
         assert!(!is_reserved(r#"{"id":"web:1","type":"req","method":"ping"}"#));
+        assert!(is_reserved(r#"{"id":"remote:1:a","type":"req","method":"ping"}"#));
         assert!(!is_reserved(r#"{"id":"1","type":"req","method":"secrets.putx"}"#));
     }
 

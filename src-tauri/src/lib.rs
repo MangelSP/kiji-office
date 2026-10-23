@@ -3,6 +3,7 @@ mod detect;
 mod keyring;
 mod lifecycle;
 mod notify;
+mod remote;
 mod updater;
 
 use tauri::{Manager, RunEvent, WindowEvent};
@@ -18,6 +19,7 @@ pub fn run() {
         .manage(notify::NotifyState::default())
         .manage(core_process::CoreState::default())
         .manage(lifecycle::LifecycleState::default())
+        .manage(remote::RemoteState::default())
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
@@ -31,6 +33,8 @@ pub fn run() {
             // Fuera del hilo principal: leer el llavero puede mostrar un aviso del SO y no debe bloquear la ventana.
             let handle = app.handle().clone();
             std::thread::spawn(move || core_process::start(&handle));
+            #[cfg(all(debug_assertions, unix))]
+            remote::start_dev_socket(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

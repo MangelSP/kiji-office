@@ -62,6 +62,30 @@ export function denyPending(ctx: Ctx, live: LiveRun, reason: string): void {
 
 export function approvalHandlers(ctx: Ctx): Record<string, Handler> {
   return {
+    // Las pendientes de verdad (con run vivo o pregunta del gerente en curso), con la misma forma que
+    // `approval.requested`: quien se conecta tarde (el móvil) las ve sin haber oído el evento.
+    'approval.list': (params) => {
+      const p = params == null ? {} : asParams(params, 'approval.list');
+      const projectId = typeof p.projectId === 'string' ? p.projectId : undefined;
+      const out: Record<string, unknown>[] = [];
+      for (const [id, live] of ctx.approvalIndex) {
+        const row = ctx.repos.approvals.get(id);
+        if (!row || row.status !== 'pending') continue;
+        out.push({
+          projectId: live.projectId, id, tool: row.tool, input: JSON.parse(row.input), risk: row.risk,
+          kind: row.tool === 'AskUserQuestion' ? 'question' : 'tool', agent_id: live.agentId, task_id: live.taskId,
+        });
+      }
+      for (const a of ctx.managerAsks.values()) {
+        const row = ctx.repos.approvals.get(a.approvalId);
+        if (!row || row.status !== 'pending') continue;
+        out.push({
+          projectId: a.projectId, id: row.id, tool: row.tool, input: JSON.parse(row.input), risk: row.risk,
+          kind: a.kind, agent_id: null, task_id: row.task_id,
+        });
+      }
+      return projectId === undefined ? out : out.filter((x) => x.projectId === projectId);
+    },
     'approval.answer': (params) => {
       const p = asParams(params, 'approval.answer');
       const id = str(p.id, 'id', 'approval.answer');

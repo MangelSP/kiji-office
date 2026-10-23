@@ -274,6 +274,8 @@ export interface PendingAsk {
   actionId: number;
   /** Nombre de la herramienta del gerente (sin el prefijo `manager:`). */
   tool: string;
+  /** Tipo con el que se anunció en `approval.requested` (para `approval.list`). */
+  kind: 'manager' | 'integrate';
   summary: string;
   /** Opciones que se ofrecieron (ask_user); vacío si es sí/no. */
   options: string[];
@@ -316,7 +318,7 @@ export function requestApproval(ctx: Ctx, r: AskRequest): { approvalId: string; 
   });
   const row = ctx.repos.approvals.create({ tool: `manager:${r.tool}`, risk: 'ask', input, runId: null, taskId: r.taskId });
   const pending: PendingAsk = {
-    approvalId: row.id, projectId: r.projectId, tickId: r.tickId, actionId: action.id, tool: r.tool, summary: r.summary,
+    approvalId: row.id, projectId: r.projectId, tickId: r.tickId, actionId: action.id, tool: r.tool, kind: r.kind, summary: r.summary,
     key: r.key, options: r.options ?? [], timer: null, execute: r.execute,
   };
   ctx.managerAsks.set(row.id, pending);
