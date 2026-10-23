@@ -1,6 +1,8 @@
 // Slice `tasks`: tareas del proyecto, agrupadas por estado en la interfaz.
 import type { StateCreator } from "zustand";
 import type { Id } from "./agents";
+import { CoreError } from "../core/client";
+import { errorMessage, stripMethodPrefix } from "./core";
 import type { AppState } from "./index";
 
 export type Task = {
@@ -21,6 +23,9 @@ export type Task = {
   /** Posición en la cola, 1-based; null si no está en cola. */
   queue_position?: number | null;
 };
+
+/** Consulta de solo lectura: sin archivos que modificar, así que no hay nada que integrar. */
+export const isReadOnlyTask = (t: Pick<Task, "read_only" | "files">): boolean => t.read_only === true || t.files?.length === 0;
 
 /** Estados de tarea de la sección 3 de PLAN-0.1.md, en orden de flujo. */
 export const TASK_STATES = [
@@ -81,7 +86,17 @@ export const createTasksSlice: StateCreator<AppState, [], [], TasksSlice> = (set
     return undefined;
   },
   startTask: async (pid, id) => {
-    await get().callSafe("task.start", { id, projectId: pid });
+    try {
+      await get().call("task.start", { id, projectId: pid });
+    } catch (err) {
+      if (err instanceof CoreError && err.code === "unknown_method") {
+        set({ notice: "task.start: aún no disponible en el core" });
+        return;
+      }
+      const message = stripMethodPrefix("task.start", errorMessage(err));
+      // La parada global se enseña tal cual (ya es un mensaje claro); el resto, con el método delante como en callSafe.
+      set({ notice: /Parada global/i.test(message) ? message : `task.start: ${message}` });
+    }
   },
   loadDiff: async (pid, id) => {
     const res = await get().callSafe<string | { diff?: string }>("task.diff", { id, projectId: pid });

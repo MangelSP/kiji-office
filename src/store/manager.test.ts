@@ -16,7 +16,7 @@ vi.mock("../core/client", () => ({
 import { CoreError } from "../core/client";
 import { applyEvent, useStore } from ".";
 import { P, resetStore, seed } from "./testing";
-import { parseIntegrationFailure } from "./manager";
+import { integrationFailureFromError, integrationFailureFromView } from "./manager";
 
 const calls = (m: string) => mocks.request.mock.calls.filter((c) => c[0] === m);
 const st = () => useStore.getState();
@@ -28,21 +28,19 @@ beforeEach(() => {
   resetStore();
 });
 
-describe("parseIntegrationFailure", () => {
-  it("conflicto: saca la lista de archivos", () => {
-    const f = parseIntegrationFailure("integration_conflict", "conflicto al hacer rebase: src/a.ts, src/b.ts");
-    expect(f).toMatchObject({ kind: "conflict", files: ["src/a.ts", "src/b.ts"] });
-    const g = parseIntegrationFailure("", "rebase conflict\n- src/x.ts\n- src/y.ts");
-    expect(g).toMatchObject({ kind: "conflict", files: ["src/x.ts", "src/y.ts"] });
+describe("fallos de integración", () => {
+  it("desde la vista: conflicto con archivos, tests con salida, merge", () => {
+    expect(integrationFailureFromView({ detail: "d", reason: "conflict", files: ["a.ts", "b.ts"] })).toEqual({ kind: "conflict", files: ["a.ts", "b.ts"], message: "d" });
+    expect(integrationFailureFromView({ detail: "d", reason: "tests_failed", output: "FAIL x" })).toEqual({ kind: "tests", output: "FAIL x", message: "d" });
+    expect(integrationFailureFromView({ detail: "boom", reason: "merge" }).kind).toBe("merge");
+    expect(integrationFailureFromView({ detail: "boom" })).toEqual({ kind: "other", message: "boom" });
   });
-  it("tests fallidos: separa la salida", () => {
-    expect(parseIntegrationFailure("tests_failed", "Tests fallaron\nFAIL a.test.ts\n1 failed")).toEqual({
-      kind: "tests", message: "Tests fallaron", output: "FAIL a.test.ts\n1 failed",
+  it("error con code dirty: mensaje con la rama base", () => {
+    expect(integrationFailureFromError("dirty", "x", "main")).toEqual({
+      kind: "dirty",
+      message: "Tu repo principal tiene cambios sin guardar o está en otra rama: haz commit o cambia a main y vuelve a intentarlo",
     });
-  });
-  it("repo sucio y desconocido", () => {
-    expect(parseIntegrationFailure("main_dirty", "el repo principal tiene cambios").kind).toBe("dirty");
-    expect(parseIntegrationFailure("x", "boom")).toEqual({ kind: "other", message: "boom" });
+    expect(integrationFailureFromError("x", "boom")).toEqual({ kind: "other", message: "boom" });
   });
 });
 
@@ -55,10 +53,37 @@ describe("applyTask / revertTask", () => {
     expect(st().integrations[P]?.[0].id).toBe("i1");
   });
 
-  it("un fallo del core queda como mensaje legible", async () => {
-    mocks.request.mockRejectedValue(fail("tests_failed", "Tests fallaron\nFAIL x"));
+  it("integration.apply devuelve status failed (no lanza): conflicto, tests y merge", async () => {
+    const view = (extra: object) => ({ id: "i2", projectId: P, taskId: "t1", status: "failed", detail: "d", ...extra });
+    mocks.request.mockResolvedValueOnce(view({ reason: "tests_failed", output: "FAIL x" }));
     expect(await st().applyTask(P, "t1")).toBe(false);
     expect(st().integrationRuns.t1.failure).toMatchObject({ kind: "tests", output: "FAIL x" });
+    mocks.request.mockResolvedValueOnce(view({ reason: "conflict", files: ["a.ts"] }));
+    expect(await st().applyTask(P, "t1")).toBe(false);
+    expect(st().integrationRuns.t1.failure).toMatchObject({ kind: "conflict", files: ["a.ts"] });
+    mocks.request.mockResolvedValueOnce(view({ reason: "merge" }));
+    await st().applyTask(P, "t1");
+    expect(st().integrationRuns.t1.failure?.kind).toBe("merge");
+  });
+
+  it("error code dirty: usa la rama base del proyecto", async () => {
+    useStore.setState({ projects: [{ projectId: P, baseBranch: "develop" } as never] });
+    mocks.request.mockRejectedValue(fail("dirty", "sucio"));
+    expect(await st().applyTask(P, "t1")).toBe(false);
+    expect(st().integrationRuns.t1.failure).toEqual({
+      kind: "dirty",
+      message: "Tu repo principal tiene cambios sin guardar o está en otra rama: haz commit o cambia a develop y vuelve a intentarlo",
+    });
+  });
+
+  it("integration.changed: fases rebase -> tests -> merge y done las cierra", () => {
+    const ev = (phase: string) => applyEvent({ type: "event", name: "integration.changed", payload: { projectId: P, taskId: "t1", phase } });
+    ev("rebase");
+    expect(st().integrationRuns.t1.phase).toBe("rebase");
+    ev("merge");
+    expect(st().integrationRuns.t1.phase).toBe("merge");
+    ev("done");
+    expect(st().integrationRuns.t1.phase).toBeNull();
   });
 
   it("método ausente: mensaje 'aún no disponible' sin lanzar", async () => {
@@ -80,6 +105,16 @@ describe("applyTask / revertTask", () => {
     expect(await st().revertTask(P, "t9")).toBe(false);
     expect(calls("integration.revert")).toHaveLength(0);
     expect(st().notice).toMatch(/No encuentro la integración/);
+  });
+});
+
+describe("answerApproval", () => {
+  it("manda la opción elegida solo si se permite", async () => {
+    seed({ approvals: [{ id: "a1", tool: "manager:ask" }, { id: "a2", tool: "manager:ask" }] });
+    await st().answerApproval(P, "a1", true, "Sí, hoy");
+    expect(calls("approval.answer")[0][1]).toEqual({ id: "a1", allow: true, projectId: P, option: "Sí, hoy" });
+    await st().answerApproval(P, "a2", false);
+    expect(calls("approval.answer")[1][1]).toEqual({ id: "a2", allow: false, projectId: P });
   });
 });
 
@@ -121,6 +156,14 @@ describe("eventos 0.2d", () => {
     expect(st().objectives[P][0].status).toBe("done");
   });
 
+  it("manager.action reemitida al resolverse actualiza la fila por id", () => {
+    const a = { id: 1, tickId: "k1", projectId: P, tool: "ask", input: "", result: "", level: "ask", decidedBy: null, createdAt: 5 };
+    applyEvent({ type: "event", name: "manager.action", payload: a });
+    applyEvent({ type: "event", name: "manager.action", payload: { ...a, result: "ok", decidedBy: "user" } });
+    expect(st().diary[P][0].actions).toHaveLength(1);
+    expect(st().diary[P][0].actions[0]).toMatchObject({ result: "ok", decidedBy: "user" });
+  });
+
   it("manager.tick started marca 'pensando' y ended refresca", async () => {
     mocks.request.mockImplementation(async (m: string) =>
       m === "manager.get" ? { policy: null, halted: false, lastTick: null, todayCostUsd: 1 } : [],
@@ -150,6 +193,20 @@ describe("parada global y avisos", () => {
     await st().markRead([1]);
     expect(st().notifications[0].readAt).not.toBeNull();
     expect(calls("notifications.markRead")[0][1]).toEqual({ ids: [1] });
+  });
+
+  it("archiveMemory y markRead 'all' usan los params del contrato", async () => {
+    useStore.setState({ memory: { [P]: [{ id: 3 } as never] } });
+    await st().archiveMemory(P, 3);
+    expect(calls("memory.archive")[0][1]).toEqual({ projectId: P, id: 3 });
+    await st().markRead("all");
+    expect(calls("notifications.markRead")[0][1]).toEqual({ ids: "all" });
+  });
+
+  it("task.start con parada global: aviso claro", async () => {
+    mocks.request.mockRejectedValue(fail("error", "Parada global activa: no se arranca nada hasta que pulses «Reanudar»."));
+    await st().startTask(P, "t1");
+    expect(st().notice).toBe("Parada global activa: no se arranca nada hasta que pulses «Reanudar».");
   });
 
   it("sin métodos en el core no se rompe nada", async () => {

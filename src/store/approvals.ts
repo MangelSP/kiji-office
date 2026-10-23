@@ -16,8 +16,8 @@ export type Approval = {
 
 export type ApprovalsSlice = {
   addApproval: (projectId: string, approval: Approval) => void;
-  /** Responde al core; la tarjeta solo desaparece si la respuesta se entregó. */
-  answerApproval: (projectId: string, id: Id, allow: boolean) => Promise<void>;
+  /** Responde al core (`option` = texto exacto de una opción de una pregunta del gerente); la tarjeta solo desaparece si la respuesta se entregó. */
+  answerApproval: (projectId: string, id: Id, allow: boolean, option?: string) => Promise<void>;
 };
 
 export const createApprovalsSlice: StateCreator<AppState, [], [], ApprovalsSlice> = (_set, get) => ({
@@ -25,8 +25,8 @@ export const createApprovalsSlice: StateCreator<AppState, [], [], ApprovalsSlice
     get().patchProject(pid, (p) =>
       p.approvals.some((a) => String(a.id) === String(approval.id)) ? null : { approvals: [...p.approvals, approval] },
     ),
-  answerApproval: async (pid, id, allow) => {
-    const ok = await get().callSafe("approval.answer", { id, allow, projectId: pid });
+  answerApproval: async (pid, id, allow, option) => {
+    const ok = await get().callSafe("approval.answer", { id, allow, projectId: pid, ...(allow && option !== undefined ? { option } : {}) });
     if (ok === undefined) return;
     get().patchProject(pid, (p) => ({ approvals: p.approvals.filter((a) => String(a.id) !== String(id)) }));
   },

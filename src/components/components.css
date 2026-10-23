@@ -50,6 +50,14 @@
   border-color: #f4c542;
   margin-bottom: 8px;
 }
+.card-manager {
+  border-color: #7c5cbf;
+  border-width: 2px;
+  margin-bottom: 8px;
+}
+.approval-boss {
+  margin-right: 2px;
+}
 .card-title {
   margin: 0;
   font-weight: 600;
@@ -164,8 +172,4 @@ details.result-box > summary {
   margin: 6px 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-.approval-options {
-  margin: 4px 0;
-  padding-left: 20px;
 }

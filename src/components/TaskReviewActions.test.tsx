@@ -78,8 +78,10 @@ describe("TaskReviewActions", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: "Progreso de la integración" })).toBeNull());
   });
 
+  const failed = (extra: object) => ({ id: "i2", projectId: "p1", taskId: "t1", status: "failed", detail: "d", ...extra });
+
   it("conflicto: lista los archivos", async () => {
-    mocks.request.mockRejectedValue(new CoreError({ code: "integration_conflict", message: "conflicto: src/a.ts, src/b.ts" }));
+    mocks.request.mockResolvedValue(failed({ reason: "conflict", files: ["src/a.ts", "src/b.ts"] }));
     render(<TaskReviewActions task={task("approved")} />);
     fireEvent.click(screen.getByRole("button", { name: "Integrar Login" }));
     const files = await screen.findByRole("list", { name: "Archivos en conflicto" });
@@ -87,7 +89,7 @@ describe("TaskReviewActions", () => {
   });
 
   it("tests fallidos: la salida va plegada", async () => {
-    mocks.request.mockRejectedValue(new CoreError({ code: "tests_failed", message: "Tests fallaron\nFAIL login.test.ts" }));
+    mocks.request.mockResolvedValue(failed({ reason: "tests_failed", output: "FAIL login.test.ts" }));
     const { container } = render(<TaskReviewActions task={task("approved")} />);
     fireEvent.click(screen.getByRole("button", { name: "Integrar Login" }));
     await screen.findByText(/Los tests fallaron/);
@@ -96,11 +98,26 @@ describe("TaskReviewActions", () => {
     expect(details.textContent).toContain("FAIL login.test.ts");
   });
 
-  it("repo principal sucio", async () => {
-    mocks.request.mockRejectedValue(new CoreError({ code: "main_dirty", message: "el repo principal está sucio" }));
+  it("repo principal sucio u otra rama (code dirty)", async () => {
+    useStore.setState({ projects: [{ projectId: P, baseBranch: "main" } as never] });
+    mocks.request.mockRejectedValue(new CoreError({ code: "dirty", message: "x" }));
     render(<TaskReviewActions task={task("approved")} />);
     fireEvent.click(screen.getByRole("button", { name: "Integrar Login" }));
-    await screen.findByText(/cambios sin guardar/);
+    await screen.findByText("Tu repo principal tiene cambios sin guardar o está en otra rama: haz commit o cambia a main y vuelve a intentarlo");
+  });
+
+  it("solo lectura: en review solo Aprobar / Pedir cambios; aprobada o integrada no pinta nada", () => {
+    const ro = (status: string) => ({ ...task(status), read_only: true });
+    const { unmount } = render(<TaskReviewActions task={ro("review")} />);
+    expect(screen.getByRole("button", { name: "Aprobar Login" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Pedir cambios en Login" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Integrar Login" })).toBeNull();
+    unmount();
+    const a = render(<TaskReviewActions task={ro("approved")} />);
+    expect(a.container.firstChild).toBeNull();
+    a.unmount();
+    const i = render(<TaskReviewActions task={{ ...task("integrated"), files: [] }} />);
+    expect(i.container.firstChild).toBeNull();
   });
 
   it("integrated: Deshacer pide confirmación antes de llamar a integration.revert", async () => {

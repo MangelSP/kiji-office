@@ -71,6 +71,16 @@ describe("OfficeComposer", () => {
     expect(box().value).toBe("");
   });
 
+  it("con la parada global activa Enviar está desactivado y Enter no crea nada", () => {
+    useStore.setState({ halted: true });
+    render(<OfficeComposer selectedId="a3" onSelect={vi.fn()} />);
+    type("Revisa el login");
+    expect((screen.getByRole("button", { name: "Enviar" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(calls("task.create")).toHaveLength(0);
+    useStore.setState({ halted: false });
+  });
+
   it("Shift+Enter no envía", () => {
     render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
     type("hola");

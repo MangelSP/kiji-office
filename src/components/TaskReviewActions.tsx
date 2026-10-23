@@ -2,16 +2,16 @@
 // errores legibles); integrada -> Deshacer (con confirmación). Se usa en AgentTasks y en TaskList.
 import { useState } from "react";
 import { useStore } from "../store";
-import { EMPTY_RUN, INTEGRATION_PHASES, type IntegrationFailure, type IntegrationPhase } from "../store/manager";
+import { EMPTY_RUN, INTEGRATION_PHASES, type IntegrationFailure, type ProgressPhase } from "../store/manager";
 import { useProjectId } from "../store/scoped";
-import type { Task } from "../store/tasks";
+import { isReadOnlyTask, type Task } from "../store/tasks";
 import "../screens/Manager/Manager.css";
 
-const PHASE_LABEL: Record<IntegrationPhase, string> = { rebase: "Rebase", tests: "Tests", merge: "Merge" };
+const PHASE_LABEL: Record<ProgressPhase, string> = { rebase: "Rebase", tests: "Tests", merge: "Merge" };
 
 export const REVIEW_STATES = new Set(["review", "approved", "integrated"]);
 
-export default function TaskReviewActions({ task }: { task: Pick<Task, "id" | "title" | "status"> }) {
+export default function TaskReviewActions({ task }: { task: Pick<Task, "id" | "title" | "status"> & Pick<Partial<Task>, "read_only" | "files"> }) {
   const pid = useProjectId();
   const key = String(task.id);
   const run = useStore((s) => s.integrationRuns[key] ?? EMPTY_RUN);
@@ -25,6 +25,9 @@ export default function TaskReviewActions({ task }: { task: Pick<Task, "id" | "t
   const [busy, setBusy] = useState(false);
 
   if (!REVIEW_STATES.has(task.status)) return null;
+  // Una consulta de solo lectura no tiene nada que integrar: aprobada pasa directa a integrada, sin Integrar ni Deshacer.
+  const readOnly = isReadOnlyTask(task);
+  if (readOnly && task.status !== "review") return null;
 
   const guard = async (fn: () => Promise<boolean>) => {
     setBusy(true);
@@ -94,7 +97,7 @@ export default function TaskReviewActions({ task }: { task: Pick<Task, "id" | "t
         </>
       )}
 
-      {task.status === "approved" && (
+      {task.status === "approved" && !readOnly && (
         <div className="row tr-row">
           <button
             type="button"
@@ -108,7 +111,7 @@ export default function TaskReviewActions({ task }: { task: Pick<Task, "id" | "t
         </div>
       )}
 
-      {run.busy && task.status === "approved" && <Phases current={run.phase} />}
+      {(run.busy || run.phase !== null) && task.status === "approved" && <Phases current={run.phase} />}
       {run.failure && <Failure failure={run.failure} onClose={() => clear(task.id)} />}
 
       {task.status === "integrated" && (
@@ -145,7 +148,7 @@ export default function TaskReviewActions({ task }: { task: Pick<Task, "id" | "t
   );
 }
 
-function Phases({ current }: { current: IntegrationPhase | null }) {
+function Phases({ current }: { current: ProgressPhase | null }) {
   const at = current ? INTEGRATION_PHASES.indexOf(current) : -1;
   return (
     <ol className="tr-phases" aria-label="Progreso de la integración" role="status">
@@ -192,10 +195,14 @@ function Failure({ failure, onClose }: { failure: IntegrationFailure; onClose: (
           )}
         </>
       )}
-      {failure.kind === "dirty" && (
-        <p>
-          <strong>El repositorio principal tiene cambios sin guardar.</strong> Guárdalos (commit) o descártalos y vuelve a integrar.
-        </p>
+      {failure.kind === "dirty" && <p>{failure.message}</p>}
+      {failure.kind === "merge" && (
+        <>
+          <p>
+            <strong>No se pudo unir a la rama principal.</strong> La tarea sigue aprobada: puedes reintentar.
+          </p>
+          <p className="muted small">{failure.message}</p>
+        </>
       )}
       {failure.kind === "other" && <p>{failure.message}</p>}
       <button type="button" className="btn btn-ghost" onClick={onClose}>

@@ -2,6 +2,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import TaskList, { accessLabel } from "./TaskList";
+import { useStore } from "../store";
 import type { Task } from "../store/tasks";
 
 afterEach(cleanup);
@@ -22,6 +23,13 @@ describe("accessLabel", () => {
 });
 
 describe("TaskList", () => {
+  it("con la parada global activa, Iniciar está desactivado", () => {
+    useStore.setState({ halted: true });
+    show([{ ...base, status: "todo" }]);
+    expect((screen.getByRole("button", { name: "Iniciar tarea Revisar" }) as HTMLButtonElement).disabled).toBe(true);
+    useStore.setState({ halted: false });
+  });
+
   it("muestra la respuesta corta con su autor y la etiqueta Solo lectura, sin botón de diff", () => {
     show([{ ...base, read_only: true, files: [], result: "Es una app.\nTiene tres módulos." }]);
     expect(screen.getByText("Solo lectura")).toBeTruthy();

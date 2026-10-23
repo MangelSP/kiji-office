@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Agent, Id } from "../store/agents";
-import { TASK_STATES, type Task } from "../store/tasks";
+import { useStore } from "../store";
+import { isReadOnlyTask, TASK_STATES, type Task } from "../store/tasks";
 import TaskReviewActions from "./TaskReviewActions";
 import "./components.css";
 
@@ -30,8 +31,6 @@ export function accessLabel(t: Task): string | undefined {
   return `Modifica ${n} ${n === 1 ? "archivo" : "archivos"}`;
 }
 
-const isReadOnly = (t: Task) => t.read_only === true || t.files?.length === 0;
-
 /** Estados desde los que tiene sentido pulsar ▶. */
 const STARTABLE = new Set(["todo", "assigned", "changes", "paused_limit"]);
 
@@ -47,6 +46,7 @@ export default function TaskList({
   onStart: (id: Id) => Promise<void>;
   onDiff: (id: Id) => Promise<string | undefined>;
 }) {
+  const halted = useStore((s) => s.halted);
   const [diffs, setDiffs] = useState<Record<string, string>>({});
   const [loadingDiff, setLoadingDiff] = useState<string | null>(null);
 
@@ -97,12 +97,14 @@ export default function TaskList({
                           type="button"
                           className="btn btn-primary"
                           aria-label={`Iniciar tarea ${t.title}`}
+                          disabled={halted}
+                          title={halted ? "Parada global activa: reanuda para iniciar" : undefined}
                           onClick={() => void onStart(t.id)}
                         >
                           ▶ Iniciar
                         </button>
                       )}
-                      {!isReadOnly(t) && (
+                      {!isReadOnlyTask(t) && (
                         <button
                           type="button"
                           className="btn"

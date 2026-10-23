@@ -14,7 +14,8 @@ export type ApprovalVariant = "tool" | "manager" | "integrate";
 export function approvalVariant(a: Pick<Approval, "tool" | "kind">): ApprovalVariant {
   const tool = a.tool ?? "";
   if (a.kind === "integrate" || /^manager:.*integra/i.test(tool) || tool === "integrate") return "integrate";
-  if (a.kind === "question" || a.kind === "manager" || tool.startsWith("manager:")) return "manager";
+  // `kind: "question"` también lo usan los robots (AskUserQuestion): solo es del gerente si la herramienta es `manager:*`.
+  if (a.kind === "manager" || tool.startsWith("manager:")) return "manager";
   return "tool";
 }
 
@@ -40,7 +41,8 @@ export default function ApprovalCard({
 }: {
   approval: Approval;
   agentName?: string;
-  onAnswer: (allow: boolean) => Promise<void>;
+  /** `option` = texto exacto de la opción elegida (solo en preguntas del gerente con opciones). */
+  onAnswer: (allow: boolean, option?: string) => Promise<void>;
   /** Título de la tarea a integrar (variante integrar). */
   taskTitle?: string;
   /** Resaltada al llegar desde un aviso de la campana. */
@@ -53,23 +55,25 @@ export default function ApprovalCard({
   useEffect(() => {
     if (highlighted) ref.current?.scrollIntoView?.({ block: "center", behavior: "smooth" });
   }, [highlighted]);
-  const answer = async (allow: boolean) => {
+  const answer = async (allow: boolean, option?: string) => {
     setBusy(true);
     try {
-      await onAnswer(allow);
+      await (option === undefined ? onAnswer(allow) : onAnswer(allow, option));
     } finally {
       setBusy(false);
     }
   };
   const variant = approvalVariant(approval);
-  const cls = `card card-warn${highlighted ? " card-focus" : ""}`;
+  const cls = `card ${variant === "tool" ? "card-warn" : "card-manager"}${highlighted ? " card-focus" : ""}`;
 
   if (variant === "manager" || variant === "integrate") {
     const q = managerQuestion(approval.input);
     const integrate = variant === "integrate";
     return (
       <article ref={ref} className={cls} data-variant={variant} data-highlighted={highlighted ? "true" : undefined} aria-label={integrate ? "Integrar pedido por el gerente" : "Pregunta del gerente"}>
-        <p className="card-title">{integrate ? "El gerente quiere integrar" : "El gerente pregunta"}</p>
+        <p className="card-title">
+          <span className="approval-boss" aria-hidden="true">👔</span> {integrate ? "El gerente quiere integrar" : "El gerente te pregunta"}
+        </p>
         {integrate ? (
           <p>
             {taskTitle ? <>¿Integro «{taskTitle}» en la rama principal?</> : q.question}
@@ -78,20 +82,21 @@ export default function ApprovalCard({
         ) : (
           <p className="approval-question">{q.question}</p>
         )}
-        {q.options.length > 0 && (
-          <ul className="approval-options" aria-label="Opciones">
-            {q.options.map((o) => (
-              <li key={o}>{o}</li>
-            ))}
-          </ul>
-        )}
         {timeoutMinutes !== undefined && timeoutMinutes > 0 && (
           <p className="muted small">Si no contestas en {timeoutMinutes} min se da por NO.</p>
         )}
-        <div className="row">
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void answer(true)}>
-            {integrate ? "Integrar" : "Sí"}
-          </button>
+        <div className="row" role="group" aria-label="Respuestas">
+          {integrate || q.options.length === 0 ? (
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void answer(true)}>
+              {integrate ? "Integrar" : "Sí"}
+            </button>
+          ) : (
+            q.options.map((o, i) => (
+              <button key={`${i}-${o}`} type="button" className={i === 0 ? "btn btn-primary" : "btn"} disabled={busy} onClick={() => void answer(true, o)}>
+                {o}
+              </button>
+            ))
+          )}
           <button type="button" className="btn" disabled={busy} onClick={() => void answer(false)}>
             {integrate ? "Ahora no" : "No"}
           </button>

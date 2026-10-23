@@ -48,6 +48,7 @@ export default function AgentTasks({ agent }: { agent: Agent }) {
 
 function TaskCard({ task: t, agent, others, owner }: { task: TaskView; agent: Agent; others: Agent[]; owner?: string }) {
   const startTask = useAgentsStore((s) => s.startTask);
+  const halted = useAgentsStore((s) => s.halted);
   const loadDiff = useAgentsStore((s) => s.loadDiff);
   const switchTask = useAgentsStore((s) => s.switchTask);
   const refreshSteps = useAgentsStore((s) => s.refreshSteps);
@@ -164,7 +165,13 @@ function TaskCard({ task: t, agent, others, owner }: { task: TaskView; agent: Ag
 
       <div className="row ag-actions">
         {STARTABLE.has(t.status) && (
-          <button type="button" className="btn btn-primary" onClick={() => void startTask(t.id)}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={halted}
+            title={halted ? "Parada global activa: reanuda para empezar" : undefined}
+            onClick={() => void startTask(t.id)}
+          >
             Empezar
           </button>
         )}

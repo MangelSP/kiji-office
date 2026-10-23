@@ -36,6 +36,7 @@ export default function OfficeComposer({ selectedId, onSelect }: OfficeComposerP
 
   const projectId = useProjectId();
   const createObjective = useStore((s) => s.createObjective);
+  const halted = useStore((s) => s.halted);
   const [mode, setMode] = useState<"robot" | "objective">("robot");
   const objective = mode === "objective";
   const [sending, setSending] = useState(false);
@@ -53,7 +54,7 @@ export default function OfficeComposer({ selectedId, onSelect }: OfficeComposerP
   const draftKey = objective ? "objective" : targetId;
   const draft = drafts[draftKey] ?? { request: "", files: "" };
   const { title, description } = parseRequest(draft.request);
-  const canSend = (objective || !!target) && !sending && title !== "";
+  const canSend = (objective || !!target) && !sending && !halted && title !== "";
 
   // El campo crece con el texto hasta MAX_LINES líneas; después se desplaza.
   useLayoutEffect(() => {
@@ -176,7 +177,12 @@ export default function OfficeComposer({ selectedId, onSelect }: OfficeComposerP
         >
           Archivos
         </button>
-        <button type="button" className="composer-btn composer-send" disabled={!canSend} onClick={() => void send()}>
+        <button
+          type="button"
+          className="composer-btn composer-send"
+          disabled={!canSend}
+          title={halted ? "Parada global activa: reanuda para enviar" : undefined} onClick={() => void send()}
+        >
           {sending ? "Enviando…" : objective ? "Enviar objetivo" : busy ? "A la cola" : "Enviar"}
         </button>
       </div>

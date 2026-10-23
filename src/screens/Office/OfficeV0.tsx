@@ -99,7 +99,7 @@ function Office({ projectId }: { projectId: string }) {
           taskTitle={tasks.find((t) => String(t.id) === String(a.task_id))?.title}
           timeoutMinutes={askTimeout}
           highlighted={focus?.projectId === projectId && focus.approvalId === String(a.id)}
-          onAnswer={(allow) => answerApproval(a.id, allow)}
+          onAnswer={(allow, option) => answerApproval(a.id, allow, option)}
         />
       ))}
     </section>

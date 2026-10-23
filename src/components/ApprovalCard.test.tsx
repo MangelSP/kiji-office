@@ -10,7 +10,8 @@ describe("approvalVariant", () => {
   it("deduce la variante de tool y kind", () => {
     expect(approvalVariant({ tool: "Bash" })).toBe("tool");
     expect(approvalVariant({ tool: "manager:ask" })).toBe("manager");
-    expect(approvalVariant({ tool: "x", kind: "question" })).toBe("manager");
+    expect(approvalVariant({ tool: "x", kind: "manager" })).toBe("manager");
+    expect(approvalVariant({ tool: "AskUserQuestion", kind: "question" })).toBe("tool");
     expect(approvalVariant({ tool: "manager:request_integration" })).toBe("integrate");
     expect(approvalVariant({ kind: "integrate" })).toBe("integrate");
   });
@@ -29,21 +30,34 @@ describe("ApprovalCard", () => {
     await waitFor(() => expect(onAnswer).toHaveBeenCalledWith(true));
   });
 
-  it("pregunta del gerente: muestra pregunta, opciones y el plazo", async () => {
+  it("pregunta del gerente: cabecera propia, un botón por opción y No; nunca Permitir", async () => {
     const onAnswer = vi.fn(async () => {});
     render(
       <ApprovalCard
-        approval={{ id: 2, tool: "manager:ask", input: { question: "¿Sigo gastando?", options: ["Sí, hoy", "No"] } }}
+        approval={{ id: 2, tool: "manager:ask", kind: "manager", input: { question: "¿Sigo gastando?", summary: "s", options: ["Sí, hoy", "Mañana"] } }}
         timeoutMinutes={60}
         onAnswer={onAnswer}
       />,
     );
     const card = screen.getByRole("article", { name: "Pregunta del gerente" });
+    expect(card.textContent).toContain("El gerente te pregunta");
     expect(card.textContent).toContain("¿Sigo gastando?");
-    expect(within(card).getAllByRole("listitem").map((l) => l.textContent)).toEqual(["Sí, hoy", "No"]);
     expect(card.textContent).toContain("Si no contestas en 60 min se da por NO.");
+    expect(card.className).toContain("card-manager");
+    expect(screen.queryByText(/Permitir|Denegar/)).toBeNull();
+    expect(within(card).getAllByRole("button").map((b) => b.textContent)).toEqual(["Sí, hoy", "Mañana", "No"]);
+    fireEvent.click(screen.getByRole("button", { name: "Mañana" }));
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledWith(true, "Mañana"));
     fireEvent.click(screen.getByRole("button", { name: "No" }));
-    await waitFor(() => expect(onAnswer).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(onAnswer).toHaveBeenLastCalledWith(false));
+  });
+
+  it("pregunta del gerente sin opciones: Sí / No", async () => {
+    const onAnswer = vi.fn(async () => {});
+    render(<ApprovalCard approval={{ id: 4, tool: "manager:ask", input: { question: "¿Sigo?", options: [] } }} onAnswer={onAnswer} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sí" }));
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledWith(true));
+    expect(screen.queryByText(/Permitir/)).toBeNull();
   });
 
   it("variante integrar: nombra la tarea y resalta si viene de un aviso", async () => {
