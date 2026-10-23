@@ -41,7 +41,12 @@ export function applyEvent(event: CoreEvent) {
   switch (event.name) {
     case "core.ready":
       s.setCoreStatus("connecting");
-      void s.ping().then((ok) => (ok ? s.refreshAll() : undefined));
+      // Tras un reinicio el core no recuerda el proyecto activo: se vuelve a abrir el que había.
+      void s.ping().then((ok) => {
+        if (!ok) return;
+        const project = useStore.getState().project;
+        return project ? s.openProject(project.path) : s.refreshAll();
+      });
       break;
     case "core.crashed":
       s.setCoreStatus("down", "caído");
