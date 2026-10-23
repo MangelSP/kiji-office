@@ -93,7 +93,10 @@ export type MethodName =
   | 'notifications.list'
   | 'notifications.markRead'
   // 0.4a: pizarra Scrum (PLAN-0.4-pizarra.md)
-  | 'board.move';
+  | 'board.move'
+  // 0.4b: ajustes completos y estadísticas de modelos
+  | 'settings.all'
+  | 'stats.models';
 
 /** Eventos de 0.1 (sección 4) más los propios del servidor. */
 export type EventName =
@@ -126,7 +129,9 @@ export type EventName =
   | 'manager.halted'
   | 'notify'
   // 0.4a
-  | 'board.moved';
+  | 'board.moved'
+  // 0.4b
+  | 'settings.changed';
 
 // ---------------------------------------------------------------------------
 // 0.2a: métricas, cupo, relevo y perfil (PLAN-0.2a.md, "Contrato core ⇄ UI")
@@ -581,3 +586,63 @@ export type BoardMovedEvent = {
   /** true = movida por el core al cambiar de estado; false = la arrastró Alexis. */
   auto: boolean;
 };
+
+
+// ---------------------------------------------------------------------------
+// 0.4b: ajustes completos (pantalla Ajustes) y modelos más usados (Home)
+// ---------------------------------------------------------------------------
+
+/**
+ * Claves de ajustes del core (todas como texto en la BD; el core valida y normaliza).
+ * Las claves de API NUNCA son ajustes: viven en el llavero.
+ */
+export type SettingKey =
+  // General
+  | 'user_name'                 // nombre del saludo ("Alexis")
+  | 'start_view'                // 'home' | 'last' (pestaña con la que abre)
+  // Trabajo
+  | 'max_concurrent_runs'       // 1–32
+  | 'daily_budget_usd'          // > 0
+  | 'default_budget_usd'        // tope por tarea
+  | 'default_model'             // modelo por defecto al crear robots (sonnet|opus|haiku o conn:<id>/<modelo>)
+  | 'auto_relay_default'        // '1' | '0' para robots nuevos
+  | 'test_timeout_min'          // minutos máximos de los tests al integrar (1–120)
+  // IAs
+  | 'ollama_url'
+  | 'claude_path'               // ruta manual al ejecutable `claude` (vacío = autodetectar)
+  // Skills
+  | 'extra_skill_roots'         // JSON string[]: carpetas extra de confianza (p. ej. ~/.agents/skills)
+  // Avisos
+  | 'notify_system'             // '1' | '0': notificaciones del sistema
+  | 'notify_levels'             // JSON ('info'|'warn'|'ask')[]: niveles que salen como notificación del sistema
+  | 'quiet_hours'               // JSON {from:"HH:MM", to:"HH:MM"} | '' (global; el gerente tiene las suyas)
+  // Datos
+  | 'events_retention_days'     // 0 = sin límite; si no, borra eventos de registro más antiguos
+  // Actualizaciones
+  | 'update_auto_check';        // '1' | '0'
+
+export type SettingSpec = {
+  key: SettingKey;
+  value: string | null;
+  default: string;
+  section: 'general' | 'trabajo' | 'ias' | 'skills' | 'avisos' | 'datos' | 'actualizaciones';
+};
+/** `settings.all` → todas las claves con valor, defecto y sección. */
+export type SettingsAll = SettingSpec[];
+
+export type StatsRange = 'today' | '7d' | '30d' | 'all';
+export type ModelUsage = {
+  /** Alias de Claude ('sonnet') o `conn:<id>/<modelo>`. */
+  model: string;
+  /** 'claude' o el id de la conexión. */
+  provider: string;
+  runs: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  costUsd: number;
+  lastUsedAt: number | null;
+  /** Nombres de robots que lo usaron en el rango (de todos los proyectos). */
+  agents: string[];
+};
+export type StatsModelsParams = { range: StatsRange; limit?: number };
