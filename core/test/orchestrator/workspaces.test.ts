@@ -3,8 +3,9 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../../src/adapters/types.js';
+import { costToday, requestStart } from '../../src/orchestrator/queue.js';
 import { removeRepo } from '../git/helpers.js';
 import { makeHarness, makeNodeRepo, type Harness } from './helpers.js';
 
@@ -19,6 +20,7 @@ beforeEach(() => {
   repoB = makeNodeRepo();
 });
 afterEach(async () => {
+  vi.useRealTimers();
   for (const x of harnesses.splice(0)) await x.orch.shutdown();
   removeRepo(repoA);
   removeRepo(repoB);
@@ -446,5 +448,105 @@ describe('reinicio del core con dos workspaces abiertos', () => {
       removeRepo(repoC);
       removeRepo(repoD);
     }
+  });
+});
+
+describe('revisión CAMBIOS de 935eec5', () => {
+  it('1. un arranque rápido que falla (createWorktree lanza) libera el hueco: la tarea en cola arranca', async () => {
+    harness();
+    await h.call('settings.set', { key: 'max_concurrent_runs', value: '1' });
+    const A = await openRepo(repoA);
+    const B = await openRepo(repoB);
+    const ta = await newTask(A.project.id, A.worker.id);
+    const tb = await newTask(B.project.id, B.worker.id, 'b', 'src/other.ts');
+    const broken = h.orch.ctx.repos.projects.update(A.project.id, { baseBranch: 'no-existe' });
+    h.orch.ctx.projects.set(broken.id, broken);
+    const failing = h.call('task.start', { id: ta.id }).then(() => null, (e) => e);
+    const queued = await h.call('task.start', { id: tb.id });
+    expect(queued).toMatchObject({ queued: true });
+    expect(await failing).toBeInstanceOf(Error);
+    await h.waitFor(() => task(tb.id).status === 'running', 'B arranca al fallar A');
+    expect(h.orch.ctx.queue).toHaveLength(0);
+  });
+
+  it('2. cerrar un proyecto con un run lento de parar no deja arrancar nada de ese proyecto mientras tanto', async () => {
+    harness();
+    const A = await openRepo(repoA);
+    const ta = await newTask(A.project.id, A.worker.id);
+    const tb = await newTask(A.project.id, A.worker.id, 'otra', 'src/other.ts');
+    await h.call('task.start', { id: ta.id });
+    const fa = adapterIn(repoA);
+    const realStop = fa.stop.bind(fa);
+    fa.stop = async () => {
+      await new Promise((r) => setTimeout(r, 150));
+      await realStop();
+    };
+    const closing = h.call('project.close', { projectId: A.project.id, force: true });
+    expect(h.orch.ctx.projects.has(A.project.id)).toBe(false); // la puerta se cierra ya
+    expect(h.orch.ctx.repos.projects.get(A.project.id)!.is_open).toBe(0);
+    await expect(h.call('task.start', { id: tb.id })).rejects.toThrow(/no está abierto/);
+    expect(h.adapters).toHaveLength(1);
+    const res = await closing;
+    expect(res).toMatchObject({ closed: true, stoppedRuns: 1 });
+    expect([...h.orch.ctx.live.values()].filter((l) => l.projectId === A.project.id)).toHaveLength(0);
+    expect(h.adapters).toHaveLength(1);
+  });
+
+  it('3. el gasto vivo aún no escrito cuenta como de hoy aunque el run empezara ayer (cruce de medianoche)', async () => {
+    const before = new Date(); before.setHours(23, 59, 0, 0);
+    vi.useFakeTimers({ toFake: ['Date'], now: before });
+    harness({ metricsWriteMs: 1_000_000 });
+    const A = await openRepo(repoA);
+    const ta = await newTask(A.project.id, A.worker.id);
+    await h.call('task.start', { id: ta.id });
+    adapterIn(repoA).push(usage(1, { costUsd: 0.5 }));
+    await h.waitFor(() => h.orch.ctx.repos.runs.get(h.orch.ctx.live.get(ta.id)!.runId)!.cost_usd === 0.5, 'primera escritura');
+    vi.setSystemTime(new Date(before.getTime() + 2 * 60_000)); // 00:01 del día siguiente
+    expect(costToday(h.orch.ctx)).toBe(0); // lo escrito pertenece al run de ayer
+    adapterIn(repoA).push(usage(2, { costUsd: 0.8 })); // +0.3 gastado ya hoy, sin escribir aún (escritura limitada)
+    await h.waitFor(() => h.orch.ctx.live.get(ta.id)?.usage.costUsd === 0.8, 'uso en memoria');
+    expect(h.orch.ctx.repos.runs.get(h.orch.ctx.live.get(ta.id)!.runId)!.cost_usd).toBe(0.5);
+    expect(costToday(h.orch.ctx)).toBeCloseTo(0.3, 6);
+  });
+
+  it('4. los relevos en cola van delante del resto pero en orden FIFO entre ellos', async () => {
+    harness();
+    await h.call('settings.set', { key: 'max_concurrent_runs', value: '1' });
+    const A = await openRepo(repoA);
+    const B = await openRepo(repoB);
+    const ta = await newTask(A.project.id, A.worker.id);
+    const t1 = await newTask(B.project.id, B.worker.id, 'normal', 'src/n1.ts');
+    const r1 = await newTask(B.project.id, B.worker.id, 'relevo 1', 'src/r1.ts');
+    const r2 = await newTask(B.project.id, B.worker.id, 'relevo 2', 'src/r2.ts');
+    await h.call('task.start', { id: ta.id });
+    await h.call('task.start', { id: t1.id });
+    await requestStart(h.orch.ctx, r1.id, {}, 'relay');
+    await requestStart(h.orch.ctx, r2.id, {}, 'relay');
+    expect(h.orch.ctx.queue.map((e) => e.taskId)).toEqual([r1.id, r2.id, t1.id]);
+  });
+
+  it('5. tras un corte, los proyectos cerrados no muestran tareas running/needs_you ni aprobaciones pending fantasma', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kiji-stale-'));
+    tmps.push(dir);
+    const dbPath = join(dir, 'kiji.db');
+    harness({ dbPath });
+    const first = h;
+    const A = await openRepo(repoA);
+    const ta = await newTask(A.project.id, A.worker.id);
+    await h.call('task.start', { id: ta.id });
+    adapterIn(repoA).push({ type: 'permission_request', id: 'p1', tool: 'Bash', input: { command: 'ls' }, risk: 'ask' });
+    await h.waitFor(() => task(ta.id).status === 'needs_you', 'pide permiso');
+    await first.orch.shutdown();
+    await first.orch.whenIdle();
+    first.orch.ctx.db.exec(`UPDATE tasks SET status = 'needs_you'; UPDATE runs SET status = 'running', ended_at = NULL; UPDATE approvals SET status = 'pending'`);
+    first.orch.ctx.repos.projects.setOpen(A.project.id, false); // el proyecto quedó cerrado
+    first.orch.ctx.db.close();
+
+    harness({ dbPath }); // core nuevo: no reabre nada
+    const item = (await h.call('project.list')).find((p: any) => p.projectId === A.project.id);
+    expect(item).toMatchObject({ open: false, needsYou: 0, approvalsPending: 0, tasksByStatus: { blocked: 1 } });
+    expect(h.orch.ctx.repos.runs.latestByTask(ta.id)!.status).toBe('cancelled');
+    const w = (await h.call('workspaces.overview')).workspaces.find((x: any) => x.projectId === A.project.id);
+    expect(w).toMatchObject({ approvalsPending: 0, needsYou: 0 });
   });
 });

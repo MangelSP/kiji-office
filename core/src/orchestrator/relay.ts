@@ -14,7 +14,7 @@ import { logEvent } from './events.js';
 import { preferredModel } from './metrics.js';
 import { forkPoint } from './ownership.js';
 import { isModelWindow, modelFamily, modelLimitedUntil, scheduleLimitsNotify, windowTypeOf } from './quota.js';
-import { dequeue, requestStart } from './queue.js';
+import { dequeue, pumpQueue, requestStart } from './queue.js';
 import { settledLive, stopTask } from './runs.js';
 import { checkAssignable, getTask, projectOfTask, transition } from './tasks.js';
 
@@ -334,6 +334,7 @@ async function switchTask(ctx: Ctx, params: unknown) {
     ? `Cambio manual en la tarea «${task.title}»: ${from.name} pasa de ${modelLabel(fromModel)} a ${modelLabel(toModel)}.`
     : `Cambio manual: la tarea «${task.title}» pasa de ${from.name} a ${to.name} (${modelLabel(toModel)}).`;
   // Pasa por la cola con prioridad (el hueco que dejó el run parado es suyo); el relevo se registra al arrancar.
+  // Si falla (validación o arranque), el hueco que dejó el run parado (pump:false) se libera para la cola.
   return requestStart(
     ctx, task.id,
     {
@@ -348,7 +349,10 @@ async function switchTask(ctx: Ctx, params: unknown) {
       onStarted: () =>
         recordRelay(ctx, { projectId: project.id, taskId: task.id, fromAgentId: from.id, toAgentId: to.id, fromModel, toModel, reason: 'manual', detail }),
     },
-  );
+  ).catch((err: unknown) => {
+    void pumpQueue(ctx);
+    throw err;
+  });
 }
 
 export function relayHandlers(ctx: Ctx): Record<string, Handler> {

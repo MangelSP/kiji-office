@@ -10,7 +10,7 @@ import type { AdapterFactory, Ctx, Handler } from './context.js';
 import { eventHandlers } from './events.js';
 import { METRICS_NOTIFY_MS, METRICS_WRITE_MS, metricsHandlers } from './metrics.js';
 import { type ProviderDeps, providerHandlers } from './providers.js';
-import { projectHandlers } from './projects.js';
+import { projectHandlers, recoverAllProjects } from './projects.js';
 import { loadLimitsSnapshot } from './quota.js';
 import { queueHandlers } from './queue.js';
 import { relayHandlers } from './relay.js';
@@ -71,6 +71,7 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     closed: false,
   };
   loadLimitsSnapshot(ctx);
+  recoverAllProjects(ctx); // un corte previo no deja tareas running ni aprobaciones pending fantasma, ni en proyectos cerrados
   const handlers: Record<string, Handler> = {
     ...projectHandlers(ctx),
     ...settingsHandlers(ctx),

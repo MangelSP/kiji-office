@@ -71,7 +71,7 @@ describe('project.open', () => {
       h.orch.ctx.db.close();
 
       const h2 = makeHarness({ dbPath });
-      expect(h2.orch.ctx.repos.tasks.get(t.id)!.status).toBe('running'); // aún sin abrir el proyecto
+      expect(h2.orch.ctx.repos.tasks.get(t.id)!.status).toBe('blocked'); // el arranque del core ya sanea, aunque no se abra el proyecto
       await h2.call('project.open', { path: repo });
 
       const r2 = h2.orch.ctx.repos;

@@ -240,6 +240,7 @@ export async function startTask(ctx: Ctx, taskId: string, opts: StartOptions = {
   } catch (err) {
     // Fallo al arrancar: si ya había run/transición se cierra como `failed`; si no, no se ha tocado nada.
     ctx.live.delete(taskId);
+    void pumpQueue(ctx); // el hueco reservado queda libre: que la cola no espere a otro run para avanzar
     if (running) await failRun(ctx, live, `no se pudo iniciar el run: ${msg(err)}`);
     else if (live.runId) closeRun(ctx, live, 'failed');
     throw err;

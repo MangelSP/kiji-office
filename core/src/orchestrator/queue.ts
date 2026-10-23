@@ -58,11 +58,10 @@ export function usageByProject(ctx: Ctx, since: number): { today: Map<string, Us
       cacheWrite: Math.max(0, u.cacheWrite - row.cache_write_tokens),
     };
     total.set(l.projectId, (total.get(l.projectId) ?? 0) + d.cost);
-    if (row.started_at >= since) {
-      const t = today.get(l.projectId) ?? zero();
-      t.cost += d.cost; t.input += d.input; t.output += d.output; t.cacheRead += d.cacheRead; t.cacheWrite += d.cacheWrite;
-      today.set(l.projectId, t);
-    }
+    // Lo que aún no se escribió se gastó hace segundos: es de "hoy" aunque el run empezara ayer (cruce de medianoche).
+    const t = today.get(l.projectId) ?? zero();
+    t.cost += d.cost; t.input += d.input; t.output += d.output; t.cacheRead += d.cacheRead; t.cacheWrite += d.cacheWrite;
+    today.set(l.projectId, t);
   }
   return { today, total };
 }
@@ -199,8 +198,12 @@ export async function requestStart(
     return view;
   }
   const entry: QueueEntry = { taskId, projectId: project.id, opts, reason, blockedBy: blocked ?? 'slots', queuedAt: Date.now(), ...hooks };
-  if (reason === 'relay') ctx.queue.unshift(entry);
-  else ctx.queue.push(entry);
+  if (reason === 'relay') {
+    // Los relevos van delante de lo demás pero en orden de llegada entre ellos (FIFO).
+    let at = 0;
+    ctx.queue.forEach((e, i) => { if (e.reason === 'relay') at = i + 1; });
+    ctx.queue.splice(at, 0, entry);
+  } else ctx.queue.push(entry);
   const pos = ctx.queue.indexOf(entry) + 1;
   logEvent(ctx, {
     projectId: project.id, kind: 'status', taskId, agentId: task.agent_id,

@@ -6,7 +6,7 @@ import { basename, join } from 'node:path';
 import type { ProjectRow } from '../db/repos.js';
 import { assertSafeRef, runGitRaw } from '../git/run.js';
 import { pruneWorktrees } from '../git/worktree.js';
-import { dequeueProject } from './queue.js';
+import { dequeueProject, pumpQueue } from './queue.js';
 import { clearProjectResumes, rescheduleResumes } from './relay.js';
 import { type Ctx, type Handler, asParams, mostRecentOpen, projectIdOf, requireProject, str } from './context.js';
 import { logEvent } from './events.js';
@@ -37,11 +37,12 @@ async function currentBranch(root: string): Promise<string> {
  * Su run pasa a `cancelled`, sus aprobaciones a `denied` y la tarea a `blocked` (el worktree se conserva).
  */
 function recoverStaleRuns(ctx: Ctx, project: ProjectRow): void {
+  const pending = ctx.repos.approvals.listPending();
   for (const task of ctx.repos.tasks.listByProject(project.id)) {
     if (ctx.live.has(task.id)) continue; // run de esta sesión
     const stale = ctx.repos.runs.listByTask(task.id).filter((r) => r.status === 'running');
     for (const run of stale) ctx.repos.runs.update(run.id, { status: 'cancelled', ended_at: Date.now() });
-    for (const a of ctx.repos.approvals.listPending()) {
+    for (const a of pending) {
       if (a.task_id === task.id) ctx.repos.approvals.decide(a.id, 'denied');
     }
     if (task.status === 'running' || task.status === 'needs_you') {
@@ -49,6 +50,21 @@ function recoverStaleRuns(ctx: Ctx, project: ProjectRow): void {
       if (task.agent_id) setRobotStatus(ctx, task.agent_id, 'idle');
     } else if (stale.length > 0) {
       logEvent(ctx, { projectId: project.id, kind: 'status', taskId: task.id, agentId: task.agent_id, payload: { reason: 'run huérfano cancelado' } });
+    }
+  }
+}
+
+/**
+ * Al arrancar el core: lo que quedó `running`/`needs_you`/pendiente tras un corte también en los proyectos cerrados
+ * (que no se reabren y nunca pasarían por `recoverStaleRuns`). Solo toca estados de la BD: ni git ni worktrees.
+ * Es la opción segura porque no cambia las consultas de contadores y deja la BD coherente para cualquier lector.
+ */
+export function recoverAllProjects(ctx: Ctx): void {
+  for (const project of ctx.repos.projects.list()) {
+    try {
+      recoverStaleRuns(ctx, project);
+    } catch (err) {
+      process.stderr.write(`arranque: no se pudo sanear ${project.name}: ${err instanceof Error ? err.message : err}\n`);
     }
   }
 }
@@ -100,26 +116,35 @@ async function closeProject(ctx: Ctx, projectId: string, force: boolean) {
   if (lives.length > 0 && !force) {
     throw new Error(`project.close: «${project.name}» tiene ${lives.length} run(s) en marcha; páralos o usa force para detenerlos`);
   }
-  for (const l of lives) l.onEnded = null; // un relevo pendiente no debe relanzar nada en un proyecto que se cierra
-  dequeueProject(ctx, projectId);
-  clearProjectResumes(ctx, projectId);
-  let stopped = 0;
-  for (const l of lives) {
-    if (l.finishing) {
-      await l.finished.catch(() => undefined); // ya terminó: solo está guardando el trabajo
-      continue;
-    }
-    try {
-      await stopTask(ctx, l.taskId, 'proyecto cerrado', { pump: false });
-      stopped++;
-    } catch (err) {
-      process.stderr.write(`project.close: no se pudo parar ${l.taskId}: ${err instanceof Error ? err.message : err}\n`);
-    }
-  }
+  // Primero se cierra la puerta: sin el proyecto en `ctx.projects`, checkStartable (task.start, cola, reanudación al
+  // reset) rechaza cualquier arranque nuevo mientras se paran los runs.
   ctx.projects.delete(projectId);
   ctx.repos.projects.setOpen(projectId, false);
   if (ctx.lastProjectId === projectId) ctx.lastProjectId = mostRecentOpen(ctx);
+  dequeueProject(ctx, projectId);
+  clearProjectResumes(ctx, projectId);
+  let stopped = 0;
+  // Se repite hasta que no quede ningún run vivo del proyecto (uno que estaba arrancando puede aparecer tras parar otro).
+  for (let pass = 0; pass < 20; pass++) {
+    const remaining = [...ctx.live.values()].filter((l) => l.projectId === projectId);
+    if (remaining.length === 0) break;
+    for (const l of remaining) {
+      l.onEnded = null; // un relevo pendiente no debe relanzar nada en un proyecto que se cierra
+      if (l.finishing || l.ended) {
+        await l.finished.catch(() => undefined); // ya terminó: solo está guardando el trabajo
+        continue;
+      }
+      try {
+        await stopTask(ctx, l.taskId, 'proyecto cerrado', { pump: false });
+        stopped++;
+      } catch (err) {
+        process.stderr.write(`project.close: no se pudo parar ${l.taskId}: ${err instanceof Error ? err.message : err}\n`);
+        await l.finished.catch(() => undefined);
+      }
+    }
+  }
   scheduleWorkspacesNotify(ctx);
+  void pumpQueue(ctx); // los huecos liberados son para los demás proyectos
   return { projectId, closed: true as const, stoppedRuns: stopped };
 }
 
