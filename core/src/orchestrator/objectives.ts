@@ -50,7 +50,9 @@ export function objectiveHandlers(ctx: Ctx): Record<string, Handler> {
     'objective.create': (params) => {
       const p = asParams(params, 'objective.create');
       const project = requireProject(ctx, projectIdOf(p));
-      return createObjective(ctx, project.id, str(p.text, 'text', 'objective.create'));
+      const view = createObjective(ctx, project.id, str(p.text, 'text', 'objective.create'));
+      ctx.manager?.trigger(project.id, 'objective.create', view.text); // despierta al gerente (0.2d)
+      return view;
     },
     /** `{projectId?}` -> ObjectiveView[] (el más antiguo primero). Sin proyecto abierto: []. */
     'objective.list': (params) => {

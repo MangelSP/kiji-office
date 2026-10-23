@@ -108,8 +108,8 @@ function buildPrompt(ctx: Ctx, task: TaskRow, files: string[], resumeNote?: stri
       'Trabaja en el directorio actual. No hagas commit: el core guarda tu trabajo cuando termines.',
     );
   }
-  if (task.status === 'changes') {
-    // Hallazgo más reciente de la red de seguridad de propiedad.
+  if (task.status === 'changes' || task.status === 'failed' || task.status === 'blocked') {
+    // Hallazgo más reciente (revisión, propiedad, tests o el gerente al reintentar).
     const finding = ctx.repos.events
       .tail(projectOfTask(ctx, task).id, { kind: 'git', limit: 50 })
       .reverse()
@@ -164,6 +164,7 @@ export class AgentBusyError extends Error {}
 
 /** Comprobaciones previas a iniciar (o encolar) una tarea; lanza un error claro si no se puede. */
 export function checkStartable(ctx: Ctx, taskId: string) {
+  if (ctx.halted) throw new Error('Parada global activa: no se arranca nada hasta que pulses «Reanudar».');
   const task = getTask(ctx, taskId);
   const project = projectOfTask(ctx, task);
   if (!ctx.projects.has(project.id)) throw new Error(`el proyecto «${project.name}» no está abierto: ábrelo antes de iniciar sus tareas`);
@@ -293,6 +294,7 @@ async function consume(ctx: Ctx, live: LiveRun, stream: AsyncIterable<AgentEvent
     live.onEnded = null;
     if (next) await next().catch((e) => process.stderr.write(`orquestador: falló la continuación del run: ${msg(e)}\n`));
     void pumpQueue(ctx); // se liberó un hueco (tras el relevo, que tiene prioridad)
+    ctx.manager?.onRunEnded(live.projectId, live.taskId); // disparador del gerente (0.2d)
   }
 }
 

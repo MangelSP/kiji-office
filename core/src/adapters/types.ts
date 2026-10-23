@@ -1,5 +1,15 @@
 // Interfaz común de los adaptadores de agente (PLAN-0.1, sección 4).
 
+/** Herramienta propia que el core ofrece a un run (hoy: las del gerente). El adaptador `api-loop` la expone como tool de OpenAI. */
+export type ExtraTool = {
+  name: string;
+  description: string;
+  /** JSON Schema del objeto de argumentos. */
+  parameters: Record<string, unknown>;
+  /** Ejecuta la llamada; la salida vuelve al modelo (ya recortada y sin secretos por quien la define). */
+  execute: (args: unknown) => Promise<{ output: string; isError: boolean }>;
+};
+
 export type RunSpec = {
   runId: string;
   cwd: string; // worktree (o el repo para el jefe)
@@ -17,6 +27,13 @@ export type RunSpec = {
    * en el system prompt (plan B). `description` solo se usa en ese plan B.
    */
   skills?: Array<{ name: string; dir: string; description?: string }>;
+  /**
+   * Herramientas propias del core (0.2d, el gerente). Claude nativo: servidores MCP del SDK ya construidos
+   * (`createSdkMcpServer`), con el nombre del servidor como clave; sus herramientas llegan como `mcp__<servidor>__<tool>`
+   * y son lo único de MCP que el run puede usar. Conexiones (`api-loop`): `extraTools`. Cada adaptador usa lo suyo e ignora lo otro.
+   */
+  mcpServers?: Record<string, unknown>;
+  extraTools?: ExtraTool[];
 };
 
 export type LimitKind = 'rate' | 'quota' | 'credits' | 'budget';

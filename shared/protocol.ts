@@ -450,7 +450,15 @@ export type IntegrationView = {
   status: 'applied' | 'reverted' | 'failed';
   detail: string;
   createdAt: number;
+  /** Solo en un intento fallido (la respuesta de `integration.apply` y el evento; no se guarda en la lista). */
+  reason?: IntegrationFailReason;
+  files?: string[];
+  output?: string;
 };
+export type IntegrationFailReason = 'conflict' | 'tests_failed' | 'dirty' | 'merge';
+export type IntegrationPhase = 'rebase' | 'tests' | 'merge' | 'done' | 'failed';
+/** Payload de `integration.changed`: las fases intermedias solo llevan `projectId`, `taskId` y `phase`. */
+export type IntegrationChangedEvent = { projectId: string; taskId: string; phase?: IntegrationPhase } & Partial<IntegrationView>;
 /** `integration.apply {id: taskId}` integra una tarea `approved`: rebase, tests, merge ff-only a la rama base. */
 export type IntegrationApplyParams = { id: string; projectId?: string };
 export type IntegrationRevertParams = { integrationId: string; projectId?: string };
@@ -528,8 +536,10 @@ export type MemoryRow = {
   createdAt: number;
 };
 export type MemoryListParams = { projectId?: string; query?: string; includeArchived?: boolean; limit?: number };
+export type MemoryArchiveParams = { projectId?: string; id: number };
 export type MemoryAddParams = { projectId?: string; kind: MemoryKind; text: string };
 
+export type NotificationsMarkReadParams = { projectId?: string; ids: number[] | 'all' };
 export type NotificationLevel = 'info' | 'warn' | 'ask';
 export type NotificationRow = {
   id: number;

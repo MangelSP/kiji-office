@@ -103,6 +103,7 @@ async function openProject(ctx: Ctx, root: string, touch = true): Promise<Projec
   project = ctx.repos.projects.setOpen(project.id, true, touch);
   ctx.projects.set(project.id, project);
   ctx.lastProjectId = project.id;
+  ctx.manager?.syncProject(project.id); // temporizador del gerente si lo tiene activado
   rescheduleResumes(ctx, project); // tareas pausadas por límite: la reanudación al reset sobrevive al reinicio
   scheduleWorkspacesNotify(ctx);
   return project;
@@ -120,6 +121,7 @@ async function closeProject(ctx: Ctx, projectId: string, force: boolean) {
   // reset) rechaza cualquier arranque nuevo mientras se paran los runs.
   ctx.projects.delete(projectId);
   ctx.repos.projects.setOpen(projectId, false);
+  ctx.manager?.stopProject(projectId);
   if (ctx.lastProjectId === projectId) ctx.lastProjectId = mostRecentOpen(ctx);
   dequeueProject(ctx, projectId);
   clearProjectResumes(ctx, projectId);

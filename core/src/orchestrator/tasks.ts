@@ -145,6 +145,7 @@ export function publishTask(ctx: Ctx, taskId: string): TaskView {
   ctx.emit('task.changed', view);
   refreshObjective(ctx, task.objective_id); // estado del objetivo + `objective.changed` con los contadores nuevos
   scheduleWorkspacesNotify(ctx);
+  ctx.manager?.onTaskChanged(view.projectId, task.id, task.status); // disparador del gerente (0.2d)
   return view;
 }
 
@@ -240,7 +241,12 @@ export function recordFinding(ctx: Ctx, task: TaskRow, finding: string, message:
 export function reviewTask(ctx: Ctx, taskId: string, verdict: 'approve' | 'changes', findings: string[] = []): TaskView {
   const task = getTask(ctx, taskId);
   if (task.status !== 'review') throw new Error(`task.review: la tarea está en ${task.status}; solo se revisan las que están en review`);
-  if (verdict === 'approve') return transition(ctx, taskId, 'approved', 'aprobada');
+  if (verdict === 'approve') {
+    const approvedView = transition(ctx, taskId, 'approved', 'aprobada');
+    // Consulta de solo lectura (sin archivos): no hay nada que integrar, la aprobación la cierra.
+    if (isReadOnlyTask(ctx, taskId)) return transition(ctx, taskId, 'integrated', 'consulta de solo lectura: no hay nada que integrar');
+    return approvedView;
+  }
   const list = findings.map((f) => f.trim()).filter((f) => f !== '').slice(0, MAX_FINDINGS).map((f) => f.slice(0, FINDING_MAX));
   const message = list.length === 0 ? 'Se pidieron cambios sin más detalle.' : list.length === 1 ? list[0]! : list.map((f) => `- ${f}`).join('\n');
   recordFinding(ctx, task, 'review', message);

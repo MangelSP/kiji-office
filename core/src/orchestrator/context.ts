@@ -3,6 +3,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { LimitWindow, LimitWindowType, ProviderStatus } from '../../../shared/protocol.js';
 import type { AgentAdapter } from '../adapters/types.js';
 import type { AgentRow, ProjectRow, Repos } from '../db/repos.js';
+import type { ManagerRuntime } from '../manager/loop.js';
+import type { ManagerOptionsResolved, PendingAsk } from '../manager/policy.js';
 import type { ConnectionService } from './connections.js';
 import type { StartOptions } from './runs.js';
 
@@ -131,6 +133,13 @@ export interface Ctx {
   // --- 0.2d ---
   /** Cola de integraciones por proyecto: una a la vez (cada valor es cola de promesas encadenadas). */
   integrationLocks: Map<string, Promise<unknown>>;
+  /** Parada global (`manager.stopAll`): no arranca nada ni despierta al gerente hasta `manager.resume`. Persiste en settings. */
+  halted: boolean;
+  /** Preguntas del gerente esperando a la persona, por id de aprobación (`manager:*`). */
+  managerAsks: Map<string, PendingAsk>;
+  /** Bucle del gerente (disparadores, ticks, temporizadores); lo crea `createOrchestrator`. */
+  manager: ManagerRuntime | null;
+  managerOptions: ManagerOptionsResolved;
 }
 
 /** Datos de la petición que el router pasa al handler (solo `secrets.put` los usa). */

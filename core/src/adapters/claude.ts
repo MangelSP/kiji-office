@@ -226,7 +226,8 @@ export class ClaudeAdapter implements AgentAdapter {
       canUseTool: this.canUseTool,
       // sin MCP del usuario (~/.claude.json, conectores claude.ai) ni del proyecto (.mcp.json)
       strictMcpConfig: true,
-      mcpServers: {},
+      // solo los servidores que el core pasa en el RunSpec (el gerente: `kiji`); nunca los del usuario
+      mcpServers: (spec.mcpServers ?? {}) as NonNullable<Options['mcpServers']>,
       stderr: (data) => {
         this.stderrTail = (this.stderrTail + data).slice(-2000);
       },
@@ -305,6 +306,9 @@ export class ClaudeAdapter implements AgentAdapter {
       return this.request(opts.toolUseID, toolName, input, opts.signal);
     };
 
+    // Herramientas MCP del core (RunSpec.mcpServers): se deciden dentro del propio servidor, no pasan por el clasificador.
+    if (this.isCoreMcpTool(toolName)) return allow;
+
     if (this.spec?.readOnly && !READ_TOOLS.has(toolName) && !(toolName === 'Skill' && this.hasSkills)) {
       return deny('Este agente es de solo lectura: solo puede usar Read, Glob y Grep.');
     }
@@ -338,6 +342,10 @@ export class ClaudeAdapter implements AgentAdapter {
     // WebFetch, WebSearch, MCP, desconocidas…: lo dudoso se pregunta
     return this.request(opts.toolUseID, toolName, input, opts.signal);
   };
+
+  private isCoreMcpTool(toolName: string): boolean {
+    return Object.keys(this.spec?.mcpServers ?? {}).some((name) => toolName.startsWith(`mcp__${name}__`));
+  }
 
   private request(id: string, tool: string, input: Record<string, unknown>, signal: AbortSignal): Promise<PermissionResult> {
     return new Promise<PermissionResult>((resolve) => {

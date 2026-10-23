@@ -220,7 +220,7 @@ export async function requestStart(
 
 /** Arranca, por orden, las tareas de la cola mientras haya hueco y presupuesto. No lanza: los fallos se registran. */
 export async function pumpQueue(ctx: Ctx): Promise<void> {
-  if (ctx.closed) return;
+  if (ctx.closed || ctx.halted) return;
   if (ctx.pumping) {
     ctx.pumpAgain = true;
     return;

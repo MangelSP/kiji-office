@@ -65,7 +65,7 @@ export interface Harness {
 }
 
 export function makeHarness(
-  opts: { testTimeoutMs?: number; dbPath?: string } & Pick<OrchestratorOptions, 'skillsDir' | 'metricsNotifyMs' | 'metricsWriteMs' | 'providerDeps' | 'connectionDeps'> = {},
+  opts: { testTimeoutMs?: number; dbPath?: string; adapterFactory?: (agent: AgentRow, fake: () => FakeAdapter) => AgentAdapter } & Pick<OrchestratorOptions, 'skillsDir' | 'metricsNotifyMs' | 'metricsWriteMs' | 'providerDeps' | 'connectionDeps' | 'manager'> = {},
 ): Harness {
   const emitted: Emitted[] = [];
   const adapters: FakeAdapter[] = [];
@@ -75,10 +75,14 @@ export function makeHarness(
     emit: (name, payload) => emitted.push({ name, payload: JSON.parse(JSON.stringify(payload)) }),
     adapterFactory: (agent) => {
       factoryAgents.push(agent);
-      const a = new FakeAdapter();
-      adapters.push(a);
-      return a;
+      const fake = (): FakeAdapter => {
+        const a = new FakeAdapter();
+        adapters.push(a);
+        return a;
+      };
+      return opts.adapterFactory ? opts.adapterFactory(agent, fake) : fake();
     },
+    manager: opts.manager,
     testTimeoutMs: opts.testTimeoutMs,
     connectionDeps: opts.connectionDeps,
     skillsDir: opts.skillsDir ?? '/nonexistent/kiji-skills', // nunca leer las skills reales de la persona que corre los tests

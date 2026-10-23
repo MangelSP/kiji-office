@@ -4,7 +4,7 @@
 // lanzan: devuelven la `IntegrationView` con status 'failed' y dejan la tarea en `blocked` / `changes` / `approved`.
 // Lo que impide siquiera empezar (tarea no aprobada, repo principal sucio o en otra rama) sí lanza, sin tocar nada.
 import { existsSync } from 'node:fs';
-import type { IntegrationView } from '../../../shared/protocol.js';
+import type { IntegrationChangedEvent, IntegrationFailReason, IntegrationPhase, IntegrationView } from '../../../shared/protocol.js';
 import type { IntegrationRow, ProjectRow, TaskRow } from '../db/repos.js';
 import { commitAll, mergeFfOnly, rebaseOnto, revertRange, runTests } from '../git/integrate.js';
 import { runGitRaw } from '../git/run.js';
@@ -25,10 +25,23 @@ export function integrationView(r: IntegrationRow): IntegrationView {
   };
 }
 
-function publishIntegration(ctx: Ctx, id: number): IntegrationView {
-  const view = integrationView(ctx.repos.integrations.get(id)!);
-  ctx.emit('integration.changed', view);
+function publishIntegration(ctx: Ctx, id: number, extra: Pick<IntegrationView, 'reason' | 'files' | 'output'> = {}): IntegrationView {
+  const view: IntegrationView = { ...integrationView(ctx.repos.integrations.get(id)!), ...extra };
+  const phase: IntegrationPhase = view.status === 'failed' ? 'failed' : 'done';
+  ctx.emit('integration.changed', { ...view, phase } satisfies IntegrationChangedEvent);
   return view;
+}
+
+/** Fase intermedia (rebase | tests | merge) para la barra de progreso de la UI. */
+function phase(ctx: Ctx, projectId: string, taskId: string, p: IntegrationPhase): void {
+  ctx.emit('integration.changed', { projectId, taskId, phase: p } satisfies IntegrationChangedEvent);
+}
+
+/** Error con código para la UI (`dirty`: repo principal sucio o en otra rama). */
+export class IntegrationError extends Error {
+  constructor(message: string, readonly code: string) {
+    super(message);
+  }
 }
 
 /** Ejecuta `fn` cuando terminen las integraciones/reversiones anteriores del mismo proyecto. */
@@ -48,24 +61,24 @@ async function assertMainRepoClean(project: ProjectRow, action: string): Promise
   const head = await runGitRaw(project.path, ['symbolic-ref', '--short', '-q', 'HEAD']);
   const current = head.stdout.trim();
   if (head.exitCode !== 0 || current === '') {
-    throw new Error(`No se puede ${action}: el repositorio principal está en HEAD desacoplado; vuelve a la rama «${project.base_branch}».`);
+    throw new IntegrationError(`No se puede ${action}: el repositorio principal está en HEAD desacoplado; vuelve a la rama «${project.base_branch}».`, 'dirty');
   }
   if (current !== project.base_branch) {
-    throw new Error(`No se puede ${action}: el repositorio principal está en la rama «${current}» y debería estar en «${project.base_branch}».`);
+    throw new IntegrationError(`No se puede ${action}: el repositorio principal está en la rama «${current}» y debería estar en «${project.base_branch}».`, 'dirty');
   }
   const dirty = await runGitRaw(project.path, ['status', '--porcelain', '--untracked-files=no']);
   if (dirty.exitCode !== 0) throw new Error(`No se puede ${action}: git status falló: ${dirty.stderr.trim()}`);
   if (dirty.stdout.trim() !== '') {
     const files = dirty.stdout.split('\n').filter(Boolean).slice(0, 5).map((l) => l.slice(3)).join(', ');
-    throw new Error(`No se puede ${action}: el repositorio principal tiene cambios sin guardar (${files}); guárdalos o descártalos antes.`);
+    throw new IntegrationError(`No se puede ${action}: el repositorio principal tiene cambios sin guardar (${files}); guárdalos o descártalos antes.`, 'dirty');
   }
 }
 
 /** Registra un intento fallido: fila `failed`, evento `integration.changed` y aviso. */
-function fail(ctx: Ctx, project: ProjectRow, task: TaskRow, title: string, detail: string): IntegrationView {
+function fail(ctx: Ctx, project: ProjectRow, task: TaskRow, title: string, detail: string, extra: { reason: IntegrationFailReason; files?: string[]; output?: string }): IntegrationView {
   const row = ctx.repos.integrations.create({ projectId: project.id, taskId: task.id, status: 'failed', detail: detail.slice(0, DETAIL_MAX) });
   notify(ctx, { projectId: project.id, level: 'warn', title: `No se pudo integrar «${task.title}»`, body: title });
-  return publishIntegration(ctx, row.id);
+  return publishIntegration(ctx, row.id, extra);
 }
 
 /**
@@ -88,6 +101,7 @@ export async function integrateTask(ctx: Ctx, taskId: string): Promise<Integrati
     const base = { projectId: project.id, taskId, agentId: task.agent_id };
     try {
       // 1) Trabajo pendiente en el worktree.
+      phase(ctx, project.id, taskId, 'rebase');
       await commitAll(worktree, `${task.title}\n\nTarea Kiji ${task.id}`);
 
       // 2) Rebase sobre la rama base: un conflicto bloquea la tarea con la lista de archivos.
@@ -97,12 +111,13 @@ export async function integrateTask(ctx: Ctx, taskId: string): Promise<Integrati
         const message = `conflicto al integrar con «${project.base_branch}» en: ${files}`;
         logEvent(ctx, { ...base, kind: 'git', payload: { finding: 'rebase_conflict', task_id: taskId, files: rebase.conflicts, message } });
         transition(ctx, taskId, 'blocked', message);
-        return fail(ctx, project, task, `Conflicto en ${rebase.conflicts.length} archivo(s): ${files}`, message);
+        return fail(ctx, project, task, `Conflicto en ${rebase.conflicts.length} archivo(s): ${files}`, message, { reason: 'conflict', files: rebase.conflicts });
       }
 
       // 3) Tests del proyecto sobre el resultado del rebase.
       const command = project.test_command?.trim() ?? '';
       if (command !== '') {
+        phase(ctx, project.id, taskId, 'tests');
         let exitCode: number;
         let output: string;
         let timedOut = false;
@@ -118,17 +133,18 @@ export async function integrateTask(ctx: Ctx, taskId: string): Promise<Integrati
           const message = `fallaron los tests al integrar (${command}, código ${exitCode}${timedOut ? ', tiempo agotado' : ''}):\n${tail(output.trim(), 1500)}`;
           recordFinding(ctx, task, 'tests_failed', message);
           transition(ctx, taskId, 'changes', `tests fallidos al integrar (código ${exitCode})`);
-          return fail(ctx, project, task, `Fallaron los tests (código ${exitCode}).`, message);
+          return fail(ctx, project, task, `Fallaron los tests (código ${exitCode}).`, message, { reason: 'tests_failed', output: tail(output.trim(), 1500) });
         }
       }
 
       // 4) Merge ff-only en el repo principal (vuelve a exigir rama base y árbol limpio).
+      phase(ctx, project.id, taskId, 'merge');
       let merged;
       try {
         merged = await mergeFfOnly(project.path, task.branch ?? branchName(taskId), { expectedBase: project.base_branch });
       } catch (err) {
         logEvent(ctx, { ...base, kind: 'git', payload: { finding: 'merge_failed', task_id: taskId, message: msg(err) } });
-        return fail(ctx, project, task, msg(err), msg(err)); // la tarea sigue `approved`: se puede reintentar
+        return fail(ctx, project, task, msg(err), msg(err), { reason: 'merge' }); // la tarea sigue `approved`: se puede reintentar
       }
 
       // 5) Hecho: fila, tarea `integrated` (libera archivos) y limpieza del worktree y su rama (ya está en la base).
@@ -150,7 +166,7 @@ export async function integrateTask(ctx: Ctx, taskId: string): Promise<Integrati
     } catch (err) {
       // Error inesperado de git (rebase sin conflicto, etc.): la tarea sigue aprobada y queda constancia.
       logEvent(ctx, { ...base, kind: 'error', payload: { message: `falló la integración: ${msg(err)}` } });
-      return fail(ctx, project, task, msg(err), msg(err));
+      return fail(ctx, project, task, msg(err), msg(err), { reason: 'merge' });
     }
   });
 }

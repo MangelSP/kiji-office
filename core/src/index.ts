@@ -51,7 +51,7 @@ async function handle(line: string): Promise<void> {
     try {
       res.result = await handler(msg.params, { id: msg.id }); // `secrets.put` exige id "rust:*"
     } catch (err) {
-      res.error = { code: 'handler_error', message: err instanceof Error ? err.message : String(err) };
+      res.error = { code: typeof (err as { code?: unknown })?.code === 'string' ? (err as { code: string }).code : 'handler_error', message: err instanceof Error ? err.message : String(err) };
     }
   }
   writeLine(res);

@@ -1,5 +1,6 @@
 // Aprobaciones: permission_request -> fila en `approvals` + `approval.requested`; approval.answer -> adaptador.
 import type { AgentEvent } from '../adapters/types.js';
+import { answerManagerAsk } from '../manager/policy.js';
 import { type Ctx, type Handler, type LiveRun, asParams, str } from './context.js';
 import { logEvent, sanitize } from './events.js';
 import { notify } from './notifications.js';
@@ -36,6 +37,7 @@ export function onPermissionRequest(ctx: Ctx, live: LiveRun, ev: Extract<AgentEv
     tool: ev.tool,
     input,
     risk: ev.risk,
+    kind: ev.tool === 'AskUserQuestion' ? 'question' : 'tool',
     agent_id: live.agentId,
     task_id: live.taskId,
   });
@@ -65,6 +67,9 @@ export function approvalHandlers(ctx: Ctx): Record<string, Handler> {
       const id = str(p.id, 'id', 'approval.answer');
       if (typeof p.allow !== 'boolean') throw new Error('approval.answer: falta "allow" (true/false)');
       const allow = p.allow;
+
+      // Pregunta del gerente (`manager:*`): la responde la persona; ejecuta o descarta la acción guardada.
+      if (ctx.managerAsks.has(id)) return answerManagerAsk(ctx, id, allow, p.option);
 
       const live = ctx.approvalIndex.get(id);
       if (!live) {

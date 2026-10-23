@@ -153,7 +153,7 @@ async function relayToModel(ctx: Ctx, live: LiveRun, agent: AgentRow, to: string
 /** Programa la reanudación de una tarea `paused_limit` a `resetsAt` (+30 s). Sustituye a un temporizador anterior. */
 export function scheduleResume(ctx: Ctx, taskId: string, resetsAt: number, minDelayMs = MIN_RESUME_DELAY_MS): void {
   clearResume(ctx, taskId);
-  if (ctx.closed) return;
+  if (ctx.closed || ctx.halted) return; // con la parada global activa nada se reanuda solo (manager.resume lo reprograma)
   const target = resetsAt + RESUME_GRACE_MS;
   const delay = target > Date.now() ? target - Date.now() : minDelayMs;
   arm(ctx, taskId, Date.now() + delay, delay);
@@ -212,7 +212,7 @@ export function clearProjectResumes(ctx: Ctx, projectId: string): void {
 
 async function resumeAfterReset(ctx: Ctx, taskId: string): Promise<void> {
   const task = ctx.repos.tasks.get(taskId);
-  if (!task || task.status !== 'paused_limit' || ctx.live.has(taskId) || !task.agent_id) return;
+  if (ctx.halted || !task || task.status !== 'paused_limit' || ctx.live.has(taskId) || !task.agent_id) return;
   if (ctx.queue.some((e) => e.taskId === taskId)) return; // ya espera su turno
   const projectId = projectIdOfTask(ctx, taskId);
   if (!projectId || !ctx.projects.has(projectId)) return; // proyecto cerrado: se reprograma al reabrirlo (rescheduleResumes)
@@ -307,7 +307,8 @@ async function buildHandover(ctx: Ctx, task: TaskRow, project: ProjectRow, from:
   return parts.join('\n\n');
 }
 
-async function switchTask(ctx: Ctx, params: unknown) {
+/** `task.switch`; lo usa también el gerente (`switch_task`). */
+export async function switchTask(ctx: Ctx, params: unknown) {
   const p = asParams(params, 'task.switch');
   const task = getTask(ctx, str(p.taskId, 'taskId', 'task.switch'));
   assertSameProject(p, projectOfTask(ctx, task).id, 'task.switch');

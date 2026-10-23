@@ -18,6 +18,9 @@ import { projectHandlers, recoverAllProjects } from './projects.js';
 import { loadLimitsSnapshot } from './quota.js';
 import { queueHandlers } from './queue.js';
 import { relayHandlers } from './relay.js';
+import { createManagerRuntime, type ManagerOptions } from '../manager/loop.js';
+import { resolveManagerOptions } from '../manager/policy.js';
+import { managerHandlers } from './manager.js';
 import { runHandlers, stopAll, whenIdle } from './runs.js';
 import { requestSecrets, secretsHandlers } from './secrets.js';
 import { settingsHandlers } from './settings.js';
@@ -41,6 +44,8 @@ export interface OrchestratorOptions {
   metricsWriteMs?: number;
   /** 0.2b: red de las conexiones (fetch, tiempos, puertos del descubrimiento): inyectable en las pruebas. */
   connectionDeps?: ConnectionDeps;
+  /** 0.2d: tiempos del gerente (pausa entre ticks, temporizador, caducidad de preguntas...): inyectables en las pruebas. */
+  manager?: ManagerOptions;
 }
 
 export function createOrchestrator(opts: OrchestratorOptions) {
@@ -74,7 +79,12 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     secrets: new Map(),
     conn: null,
     integrationLocks: new Map(),
+    halted: false,
+    managerAsks: new Map(),
+    manager: null,
+    managerOptions: resolveManagerOptions(opts.manager),
   };
+  ctx.halted = ctx.repos.settings.get('manager_halted') === '1'; // la parada global sobrevive al reinicio
   // Por defecto: Claude, o ApiLoopAdapter cuando el agente tiene connection_id (0.2b).
   if (!opts.adapterFactory) ctx.adapterFactory = makeAdapterFactory(ctx, opts.connectionDeps);
   // Claves ya presentes en el entorno (las inyecta Rust al arrancar): conexiones openai/gemini automáticas (D17).
@@ -83,6 +93,7 @@ export function createOrchestrator(opts: OrchestratorOptions) {
   ctx.conn = connService;
   loadLimitsSnapshot(ctx);
   recoverAllProjects(ctx); // un corte previo no deja tareas running ni aprobaciones pending fantasma, ni en proyectos cerrados
+  ctx.manager = createManagerRuntime(ctx); // cierra ticks y preguntas huérfanos del corte anterior (no relanza nada)
   const handlers: Record<string, Handler> = {
     ...projectHandlers(ctx),
     ...settingsHandlers(ctx),
@@ -103,13 +114,17 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     ...eventHandlers(ctx),
     ...queueHandlers(ctx),
     ...workspaceHandlers(ctx),
+    ...managerHandlers(ctx),
   };
   return {
     handlers,
     /** Espera a que terminen los runs en curso (pruebas). */
     whenIdle: () => whenIdle(ctx),
     /** Para los adaptadores en marcha (apagado del core). */
-    shutdown: () => stopAll(ctx),
+    shutdown: async () => {
+      ctx.manager?.dispose();
+      await stopAll(ctx);
+    },
     /** Pide a Rust las claves `conn:*` del llavero (evento `secrets.request`); `core/src/index.ts` lo llama tras `core.ready`. */
     requestSecrets: () => requestSecrets(ctx),
     ctx,

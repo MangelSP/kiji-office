@@ -210,7 +210,10 @@ describe('integración', () => {
     h.adapters.at(-1)!.push({ type: 'done', text: 'respuesta' });
     await h.waitFor(() => task(t.id).status === 'review', 'review');
     await h.call('task.review', { id: t.id, verdict: 'approve' });
-    await expect(h.call('integration.apply', { id: t.id })).rejects.toThrow(/solo lectura/);
+    // una consulta aprobada queda integrada directamente: no hay nada que integrar ni fila de integrations
+    expect(task(t.id).status).toBe('integrated');
+    expect(repos().integrations.getByTask(t.id)).toBeUndefined();
+    await expect(h.call('integration.apply', { id: t.id })).rejects.toThrow(/solo se integran las aprobadas/);
   });
 });
 

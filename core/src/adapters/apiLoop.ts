@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { AsyncQueue } from './queue.js';
 import { parseSse } from './sse.js';
 import { toLimit } from './limits.js';
-import { isToolName, runTool, toolDefinitions } from './tools/index.js';
+import { isToolName, runTool, toolDefinitions, truncate } from './tools/index.js';
 import type { AgentAdapter, AgentEvent, RunSpec } from './types.js';
 
 export type ApiLoopOptions = {
@@ -139,7 +139,12 @@ export class ApiLoopAdapter implements AgentAdapter {
 
   private async run(spec: RunSpec, out: AsyncQueue<AgentEvent>): Promise<void> {
     const readOnly = !!spec.readOnly;
-    const tools = toolDefinitions(readOnly);
+    // Herramientas propias del core (el gerente) además de las de archivos; el nombre de una propia nunca pisa a una integrada.
+    const extra = new Map((spec.extraTools ?? []).filter((t) => !isToolName(t.name)).map((t) => [t.name, t]));
+    const tools: unknown[] = [
+      ...toolDefinitions(readOnly),
+      ...[...extra.values()].map((t) => ({ type: 'function' as const, function: { name: t.name, description: t.description, parameters: t.parameters } })),
+    ];
     const weak = this.opts.toolQuality === 'weak' || this.opts.toolQuality === 'unknown';
     const messages: Msg[] = [
       { role: 'system', content: `${spec.systemPrompt}\n\n${TOOLS_GUIDE}` },
@@ -218,7 +223,11 @@ export class ApiLoopAdapter implements AgentAdapter {
           try {
             input = c.args.trim() === '' ? {} : JSON.parse(c.args);
             push({ type: 'tool', name: c.name, input, status: 'start' });
-            result = await runTool(c.name, input, readOnly, ctx);
+            const own = extra.get(c.name);
+            if (own) {
+              const r = await own.execute(input).catch((e: unknown) => ({ output: e instanceof Error ? e.message : String(e), isError: true }));
+              result = { output: this.redact(truncate(r.output)), isError: r.isError };
+            } else result = await runTool(c.name, input, readOnly, ctx);
           } catch {
             push({ type: 'tool', name: c.name, input: c.args, status: 'start' });
             result = {
