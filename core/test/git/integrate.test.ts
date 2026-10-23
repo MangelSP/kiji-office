@@ -264,7 +264,8 @@ describe('runTests', () => {
     });
 
     async function groupGone(id: number): Promise<boolean> {
-      for (let i = 0; i < 40; i++) {
+      // Hasta 5 s: con la máquina cargada, launchd/init tarda en recoger a los procesos ya muertos.
+      for (let i = 0; i < 100; i++) {
         try {
           process.kill(-id, 0);
         } catch (e) {
