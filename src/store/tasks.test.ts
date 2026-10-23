@@ -13,30 +13,31 @@ vi.mock("../core/client", () => ({
 }));
 
 import { useStore } from ".";
+import { P, proj, resetStore } from "./testing";
 
 beforeEach(() => {
   mocks.request.mockReset();
-  useStore.setState({ tasks: [], notice: null });
+  resetStore();
 });
 
 describe("createTask", () => {
   it("manda description y devuelve la tarea creada", async () => {
     mocks.request.mockResolvedValue({ id: "t1", title: "x", status: "assigned" });
-    const t = await useStore.getState().createTask({ title: "x", description: "x\ny", files: [], agentId: "a2" });
-    expect(mocks.request).toHaveBeenCalledWith("task.create", { title: "x", description: "x\ny", files: [], agent_id: "a2" });
+    const t = await useStore.getState().createTask(P, { title: "x", description: "x\ny", files: [], agentId: "a2" });
+    expect(mocks.request).toHaveBeenCalledWith("task.create", { projectId: "p1", title: "x", description: "x\ny", files: [], agent_id: "a2" });
     expect(t?.id).toBe("t1");
-    expect(useStore.getState().tasks).toHaveLength(1);
+    expect(proj().tasks).toHaveLength(1);
   });
 
   it("el error del core no repite el prefijo del método", async () => {
     mocks.request.mockRejectedValue(new Error("task.create: falta \"title\" (texto)"));
-    expect(await useStore.getState().createTask({ title: "", files: [] })).toBeUndefined();
+    expect(await useStore.getState().createTask(P, { title: "", files: [] })).toBeUndefined();
     expect(useStore.getState().notice).toBe('task.create: falta "title" (texto)');
   });
 
   it("un error sin prefijo conserva el del método", async () => {
     mocks.request.mockRejectedValue(new Error("no hay un proyecto abierto"));
-    await useStore.getState().createTask({ title: "x", files: [] });
+    await useStore.getState().createTask(P, { title: "x", files: [] });
     expect(useStore.getState().notice).toBe("task.create: no hay un proyecto abierto");
   });
 });

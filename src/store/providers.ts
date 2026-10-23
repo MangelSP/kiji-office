@@ -1,5 +1,5 @@
 // Slices de la oficina 0.2a:
-//  - `providers`: estado de cupo de cada IA (`providers.status`, `limits.changed`) e historial de relevos.
+//  - `providers`: estado de cupo de cada IA (`providers.status`, `limits.changed`, global) y relevos (por proyecto).
 //  - `office`: último evento de cada agente (para los globos de la escena) y borradores de la caja de pedido.
 import type { StateCreator } from "zustand";
 import type { ProviderStatus, RelayRow } from "../../shared/protocol";
@@ -11,33 +11,32 @@ import type { AppState } from "./index";
 export const MAX_RELAYS = 50;
 
 export type ProvidersSlice = {
+  /** Estado de cupo de cada IA: es de la cuenta, común a todos los proyectos. */
   providers: ProviderStatus[];
-  relays: RelayRow[];
   refreshProviders: () => Promise<void>;
-  refreshRelays: () => Promise<void>;
+  refreshRelays: (projectId: string) => Promise<void>;
   /** `limits.changed`: reemplaza el estado de todos los proveedores. */
   applyLimits: (list: ProviderStatus[]) => void;
-  /** `relay.happened`: añade el relevo arriba (sin duplicar por id). */
+  /** `relay.happened` (lleva su `projectId`): añade el relevo arriba (sin duplicar por id). */
   addRelay: (row: RelayRow) => void;
 };
 
 export const createProvidersSlice: StateCreator<AppState, [], [], ProvidersSlice> = (set, get) => ({
   providers: [],
-  relays: [],
   refreshProviders: async () => {
     const list = await get().callSafe<ProviderStatus[]>("providers.status", undefined, { silent: true });
     if (Array.isArray(list)) set({ providers: list });
   },
-  refreshRelays: async () => {
-    const list = await get().callSafe<RelayRow[]>("relays.list", { limit: MAX_RELAYS }, { silent: true });
-    if (Array.isArray(list)) set({ relays: list.slice(0, MAX_RELAYS) });
+  refreshRelays: async (pid) => {
+    const list = await get().callSafe<RelayRow[]>("relays.list", { limit: MAX_RELAYS, projectId: pid }, { silent: true });
+    if (Array.isArray(list)) get().patchProject(pid, () => ({ relays: list.slice(0, MAX_RELAYS) }));
   },
   applyLimits: (list) => {
     if (Array.isArray(list)) set({ providers: list });
   },
   addRelay: (row) =>
-    set((s) =>
-      s.relays.some((r) => r.id === row.id) ? s : { relays: [row, ...s.relays].slice(0, MAX_RELAYS) },
+    get().patchProject(row.projectId, (p) =>
+      p.relays.some((r) => r.id === row.id) ? null : { relays: [row, ...p.relays].slice(0, MAX_RELAYS) },
     ),
 });
 
@@ -48,38 +47,32 @@ export type AgentActivity = { kind: string; payload: unknown; at: number };
 export type OfficeDraft = { request: string; files: string };
 
 export type OfficeSlice = {
-  /** Último evento con globo de cada agente (clave = id del agente en texto). */
-  activity: Record<string, AgentActivity>;
-  /** Borrador de la caja de pedido por robot (en memoria). */
-  drafts: Record<string, OfficeDraft>;
-  noteActivity: (agentId: Id, kind: string, payload: unknown, at?: number) => void;
-  setDraft: (agentId: Id, draft: OfficeDraft) => void;
+  noteActivity: (projectId: string, agentId: Id, kind: string, payload: unknown, at?: number) => void;
+  setDraft: (projectId: string, agentId: Id, draft: OfficeDraft) => void;
 };
 
-export const createOfficeSlice: StateCreator<AppState, [], [], OfficeSlice> = (set) => ({
-  activity: {},
-  drafts: {},
-  noteActivity: (agentId, kind, payload, at = Date.now()) => {
+export const createOfficeSlice: StateCreator<AppState, [], [], OfficeSlice> = (_set, get) => ({
+  noteActivity: (pid, agentId, kind, payload, at = Date.now()) => {
     // Los eventos que no cambian el globo (git, tests...) no pisan al anterior.
     const text = bubbleText({ kind, payload });
     if (text === null) return;
-    set((s) => {
-      const prev = s.activity[String(agentId)];
+    get().patchProject(pid, (p) => {
+      const prev = p.activity[String(agentId)];
       // Mismo globo (tipo y texto): no se toca el estado, para no repintar la pantalla por cada token. "¡listo!" sí
       // renueva `at`, que fija cuánto dura el globo.
-      if (prev && prev.kind === kind && text !== "¡listo!" && bubbleText(prev) === text) return s;
-      return { activity: { ...s.activity, [String(agentId)]: { kind, payload, at } } };
+      if (prev && prev.kind === kind && text !== "¡listo!" && bubbleText(prev) === text) return null;
+      return { activity: { ...p.activity, [String(agentId)]: { kind, payload, at } } };
     });
   },
-  setDraft: (agentId, draft) =>
-    set((s) => {
+  setDraft: (pid, agentId, draft) =>
+    get().patchProject(pid, (p) => {
       const key = String(agentId);
       if (draft.request === "" && draft.files === "") {
-        if (!(key in s.drafts)) return s;
-        const { [key]: _gone, ...rest } = s.drafts;
+        if (!(key in p.drafts)) return null;
+        const { [key]: _gone, ...rest } = p.drafts;
         return { drafts: rest };
       }
-      return { drafts: { ...s.drafts, [key]: draft } };
+      return { drafts: { ...p.drafts, [key]: draft } };
     }),
 });
 

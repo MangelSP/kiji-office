@@ -184,6 +184,12 @@
 .ag-badge-integrated {
   background: #4cc38a;
 }
+.ag-badge-queued {
+  background: #9aa0d8;
+}
+.ag-badge-budget {
+  background: #ff7a45;
+}
 .ag-badge-failed,
 .ag-badge-blocked {
   background: #ff6b57;

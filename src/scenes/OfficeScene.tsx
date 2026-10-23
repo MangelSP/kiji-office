@@ -4,6 +4,7 @@ import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
 import { Application, Container, Graphics, Sprite, TextureStyle, type Texture } from "pixi.js";
 import { useStore } from "../store";
 import type { Agent } from "../store/agents";
+import { projectOf } from "../store/partition";
 import { bubbleText, bubbleVisible, stackBubbles, type BubbleSlot } from "./bubbleText";
 import { assignSlots, type OfficeData, OFFICE_H, OFFICE_W, pickRobot, ROBOT_H, SCALE, sheetKey } from "./officeLayout";
 import { drawPlaceholderBackground, drawPlaceholderFront } from "./placeholders";
@@ -21,6 +22,8 @@ export type OfficeSceneHandle = {
 
 type Props = {
   ref?: Ref<OfficeSceneHandle>;
+  /** Workspace que se dibuja. Al cambiar, la misma escena (una sola `Application`) re-sincroniza sus robots. */
+  projectId: string;
   /** Clic en un robot. */
   onSelect?: (agentId: string) => void;
   selectedId?: string | null;
@@ -44,6 +47,7 @@ class SceneController {
   constructor(
     private app: Application,
     private assets: OfficeAssets,
+    private projectId: string,
   ) {
     const world = new Container();
     world.scale.set(SCALE);
@@ -62,10 +66,21 @@ class SceneController {
 
     app.ticker.add(this.tick);
     app.canvas.addEventListener("pointerdown", this.onPointerDown);
-    this.sync(useStore.getState().agents);
+    this.sync(projectOf(useStore.getState(), projectId).agents);
     this.unsubscribe = useStore.subscribe((s, prev) => {
-      if (s.agents !== prev.agents) this.sync(s.agents);
+      const agents = projectOf(s, this.projectId).agents;
+      if (agents !== projectOf(prev, this.projectId).agents) this.sync(agents);
     });
+  }
+
+  /** Cambia de workspace: quita los robots y globos del anterior y dibuja los del nuevo. */
+  setProject(projectId: string) {
+    if (projectId === this.projectId) return;
+    this.projectId = projectId;
+    this.selectedId = null;
+    for (const b of this.bubbles.values()) b.destroy();
+    this.bubbles.clear();
+    this.sync(projectOf(useStore.getState(), projectId).agents);
   }
 
   /** Crea/mueve/borra robots según los agentes; solo llama a `setState` cuando cambia el estado. */
@@ -126,7 +141,7 @@ class SceneController {
 
   /** Crea, actualiza y quita los globos según el último evento de cada agente; apila los que se solapan. */
   private updateBubbles(now: number) {
-    const activity = useStore.getState().activity;
+    const activity = projectOf(useStore.getState(), this.projectId).activity;
     const slots: BubbleSlot[] = [];
     const wanted = new Set<string>();
     for (const r of this.robots.values()) {
@@ -166,11 +181,11 @@ class SceneController {
   }
 }
 
-export default function OfficeScene({ ref, onSelect, selectedId = null }: Props) {
+export default function OfficeScene({ ref, projectId, onSelect, selectedId = null }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const ctrl = useRef<SceneController | null>(null);
-  const latest = useRef({ onSelect, selectedId });
-  latest.current = { onSelect, selectedId };
+  const latest = useRef({ onSelect, selectedId, projectId });
+  latest.current = { onSelect, selectedId, projectId };
 
   useImperativeHandle(ref, () => ({ robotAt: (x, y) => ctrl.current?.robotAt(x, y) ?? null }), []);
 
@@ -206,7 +221,7 @@ export default function OfficeScene({ ref, onSelect, selectedId = null }: Props)
         return destroyApp();
       }
       host.current?.appendChild(app.canvas);
-      const c = new SceneController(app, assets);
+      const c = new SceneController(app, assets, latest.current.projectId);
       c.onSelect = (id) => latest.current.onSelect?.(id);
       c.setSelected(latest.current.selectedId);
       ctrl.current = c;
@@ -219,8 +234,9 @@ export default function OfficeScene({ ref, onSelect, selectedId = null }: Props)
   }, []);
 
   useEffect(() => {
+    ctrl.current?.setProject(projectId);
     ctrl.current?.setSelected(selectedId);
-  }, [selectedId]);
+  }, [projectId, selectedId]);
 
   return <div ref={host} className="office-scene" aria-label="Oficina con los robots de los agentes" role="img" />;
 }

@@ -16,7 +16,7 @@ vi.mock("../../core/client", () => ({
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
 import { useStore } from "../../store";
-import { createMetricsSlice } from "../../store/metrics";
+import { proj, resetStore, seed } from "../../store/testing";
 import AgentTabs from "./AgentTabs";
 import { describeEntry } from "./eventText";
 
@@ -39,10 +39,9 @@ beforeEach(() => {
     if (method === "agent.update") return { ...CLAU, name: "Clau 2" };
     throw Object.assign(new Error("no"), { code: "unknown_method" });
   });
-  useStore.setState(createMetricsSlice(useStore.setState as never, useStore.getState as never, useStore as never));
-  useStore.setState({
-    agents: [BOSS, CLAU], tasks: [TASK], events: [], liveRuns: {}, metricsByAgent: {}, stepsByTask: {}, skills: [], notice: null, unavailable: {},
-  } as never);
+  resetStore();
+  useStore.setState({ skills: [] });
+  seed({ agents: [BOSS, CLAU], tasks: [TASK] } as never);
 });
 afterEach(cleanup);
 
@@ -77,7 +76,7 @@ describe("AgentTabs", () => {
   });
 
   it("Todos resume modelo, estado, tareas y coste de cada agente", () => {
-    useStore.setState({ metricsByAgent: { a2: { agentId: "a2", model: "haiku", runs: 1, costUsd: 0.25, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, lastContextTokens: 0, lastContextWindow: 0, recent: [] } } } as never);
+    seed({ metricsByAgent: { a2: { agentId: "a2", model: "haiku", runs: 1, costUsd: 0.25, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, lastContextTokens: 0, lastContextWindow: 0, recent: [] } } } as never);
     render(<AgentTabs selectedId={null} onSelect={vi.fn()} />);
     const card = screen.getByRole("button", { name: "Abrir Clau" });
     expect(card.textContent).toContain("haiku");
@@ -88,7 +87,7 @@ describe("AgentTabs", () => {
 
   it("cambia de subpestaña y pide las métricas del agente", async () => {
     render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
-    await waitFor(() => expect(calls("agent.metrics").map((c) => c[1])).toContainEqual({ agentId: "a2" }));
+    await waitFor(() => expect(calls("agent.metrics").map((c) => c[1])).toContainEqual({ agentId: "a2", projectId: "p1" }));
     expect(screen.getByRole("tablist", { name: "Secciones de Clau" }).querySelector(".ag-subtab")).not.toBeNull();
     expect(screen.getByRole("tab", { name: "Tareas" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Arreglar el login")).toBeTruthy();
@@ -102,7 +101,7 @@ describe("AgentTabs", () => {
   });
 
   it("las métricas se actualizan en vivo con liveRuns", () => {
-    useStore.setState({
+    seed({
       metricsByAgent: { a2: { agentId: "a2", model: "sonnet", runs: 1, costUsd: 1.234, input: 12300, output: 900, cacheRead: 50000, cacheWrite: 800, lastContextTokens: 100000, lastContextWindow: 200000, recent: [] } },
     } as never);
     render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
@@ -111,7 +110,7 @@ describe("AgentTabs", () => {
     expect(screen.getByText("50,0 k")).toBeTruthy();
     expect(screen.getAllByText(/50 %/).length).toBeGreaterThan(0);
     useStore.getState().applyRunMetrics({
-      runId: "r1234567", taskId: "t1", agentId: "a2", model: "opus", input: 10, output: 5, cacheRead: 0, cacheWrite: 0,
+      projectId: "p1", runId: "r1234567", taskId: "t1", agentId: "a2", model: "opus", input: 10, output: 5, cacheRead: 0, cacheWrite: 0,
       contextTokens: 190000, contextWindow: 200000, costUsd: 0.1, live: true,
     });
     return waitFor(() => {
@@ -119,6 +118,17 @@ describe("AgentTabs", () => {
       expect(bars.map((b) => b.getAttribute("aria-valuenow"))).toEqual(["95", "95"]);
       expect(screen.getAllByText("en vivo").length).toBeGreaterThan(0);
     });
+  });
+
+  it("una tarea en cola muestra «En cola #n» y, si la retiene el tope de gasto, lo dice", () => {
+    seed({ tasks: [{ ...TASK, status: "assigned", queued: true, queue_position: 2 }] } as never);
+    const { rerender } = render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
+    expect(screen.getByText("En cola #2")).toBeTruthy();
+    expect(screen.queryByText("bloqueada por tope de gasto")).toBeNull();
+    seed({ queue: { t1: { projectId: "p1", taskId: "t1", queued: true, position: 1, blockedBy: "budget" } } });
+    rerender(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
+    expect(screen.getByText("En cola #1")).toBeTruthy();
+    expect(screen.getByText("bloqueada por tope de gasto")).toBeTruthy();
   });
 
   it("la respuesta se muestra como Markdown sin HTML crudo", () => {
@@ -134,7 +144,7 @@ describe("AgentTabs", () => {
 
   it("los enlaces no navegan y abren con el plugin opener", async () => {
     const { openUrl } = await import("@tauri-apps/plugin-opener");
-    useStore.setState({ tasks: [{ ...TASK, result: "Mira [docs](https://example.com) y [mal](javascript:alert(1))" }] } as never);
+    seed({ tasks: [{ ...TASK, result: "Mira [docs](https://example.com) y [mal](javascript:alert(1))" }] } as never);
     render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
     const link = screen.getByRole("link", { name: "docs" });
     expect(fireEvent.click(link)).toBe(false); // preventDefault
@@ -150,7 +160,7 @@ describe("AgentTabs", () => {
     render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("Cambiar IA de Arreglar el login"), { target: { value: "model:opus" } });
     fireEvent.click(screen.getByRole("button", { name: "Cambiar" }));
-    await waitFor(() => expect(calls("task.switch")[0]?.[1]).toEqual({ taskId: "t1", model: "opus" }));
+    await waitFor(() => expect(calls("task.switch")[0]?.[1]).toEqual({ taskId: "t1", model: "opus", projectId: "p1" }));
   });
 
   it("los pasos se piden al desplegar y se muestran con ✓/✗", async () => {
@@ -186,10 +196,10 @@ describe("AgentTabs", () => {
     fireEvent.click(save);
     await waitFor(() => expect(calls("agent.update")).toHaveLength(1));
     expect(calls("agent.update")[0][1]).toEqual({
-      agentId: "a2", name: "Clau 2", persona: "Sé breve.", skills: ["frontend-design", "game-ui-ux"],
+      projectId: "p1", agentId: "a2", name: "Clau 2", persona: "Sé breve.", skills: ["frontend-design", "game-ui-ux"],
       relayOrder: ["haiku", "opus"], autoRelay: false,
     });
-    await waitFor(() => expect(useStore.getState().agents.find((a) => a.id === "a2")?.name).toBe("Clau 2"));
+    await waitFor(() => expect(proj().agents.find((a) => a.id === "a2")?.name).toBe("Clau 2"));
   });
 
   it("el buscador filtra las skills", async () => {
@@ -215,7 +225,7 @@ describe("AgentTabs", () => {
 
   it("el registro cuenta lo que hizo el agente en frases, con lo nuevo arriba y sin JSON", () => {
     const ev = (seq: number, payload: unknown) => ({ seq, at: 1_700_000_000_000 + seq, name: "event.appended", summary: JSON.stringify(payload) });
-    useStore.setState({
+    seed({
       events: [
         ev(1, { agent_id: "a2", task_id: "t1", kind: "tool", payload: { name: "Read", status: "start" } }),
         ev(2, { agent_id: "a2", task_id: "t1", kind: "text", payload: { delta: "hola" } }),

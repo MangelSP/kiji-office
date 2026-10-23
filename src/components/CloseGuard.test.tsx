@@ -15,7 +15,7 @@ vi.mock("../core/client", () => ({
   CoreError: class CoreError extends Error {},
 }));
 
-import { useStore } from "../store";
+import { resetStore, seed } from "../store/testing";
 import CloseGuard from "./CloseGuard";
 
 const calls = () => mocks.invoke.mock.calls.map((c) => c[0]);
@@ -29,17 +29,14 @@ beforeEach(() => {
   mocks.invoke.mockReset();
   mocks.invoke.mockResolvedValue(undefined);
   mocks.handler = null;
-  useStore.setState({
-    agents: [{ id: "a2", name: "Clau", status: "idle" }],
-    tasks: [],
-    approvals: [],
-  } as never);
+  resetStore();
+  seed({ agents: [{ id: "a2", name: "Clau", status: "idle" }] });
 });
 afterEach(cleanup);
 
 describe("CloseGuard", () => {
   it("sin trabajo no muestra diálogo y sale", async () => {
-    useStore.setState({ tasks: [{ id: "t1", title: "x", status: "review" }] } as never);
+    seed({ tasks: [{ id: "t1", title: "x", status: "review" }] });
     render(<CloseGuard />);
     await requestClose();
     expect(screen.queryByRole("alertdialog")).toBeNull();
@@ -48,9 +45,7 @@ describe("CloseGuard", () => {
   });
 
   it("con trabajo muestra los nombres y avisa a la bandeja", async () => {
-    useStore.setState({
-      tasks: [{ id: "t1", title: "Arreglar login", status: "running", agent_id: "a2" }],
-    } as never);
+    seed({ tasks: [{ id: "t1", title: "Arreglar login", status: "running", agent_id: "a2" }] });
     render(<CloseGuard />);
     await requestClose();
     expect(screen.getByRole("alertdialog").textContent).toContain("Hay 1 robot trabajando (Clau: «Arreglar login»)");
@@ -59,10 +54,23 @@ describe("CloseGuard", () => {
   });
 
   it("una aprobación pendiente cuenta como trabajo", async () => {
-    useStore.setState({ approvals: [{ id: "p1" }] } as never);
+    seed({ approvals: [{ id: "p1" }] });
     render(<CloseGuard />);
     await requestClose();
     expect(screen.getByRole("alertdialog")).toBeTruthy();
+  });
+
+  it("cuenta el trabajo de TODOS los workspaces, también los de segundo plano", async () => {
+    seed({ tasks: [{ id: "t9", title: "Migrar", status: "running", agent_id: "b1" }], agents: [{ id: "b1", name: "Ana" }] }, "p2");
+    seed({ approvals: [{ id: "q1" }] }, "p2");
+    // La pestaña visible (p1) está ociosa: el aviso sale por el trabajo de p2.
+    render(<CloseGuard />);
+    await requestClose();
+    const text = screen.getByRole("alertdialog").textContent;
+    expect(text).toContain("Hay 1 robot trabajando");
+    expect(text).toContain("Ana: «Migrar»");
+    expect(text).toContain("1 aprobación pendiente");
+    expect(mocks.invoke).toHaveBeenCalledWith("tray_set_busy", { count: 1 });
   });
 
   const working = { tasks: [{ id: "t1", title: "T", status: "needs_you", agent_id: "a2" }] };
@@ -71,7 +79,7 @@ describe("CloseGuard", () => {
     ["Seguir en segundo plano", "app_hide"],
     ["Detener todo y salir", "app_quit"],
   ])("«%s» llama a %s", async (label, cmd) => {
-    useStore.setState(working as never);
+    seed(working as never);
     render(<CloseGuard />);
     await requestClose();
     fireEvent.click(screen.getByRole("button", { name: label }));
@@ -80,7 +88,7 @@ describe("CloseGuard", () => {
   });
 
   it("Cancelar cierra el diálogo sin ocultar ni salir", async () => {
-    useStore.setState(working as never);
+    seed(working as never);
     render(<CloseGuard />);
     await requestClose();
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));

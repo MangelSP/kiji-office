@@ -16,7 +16,7 @@ vi.mock("../../core/client", () => ({
 // PixiJS necesita WebGL: en jsdom la vista previa se sustituye por un marcador con la paleta.
 vi.mock("./RobotPreview", () => ({ default: ({ palette }: { palette: string }) => <div data-testid="preview" data-palette={palette} /> }));
 
-import { useStore } from "../../store";
+import { proj, resetStore, seed } from "../../store/testing";
 import CreateAgent from "./CreateAgent";
 import { validateName } from "./options";
 
@@ -25,7 +25,8 @@ const CLAU = { id: "a2", name: "Clau", provider: "claude", color: "terracota" };
 
 beforeEach(() => {
   mocks.request.mockReset();
-  useStore.setState({ agents: [BOSS, CLAU], notice: null });
+  resetStore();
+  seed({ agents: [BOSS, CLAU] });
 });
 afterEach(cleanup);
 
@@ -105,9 +106,9 @@ describe("CreateAgent", () => {
     fireEvent.click(screen.getByRole("button", { name: "Color Azul" }));
     submit();
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(mocks.request).toHaveBeenCalledWith("agent.create", { name: "Pixel", provider: "claude", model: "haiku", role: "tester", color: "azul" });
-    expect(mocks.request).toHaveBeenCalledWith("agent.list", undefined);
-    expect(useStore.getState().agents.map((a) => a.name)).toEqual(["Jefe", "Clau", "Pixel"]);
+    expect(mocks.request).toHaveBeenCalledWith("agent.create", { projectId: "p1", name: "Pixel", provider: "claude", model: "haiku", role: "tester", color: "azul" });
+    expect(mocks.request).toHaveBeenCalledWith("agent.list", { projectId: "p1" });
+    expect(proj().agents.map((a) => a.name)).toEqual(["Jefe", "Clau", "Pixel"]);
     expect(onCreated).toHaveBeenCalledWith("Pixel");
   });
 
@@ -117,7 +118,7 @@ describe("CreateAgent", () => {
     fireEvent.change(nameInput(), { target: { value: "Ana" } });
     submit();
     await waitFor(() => expect(mocks.request).toHaveBeenCalled());
-    expect(mocks.request).toHaveBeenCalledWith("agent.create", { name: "Ana", provider: "claude", model: "sonnet", role: "programador", color: "terracota" });
+    expect(mocks.request).toHaveBeenCalledWith("agent.create", { projectId: "p1", name: "Ana", provider: "claude", model: "sonnet", role: "programador", color: "terracota" });
   });
 
   it("si el core rechaza, muestra su mensaje y no cierra", async () => {

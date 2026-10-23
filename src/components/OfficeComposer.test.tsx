@@ -15,6 +15,7 @@ vi.mock("../core/client", () => ({
 }));
 
 import { useStore } from "../store";
+import { proj, resetStore, seed } from "../store/testing";
 import OfficeComposer, { isBusy } from "./OfficeComposer";
 
 const AGENTS = [
@@ -28,7 +29,8 @@ beforeEach(() => {
   mocks.request.mockImplementation(async (method: string) =>
     method === "task.create" ? { id: "t1", title: "x", status: "assigned" } : null,
   );
-  useStore.setState({ agents: AGENTS, tasks: [], drafts: {}, notice: null });
+  resetStore();
+  seed({ agents: AGENTS });
 });
 afterEach(cleanup);
 
@@ -59,12 +61,13 @@ describe("OfficeComposer", () => {
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(calls("task.start")).toHaveLength(1));
     expect(calls("task.create")[0][1]).toEqual({
+      projectId: "p1",
       title: "Revisa el login",
       description: "Revisa el login\nsin tocar nada",
       files: [],
       agent_id: "a3",
     });
-    expect(calls("task.start")[0][1]).toEqual({ id: "t1" });
+    expect(calls("task.start")[0][1]).toEqual({ id: "t1", projectId: "p1" });
     expect(box().value).toBe("");
   });
 
@@ -84,7 +87,7 @@ describe("OfficeComposer", () => {
   });
 
   it("con el robot ocupado crea la tarea sin empezarla y avisa", async () => {
-    useStore.setState({ tasks: [{ id: "t0", title: "otra", status: "running", agent_id: "a2" }] });
+    seed({ tasks: [{ id: "t0", title: "otra", status: "running", agent_id: "a2" }] });
     render(<OfficeComposer selectedId="a2" onSelect={vi.fn()} />);
     expect(box().placeholder).toBe("Clau está trabajando; tu pedido quedará en cola");
     type("Siguiente cosa");
@@ -102,7 +105,7 @@ describe("OfficeComposer", () => {
     type("Cambia A");
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(calls("task.create")).toHaveLength(1));
-    expect(calls("task.create")[0][1]).toMatchObject({ files: ["src/a.ts", "src/b.ts"] });
+    expect(calls("task.create")[0][1]).toMatchObject({ projectId: "p1", files: ["src/a.ts", "src/b.ts"] });
   });
 
   it("guarda un borrador por robot", () => {
@@ -113,7 +116,7 @@ describe("OfficeComposer", () => {
     type("para Nico");
     rerender(<OfficeComposer selectedId="a2" onSelect={vi.fn()} />);
     expect(box().value).toBe("para Clau");
-    expect(useStore.getState().drafts.a3.request).toBe("para Nico");
+    expect(proj().drafts.a3.request).toBe("para Nico");
   });
 
   it("si la tarea no se pudo crear conserva el borrador", async () => {
@@ -126,7 +129,7 @@ describe("OfficeComposer", () => {
   });
 
   it("sin robots trabajadores el campo está desactivado", () => {
-    useStore.setState({ agents: [AGENTS[0]] });
+    seed({ agents: [AGENTS[0]] });
     render(<OfficeComposer selectedId={null} onSelect={vi.fn()} />);
     expect(box().disabled).toBe(true);
   });

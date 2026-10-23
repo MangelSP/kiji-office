@@ -1,4 +1,4 @@
-// Slice `approvals`: peticiones de permiso de los agentes pendientes de respuesta.
+// Slice `approvals`: peticiones de permiso de los agentes pendientes de respuesta, por proyecto.
 import type { StateCreator } from "zustand";
 import type { Id } from "./agents";
 import type { AppState } from "./index";
@@ -13,21 +13,19 @@ export type Approval = {
 };
 
 export type ApprovalsSlice = {
-  approvals: Approval[];
-  addApproval: (approval: Approval) => void;
+  addApproval: (projectId: string, approval: Approval) => void;
   /** Responde al core; la tarjeta solo desaparece si la respuesta se entregó. */
-  answerApproval: (id: Id, allow: boolean) => Promise<void>;
+  answerApproval: (projectId: string, id: Id, allow: boolean) => Promise<void>;
 };
 
-export const createApprovalsSlice: StateCreator<AppState, [], [], ApprovalsSlice> = (set, get) => ({
-  approvals: [],
-  addApproval: (approval) =>
-    set((s) =>
-      s.approvals.some((a) => String(a.id) === String(approval.id)) ? s : { approvals: [...s.approvals, approval] },
+export const createApprovalsSlice: StateCreator<AppState, [], [], ApprovalsSlice> = (_set, get) => ({
+  addApproval: (pid, approval) =>
+    get().patchProject(pid, (p) =>
+      p.approvals.some((a) => String(a.id) === String(approval.id)) ? null : { approvals: [...p.approvals, approval] },
     ),
-  answerApproval: async (id, allow) => {
-    const ok = await get().callSafe("approval.answer", { id, allow });
+  answerApproval: async (pid, id, allow) => {
+    const ok = await get().callSafe("approval.answer", { id, allow, projectId: pid });
     if (ok === undefined) return;
-    set((s) => ({ approvals: s.approvals.filter((a) => String(a.id) !== String(id)) }));
+    get().patchProject(pid, (p) => ({ approvals: p.approvals.filter((a) => String(a.id) !== String(id)) }));
   },
 });

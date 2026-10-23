@@ -1,16 +1,16 @@
-import { useStore } from "../store";
+import { useScoped } from "../store/scoped";
 import "./components.css";
 
 // Registro en vivo de lo que emite el core (el más nuevo arriba).
 export default function LogPanel() {
-  const events = useStore((s) => s.events);
-  const clearEvents = useStore((s) => s.clearEvents);
+  const events = useScoped((s) => s.events);
+  const clearEvents = useScoped((s) => s.clearEvents);
   const reversed = [...events].reverse();
   return (
     <section className="panel" aria-labelledby="log-title">
       <div className="panel-head">
         <h2 id="log-title">Registro en vivo</h2>
-        <button type="button" className="btn btn-ghost" onClick={clearEvents} disabled={events.length === 0}>
+        <button type="button" className="btn btn-ghost" onClick={() => clearEvents()} disabled={events.length === 0}>
           Limpiar
         </button>
       </div>

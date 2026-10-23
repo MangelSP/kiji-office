@@ -1,0 +1,228 @@
+/* Barra de pestañas de workspace: estilo pixel (bordes de 2 px, sin esquinas redondeadas), acento amarillo. */
+.ws-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 6px 12px 0;
+  box-sizing: border-box;
+  background: #15151a;
+  border-bottom: 2px solid #3a3e56;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+.ws-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+}
+.ws-tab-wrap {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  background: #242738;
+  border: 2px solid #3a3e56;
+  border-bottom: none;
+}
+.ws-tab-wrap.is-active {
+  background: #1b1d2b;
+  border-color: #f4c542;
+}
+.ws-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 10px;
+  font: inherit;
+  color: #c9cbe0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ws-tab:hover {
+  color: #f1ece2;
+}
+.ws-tab.is-active {
+  color: #f4c542;
+  font-weight: 700;
+}
+.ws-home {
+  background: #242738;
+  border: 2px solid #3a3e56;
+  border-bottom: none;
+}
+.ws-home.is-active {
+  background: #1b1d2b;
+  border-color: #f4c542;
+}
+.ws-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border: 2px solid #15151a;
+  box-shadow: 0 0 0 1px #f1ece2;
+}
+.ws-badge {
+  padding: 1px 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1b1d2b;
+  background: #c9cbe0;
+}
+.ws-badge-needs {
+  background: #f4c542;
+}
+.ws-badge-runs {
+  background: #5aa9f0;
+}
+.ws-badge-queue {
+  background: #9aa0d8;
+}
+.ws-badge-limit {
+  background: #ff7a45;
+}
+.ws-close {
+  width: 28px;
+  font: inherit;
+  font-size: 16px;
+  color: #c9cbe0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.ws-close:hover {
+  color: #ff6b57;
+  background: #2d3148;
+}
+.ws-btn {
+  min-height: 32px;
+  padding: 0 10px;
+  font: inherit;
+  color: #f1ece2;
+  background: #2d3148;
+  border: 2px solid #4a4f6d;
+  border-radius: 0;
+  cursor: pointer;
+}
+.ws-btn:hover:not(:disabled) {
+  background: #3a3e5c;
+}
+.ws-btn-primary {
+  color: #1b1d2b;
+  background: #f4c542;
+  border-color: #f4c542;
+  font-weight: 700;
+}
+.ws-btn-primary:hover:not(:disabled) {
+  background: #ffd75e;
+}
+.ws-danger {
+  color: #1b1d2b;
+  background: #ff6b57;
+  border-color: #ff6b57;
+  font-weight: 700;
+}
+.ws-tab:focus-visible,
+.ws-close:focus-visible,
+.ws-btn:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 1px;
+}
+.ws-plus {
+  position: relative;
+  align-self: center;
+}
+.ws-add {
+  width: 36px;
+  font-size: 18px;
+  padding: 0;
+}
+.ws-wizard {
+  align-self: center;
+  margin-left: auto;
+}
+.ws-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 340px;
+  padding: 10px;
+  box-sizing: border-box;
+  background: #242738;
+  border: 2px solid #f4c542;
+}
+.ws-menu-title {
+  margin: 6px 0 0;
+  color: #f4c542;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 12px;
+}
+.ws-menu-empty {
+  margin: 0;
+  color: #c9cbe0;
+}
+.ws-recent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ws-recent-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.ws-recent-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #c9cbe0;
+}
+
+/* Diálogo de confirmación al cerrar un workspace con runs vivos. */
+.ws-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 10, 14, 0.7);
+}
+.ws-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 20px;
+  box-sizing: border-box;
+  background: #242738;
+  border: 2px solid #f4c542;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.ws-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+.ws-dialog p {
+  margin: 0 0 16px;
+  color: #c9cbe0;
+}
+.ws-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}

@@ -1,5 +1,7 @@
 // Formatos de números y textos compartidos por las pestañas de agente y la tira de tarjetas (todo en español).
+import type { QueueChange } from "../../../shared/protocol";
 import type { Agent } from "../../store/agents";
+import type { Task } from "../../store/tasks";
 import { normalizeStatus, ROBOT_STATE_TABLE } from "../../scenes/robotStates";
 import { COLORS } from "../CreateAgent/options";
 
@@ -74,4 +76,26 @@ export function contextSegments(used: number, total: number): { filled: number; 
   if (!(total > 0) || !(used > 0)) return { filled: 0, level: "ok" };
   const filled = Math.max(1, Math.min(SEGMENTS, Math.ceil((used / total) * SEGMENTS)));
   return { filled, level: filled >= 7 ? "high" : filled >= 6 ? "warn" : "ok" };
+}
+
+/** "hace 3 min": tiempo transcurrido desde `at` (epoch ms) en frases cortas; "—" si no hay fecha. */
+export function timeAgo(at: number | null | undefined, now = Date.now()): string {
+  if (at == null || !Number.isFinite(at)) return "—";
+  const s = Math.max(0, Math.round((now - at) / 1000));
+  if (s < 45) return "hace unos segundos";
+  const m = Math.round(s / 60);
+  if (m < 60) return `hace ${m} min`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `hace ${h} h`;
+  return `hace ${Math.round(h / 24)} d`;
+}
+
+/** Cola global de una tarea: posición (1-based) y si la retiene el tope de gasto; null si no está en cola. */
+export function queueInfo(
+  task: Pick<Task, "queued" | "queue_position">,
+  change: Pick<QueueChange, "position" | "blockedBy"> | undefined,
+): { position: number; budget: boolean } | null {
+  const position = change?.position ?? task.queue_position ?? 0;
+  if (!change && !task.queued && !(position > 0)) return null;
+  return { position, budget: change?.blockedBy === "budget" };
 }

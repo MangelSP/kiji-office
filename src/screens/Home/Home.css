@@ -1,0 +1,347 @@
+/* Home / dashboard de workspaces: oscuro, acento amarillo, chips pixel como la caja de pedido. */
+.home {
+  min-height: calc(100vh - 50px);
+  padding: 24px 16px 40px;
+  box-sizing: border-box;
+  max-width: 1720px;
+  margin: 0 auto;
+}
+.hm-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 20px;
+  margin-bottom: 16px;
+}
+.hm-head h1 {
+  font-size: 28px;
+}
+.hm-head .hm-btn {
+  margin-left: auto;
+  align-self: center;
+}
+.hm-muted {
+  color: #c9cbe0;
+}
+.hm-small {
+  font-size: 13px;
+  margin: 4px 0;
+}
+.hm-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.hm-btn {
+  min-height: 36px;
+  padding: 0 14px;
+  font: inherit;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: #f1ece2;
+  background: #2d3148;
+  border: 2px solid #4a4f6d;
+  border-radius: 0;
+  cursor: pointer;
+}
+.hm-btn:hover:not(:disabled) {
+  background: #3a3e5c;
+}
+.hm-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.hm-btn-primary {
+  color: #1b1d2b;
+  background: #f4c542;
+  border-color: #f4c542;
+  font-weight: 700;
+}
+.hm-btn-primary:hover:not(:disabled) {
+  background: #ffd75e;
+}
+.hm-btn:focus-visible,
+.hm-link:focus-visible {
+  outline: 3px solid #f4c542;
+  outline-offset: 2px;
+}
+.hm-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.hm-stat {
+  padding: 12px 14px;
+  background: #242738;
+  border: 2px solid #3a3e56;
+}
+.hm-stat-label {
+  margin: 0 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #f4c542;
+}
+.hm-stat-value {
+  margin: 0 0 8px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 26px;
+  font-weight: 700;
+}
+.hm-stat-of {
+  font-size: 16px;
+  font-weight: 400;
+  color: #c9cbe0;
+}
+.hm-stat-note {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #c9cbe0;
+}
+.hm-stat-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hm-link {
+  font: inherit;
+  color: #f4c542;
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.hm-meter {
+  height: 10px;
+  background: #15151a;
+  border: 2px solid #4a4f6d;
+}
+.hm-meter > span {
+  display: block;
+  height: 100%;
+  background: #4cc38a;
+}
+.hm-meter.is-warn > span {
+  background: #f4c542;
+}
+.hm-meter.is-high > span {
+  background: #ff6b57;
+}
+.hm-limits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: #242738;
+  border: 2px solid #f4c542;
+}
+.hm-limits input {
+  width: 110px;
+  min-height: 34px;
+  padding: 0 8px;
+  font: inherit;
+  color: #f1ece2;
+  background: #15151a;
+  border: 2px solid #4a4f6d;
+}
+.hm-section {
+  margin: 24px 0 12px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #f4c542;
+}
+.hm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.hm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  box-sizing: border-box;
+  background: #242738;
+  border: 2px solid #3a3e56;
+  border-top: 6px solid #f4c542;
+}
+.hm-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.hm-card-title {
+  min-width: 0;
+}
+.hm-card-title h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.hm-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hm-dot {
+  width: 12px;
+  height: 12px;
+  margin-top: 5px;
+  flex: 0 0 auto;
+  border: 2px solid #15151a;
+  box-shadow: 0 0 0 1px #f1ece2;
+}
+.hm-robots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hm-robot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 44px;
+  font-size: 11px;
+}
+.hm-avatar {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border: 2px solid #15151a;
+  box-shadow: 0 0 0 1px #4a4f6d;
+}
+.hm-avatar-dot {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #242738;
+}
+.hm-robot-name {
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hm-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+.hm-chip {
+  padding: 3px 8px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: #f1ece2;
+  background: #2d3148;
+  border: 2px solid #4a4f6d;
+}
+.hm-chip-label {
+  font-weight: 400;
+  color: #c9cbe0;
+}
+.hm-chip-runs {
+  border-color: #5aa9f0;
+}
+.hm-chip-queue {
+  border-color: #9aa0d8;
+}
+.hm-chip-needs.is-on {
+  color: #1b1d2b;
+  background: #f4c542;
+  border-color: #f4c542;
+}
+.hm-chip-needs.is-on .hm-chip-label {
+  color: #1b1d2b;
+}
+.hm-taskbar {
+  display: flex;
+  height: 12px;
+  background: #15151a;
+  border: 2px solid #4a4f6d;
+}
+.hm-taskbar > span {
+  min-width: 3px;
+}
+.hm-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  margin: 0;
+}
+.hm-metrics dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #c9cbe0;
+}
+.hm-metrics dd {
+  margin: 0;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 14px;
+}
+.hm-metrics-wide {
+  grid-column: 1 / -1;
+}
+.hm-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+.hm-empty {
+  max-width: 520px;
+  margin: 48px auto;
+  padding: 28px;
+  text-align: center;
+  background: #242738;
+  border: 2px solid #3a3e56;
+}
+.hm-empty-title {
+  margin: 0 0 8px;
+  font-size: 20px;
+  font-weight: 700;
+}
+.hm-recents {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hm-recent {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #242738;
+  border: 2px solid #3a3e56;
+}
+.hm-recent-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.hm-recent-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #c9cbe0;
+}
+.hm-recent-meta {
+  font-size: 13px;
+}

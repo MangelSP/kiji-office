@@ -3,7 +3,7 @@
 // campo que crece de 1 a 5 líneas, Enter envía, Shift+Enter salta de línea y borrador por robot.
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { parseFiles, parseRequest } from "../screens/Office/request";
-import { useStore } from "../store";
+import { useScoped } from "../store/scoped";
 import type { Agent } from "../store/agents";
 import type { Task } from "../store/tasks";
 import "./OfficeComposer.css";
@@ -25,13 +25,13 @@ export type OfficeComposerProps = {
 };
 
 export default function OfficeComposer({ selectedId, onSelect }: OfficeComposerProps) {
-  const agents = useStore((s) => s.agents);
-  const tasks = useStore((s) => s.tasks);
-  const drafts = useStore((s) => s.drafts);
-  const setDraft = useStore((s) => s.setDraft);
-  const createTask = useStore((s) => s.createTask);
-  const startTask = useStore((s) => s.startTask);
-  const setNotice = useStore((s) => s.setNotice);
+  const agents = useScoped((s) => s.agents);
+  const tasks = useScoped((s) => s.tasks);
+  const drafts = useScoped((s) => s.drafts);
+  const setDraft = useScoped((s) => s.setDraft);
+  const createTask = useScoped((s) => s.createTask);
+  const startTask = useScoped((s) => s.startTask);
+  const setNotice = useScoped((s) => s.setNotice);
 
   const [sending, setSending] = useState(false);
   const [showFiles, setShowFiles] = useState(false);

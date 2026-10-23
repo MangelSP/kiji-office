@@ -8,8 +8,7 @@ vi.mock("../core/client", () => ({
   CoreError: class CoreError extends Error {},
 }));
 
-import { useStore } from "../store";
-import { createMetricsSlice } from "../store/metrics";
+import { resetStore, seed } from "../store/testing";
 import { contextSegments } from "../screens/Agents/format";
 import AgentStrip from "./AgentStrip";
 
@@ -24,8 +23,8 @@ const metrics = (id: string, used: number, cost = 1.5) => ({
 beforeEach(() => {
   mocks.request.mockReset();
   mocks.request.mockRejectedValue(new Error("sin core"));
-  useStore.setState(createMetricsSlice(useStore.setState as never, useStore.getState as never, useStore as never));
-  useStore.setState({ agents: [BOSS, CLAU], liveRuns: {}, metricsByAgent: {} } as never);
+  resetStore();
+  seed({ agents: [BOSS, CLAU] });
 });
 afterEach(cleanup);
 
@@ -44,7 +43,7 @@ describe("contextSegments", () => {
 
 describe("AgentStrip", () => {
   it("pinta el medidor con color según el uso y el tooltip con números", () => {
-    useStore.setState({ metricsByAgent: { a1: metrics("a1", 100000), a2: metrics("a2", 150000, 0.004) } } as never);
+    seed({ metricsByAgent: { a1: metrics("a1", 100000), a2: metrics("a2", 150000, 0.004) } } as never);
     const { container } = render(<AgentStrip selectedId={null} onSelect={vi.fn()} />);
     const meters = container.querySelectorAll(".strip-meter");
     expect(meters).toHaveLength(2);
@@ -58,9 +57,9 @@ describe("AgentStrip", () => {
   });
 
   it("un run en vivo manda sobre los totales y a 7/8 se pone en coral", () => {
-    useStore.setState({
+    seed({
       metricsByAgent: { a1: metrics("a1", 1000) },
-      liveRuns: { r9: { runId: "r9", taskId: "t", agentId: "a1", model: "opus", input: 0, output: 0, cacheRead: 0, cacheWrite: 0, contextTokens: 180000, contextWindow: 200000, costUsd: 1, live: true } },
+      liveRuns: { r9: { projectId: "p1", runId: "r9", taskId: "t", agentId: "a1", model: "opus", input: 0, output: 0, cacheRead: 0, cacheWrite: 0, contextTokens: 180000, contextWindow: 200000, costUsd: 1, live: true } },
     } as never);
     const { container } = render(<AgentStrip selectedId={null} onSelect={vi.fn()} />);
     const meter = container.querySelector(".strip-meter")!;

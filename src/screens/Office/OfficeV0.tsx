@@ -1,7 +1,6 @@
-// Pantalla principal: la oficina (escena + caja de pedido) y, a su derecha, las tarjetas de robots con su detalle;
-// debajo, las IAs en vivo, las aprobaciones, el proyecto y el registro.
+// Vista de un workspace (proyecto abierto): la oficina (escena + caja de pedido) y, a su derecha, las tarjetas de
+// robots con su detalle; debajo, las IAs en vivo, las aprobaciones y el registro. Todo sale de la partición del proyecto.
 import { useEffect, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import ApprovalCard from "../../components/ApprovalCard";
 import LogPanel from "../../components/LogPanel";
 import OfficeComposer from "../../components/OfficeComposer";
@@ -9,35 +8,12 @@ import ProvidersPanel from "../../components/ProvidersPanel";
 import AgentTabs from "../Agents/AgentTabs";
 import CreateAgent from "../CreateAgent/CreateAgent";
 import OfficeScene from "../../scenes/OfficeScene";
-import type { ProviderStatus } from "../../../shared/protocol";
-import { connectStore, useStore } from "../../store";
+import { useStore } from "../../store";
+import { ProjectContext, useScoped } from "../../store/scoped";
 import "../../components/components.css";
 import "./OfficeV0.css";
 
 const NOMBRE = "Alexis";
-
-// Solo en desarrollo: `?demo=1` mete agentes de ejemplo para ver los robots sin core.
-const DEMO_AGENTS = [
-  { id: "demo-1", name: "Jefe", provider: "claude", color: "terracota", is_boss: 1, status: "thinking" },
-  { id: "demo-2", name: "Ana", provider: "openai", color: "azul", status: "needs_you" },
-  { id: "demo-3", name: "Nico", provider: "gemini", color: "verde", status: "done" },
-];
-
-const DEMO_PROVIDERS: ProviderStatus[] = [
-  {
-    id: "claude",
-    label: "Claude",
-    configured: true,
-    state: "warning",
-    windows: [
-      { type: "five_hour", status: "allowed", utilization: 0.42, resetsAt: Date.now() + 2.5 * 3_600_000, seenAt: Date.now() },
-      { type: "seven_day", status: "allowed_warning", utilization: 0.78, resetsAt: Date.now() + 3 * 86_400_000, seenAt: Date.now() },
-      { type: "seven_day_sonnet", status: "rejected", utilization: 1, resetsAt: Date.now() + 5 * 3_600_000, seenAt: Date.now() },
-    ],
-    models: [{ model: "sonnet", agents: ["demo-2"], liveRuns: 1, costTodayUsd: 0.42, limitedUntil: null }],
-  },
-  { id: "ollama", label: "Ollama", configured: false, state: "off", windows: [], models: [] },
-];
 
 // Mismo ancho que el CSS: por debajo, una sola columna.
 const NARROW = "(max-width: 1099px)";
@@ -66,45 +42,36 @@ function coreLabel(status: string, detail?: string) {
   return detail ?? "caído";
 }
 
-export default function OfficeV0() {
-  const agents = useStore((st) => st.agents);
-  const approvalsList = useStore((st) => st.approvals);
+export default function OfficeV0({ projectId }: { projectId: string }) {
+  // Todo lo de dentro (composer, pestañas de robot, IAs en vivo...) lee la partición de este proyecto.
+  return (
+    <ProjectContext.Provider value={projectId}>
+      <Office projectId={projectId} />
+    </ProjectContext.Provider>
+  );
+}
+
+function Office({ projectId }: { projectId: string }) {
+  const agents = useScoped((st) => st.agents);
+  const approvalsList = useScoped((st) => st.approvals);
   const coreStatus = useStore((st) => st.coreStatus);
   const coreDetail = useStore((st) => st.coreDetail);
-  const notice = useStore((st) => st.notice);
   const unavailableAgentList = useStore((st) => st.unavailable["agent.list"]);
-  const project = useStore((st) => st.project);
-  const eventCount = useStore((st) => st.events.length);
-  const answerApproval = useStore((st) => st.answerApproval);
-  const openProject = useStore((st) => st.openProject);
-  const setNotice = useStore((st) => st.setNotice);
+  const project = useStore((st) => st.projects.find((p) => p.projectId === projectId));
+  const eventCount = useScoped((st) => st.events.length);
+  const answerApproval = useScoped((st) => st.answerApproval);
   const narrow = useNarrow();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
   const [showLog, setShowLog] = useState(false);
 
-  useEffect(() => connectStore(), []);
-
-  useEffect(() => {
-    if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("demo")) {
-      const st = useStore.getState();
-      st.setAgents(DEMO_AGENTS);
-      st.applyLimits(DEMO_PROVIDERS);
-      st.noteActivity("demo-1", "tool", { name: "Read", input: { file_path: "src/store/index.ts" } });
-      st.noteActivity("demo-2", "permission", { decision: "pending" });
-      st.noteActivity("demo-3", "status", { type: "done" });
-    }
-  }, []);
-
-  const abrirProyecto = async () => {
-    try {
-      const path = await open({ directory: true, multiple: false, title: "Elige la carpeta del proyecto" });
-      if (typeof path === "string") await openProject(path);
-    } catch {
-      // Fuera de Tauri no existe el selector nativo.
-      setNotice("El selector de carpetas solo está disponible en la app de escritorio.");
-    }
-  };
+  // Al cambiar de workspace se parte limpio: sin robot elegido ni diálogos del anterior.
+  const [shownProject, setShownProject] = useState(projectId);
+  if (shownProject !== projectId) {
+    setShownProject(projectId);
+    setSelectedId(null);
+    setShowCreateAgent(false);
+  }
 
   const agentName = (id?: string | number) => agents.find((a) => String(a.id) === String(id))?.name;
 
@@ -129,20 +96,12 @@ export default function OfficeV0() {
         <h1>
           ¡{saludo(new Date().getHours())}, {NOMBRE}!
         </h1>
+        {project && <p className="office-project" title={project.path}>{project.name}</p>}
         <button type="button" className="btn" onClick={() => setShowCreateAgent(true)}>
           + Robot
         </button>
         <p className="core-status">core: {coreLabel(coreStatus, coreDetail)}</p>
       </header>
-
-      {notice && (
-        <div className="notice" role="status">
-          <span>{notice}</span>
-          <button type="button" className="btn btn-ghost" onClick={() => setNotice(null)}>
-            Cerrar
-          </button>
-        </div>
-      )}
 
       {narrow && approvals}
 
@@ -151,7 +110,7 @@ export default function OfficeV0() {
         <div className="office-left">
           <section className="panel scene-panel" aria-label="Oficina">
             <div className="scene-stage">
-              <OfficeScene selectedId={selectedId} onSelect={setSelectedId} />
+              <OfficeScene projectId={projectId} selectedId={selectedId} onSelect={setSelectedId} />
               <OfficeComposer selectedId={selectedId} onSelect={setSelectedId} />
             </div>
           </section>
@@ -168,16 +127,6 @@ export default function OfficeV0() {
         </div>
         <div className="col">
           {!narrow && approvals}
-
-          <section className="panel project-compact" aria-labelledby="proj-title">
-            <div className="panel-head">
-              <h2 id="proj-title">Proyecto</h2>
-              <button type="button" className="btn btn-primary" onClick={() => void abrirProyecto()}>
-                Abrir proyecto
-              </button>
-            </div>
-            <p className="muted small project-path">{project ? project.path : "Ningún proyecto abierto."}</p>
-          </section>
 
           {showLog ? (
             <div>

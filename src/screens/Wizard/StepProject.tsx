@@ -16,6 +16,7 @@ export default function StepProject({ onFinish, blocked }: Props) {
   const call = useStore((s) => s.call);
   const setNotice = useStore((s) => s.setNotice);
   const [info, setInfo] = useState<ProjectInfo | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
   const [branch, setBranch] = useState("");
   const [testCommand, setTestCommand] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -27,10 +28,13 @@ export default function StepProject({ onFinish, blocked }: Props) {
     setTestCommand(p.test_command ?? "");
   };
 
-  // Si ya hay un proyecto abierto (asistente reabierto), se parte de él.
+  // Si ya hay un proyecto abierto (asistente reabierto), se parte del que se está viendo (o del primero).
   useEffect(() => {
-    if (!useStore.getState().project) return;
-    call<ProjectInfo | null>("project.get")
+    const s = useStore.getState();
+    const projectId = s.activeProjectId ?? s.tabs[0];
+    if (!projectId) return;
+    setProjectId(projectId);
+    call<ProjectInfo | null>("project.get", { projectId })
       .then((p) => p && load(p))
       .catch(() => undefined);
   }, [call]);
@@ -47,16 +51,16 @@ export default function StepProject({ onFinish, blocked }: Props) {
     if (typeof path !== "string") return;
     setBusy(true);
     setNotice(null);
-    await openProject(path); // si falla, deja un aviso en el store y no fija el proyecto
-    const s = useStore.getState();
-    if (s.project?.path !== path) {
-      setError(s.notice ?? "No se pudo abrir la carpeta. Debe ser un repositorio git con al menos un commit.");
+    const id = await openProject(path); // si falla, deja un aviso en el store y no devuelve el id
+    if (id === undefined) {
+      setError(useStore.getState().notice ?? "No se pudo abrir la carpeta. Debe ser un repositorio git con al menos un commit.");
       setBusy(false);
       return;
     }
+    setProjectId(id);
     try {
-      const p = await call<ProjectInfo>("project.get");
-      load({ ...p, name: p.name ?? s.project.name });
+      const p = await call<ProjectInfo>("project.get", { projectId: id });
+      load(p);
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -67,7 +71,7 @@ export default function StepProject({ onFinish, blocked }: Props) {
     setBusy(true);
     setError(null);
     try {
-      await call("project.update", { base_branch: branch.trim(), test_command: testCommand.trim() });
+      await call("project.update", { ...(projectId ? { projectId } : {}), base_branch: branch.trim(), test_command: testCommand.trim() });
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);

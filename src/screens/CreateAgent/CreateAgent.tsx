@@ -1,7 +1,7 @@
 // Pantalla "Crear agente": vista previa del robot a la izquierda y formulario a la derecha.
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { errorMessage } from "../../store/core";
-import { useStore } from "../../store";
+import { useScoped } from "../../store/scoped";
 import RobotPreview from "./RobotPreview";
 import { CLAUDE_MODELS, COLORS, NAME_MAX, PROVIDERS, ROLES, validateName } from "./options";
 import "./CreateAgent.css";
@@ -14,9 +14,10 @@ type Props = {
 };
 
 export default function CreateAgent({ onClose, onCreated }: Props) {
-  const agents = useStore((s) => s.agents);
-  const call = useStore((s) => s.call);
-  const refreshAgents = useStore((s) => s.refreshAgents);
+  const agents = useScoped((s) => s.agents);
+  const call = useScoped((s) => s.call);
+  const projectId = useScoped((s) => s.projectId);
+  const refreshAgents = useScoped((s) => s.refreshAgents);
 
   const [provider] = useState("claude"); // en 0.1 solo Claude; los demás están deshabilitados
   const [model, setModel] = useState<string>("sonnet");
@@ -62,7 +63,7 @@ export default function CreateAgent({ onClose, onCreated }: Props) {
     setBusy(true);
     try {
       const finalName = name.trim();
-      await call("agent.create", { name: finalName, provider, model, role, color });
+      await call("agent.create", { projectId, name: finalName, provider, model, role, color });
       await refreshAgents(); // el robot aparece en la oficina con su paleta
       onCreated?.(finalName);
       onClose();

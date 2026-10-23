@@ -1,0 +1,37 @@
+.nb-wrap {
+  max-width: 1720px;
+  margin: 12px auto 0;
+  padding: 0 16px;
+  box-sizing: border-box;
+}
+.nb {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 4px 8px 4px 16px;
+  border: 1px solid #f4c542;
+  border-radius: 8px;
+  background: #2a2a24;
+}
+.nb-budget {
+  border-color: #ff7a45;
+  background: #33261f;
+}
+.nb span {
+  flex: 1;
+}
+.nb-btn {
+  min-height: 36px;
+  padding: 0 14px;
+  font: inherit;
+  color: #f1ece2;
+  background: transparent;
+  border: 1px solid #4a4f6d;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.nb-btn:hover {
+  background: #3a3e5c;
+}

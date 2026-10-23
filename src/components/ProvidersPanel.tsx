@@ -2,7 +2,7 @@
 // historial de relevos y "Cambiar IA ahora" para las tareas que corren.
 import { useEffect, useState } from "react";
 import type { LimitWindow, ProviderStatus } from "../../shared/protocol";
-import { useStore } from "../store";
+import { useScoped } from "../store/scoped";
 import type { Agent } from "../store/agents";
 import { relayLine } from "../store/providers";
 import type { Task } from "../store/tasks";
@@ -150,11 +150,11 @@ const parseChoice = (raw: string): Choice | null => {
 };
 
 function SwitchBlock() {
-  const tasks = useStore((s) => s.tasks);
-  const agents = useStore((s) => s.agents);
-  const unavailable = useStore((s) => s.unavailable["task.switch"]);
-  const switchTask = useStore((s) => s.switchTask);
-  const setNotice = useStore((s) => s.setNotice);
+  const tasks = useScoped((s) => s.tasks);
+  const agents = useScoped((s) => s.agents);
+  const unavailable = useScoped((s) => s.unavailable["task.switch"]);
+  const switchTask = useScoped((s) => s.switchTask);
+  const setNotice = useScoped((s) => s.setNotice);
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -251,10 +251,10 @@ function SwitchBlock() {
 }
 
 export default function ProvidersPanel() {
-  const providers = useStore((s) => s.providers);
-  const relays = useStore((s) => s.relays);
-  const agents = useStore((s) => s.agents);
-  const unavailable = useStore((s) => s.unavailable["providers.status"]);
+  const providers = useScoped((s) => s.providers);
+  const relays = useScoped((s) => s.relays);
+  const agents = useScoped((s) => s.agents);
+  const unavailable = useScoped((s) => s.unavailable["providers.status"]);
   const now = useNow();
 
   return (

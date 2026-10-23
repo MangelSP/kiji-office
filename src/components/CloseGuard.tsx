@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useShallow } from "zustand/react/shallow";
 import { useStore } from "../store";
 import "./CloseGuard.css";
 
@@ -10,17 +11,28 @@ const WORKING = ["running", "needs_you"];
 
 type Work = { names: string[]; count: number; approvals: number };
 
-/** Resume el trabajo en curso a partir del store (tareas en marcha o esperando, y aprobaciones sin responder). */
+/**
+ * Resume el trabajo en curso de TODOS los workspaces abiertos (tareas en marcha o esperando, y aprobaciones sin
+ * responder). Los selectores devuelven textos y números, así no repinta por cada token de un workspace.
+ */
 function useWork(): Work {
-  const tasks = useStore((s) => s.tasks);
-  const agents = useStore((s) => s.agents);
-  const approvals = useStore((s) => s.approvals.length);
-  const active = tasks.filter((t) => WORKING.includes(t.status));
-  const names = active.map((t) => {
-    const agent = agents.find((a) => String(a.id) === String(t.agent_id));
-    return `${agent?.name ?? "Robot"}: «${t.title}»`;
-  });
-  return { names, count: active.length, approvals };
+  const multi = useStore((s) => Object.keys(s.byProject).length > 1);
+  const names = useStore(
+    useShallow((s) => {
+      const out: string[] = [];
+      for (const [pid, p] of Object.entries(s.byProject)) {
+        const project = multi ? s.projects.find((x) => x.projectId === pid)?.name : undefined;
+        for (const t of p.tasks) {
+          if (!WORKING.includes(t.status)) continue;
+          const agent = p.agents.find((a) => String(a.id) === String(t.agent_id));
+          out.push(`${project ? `${project} · ` : ""}${agent?.name ?? "Robot"}: «${t.title}»`);
+        }
+      }
+      return out;
+    }),
+  );
+  const approvals = useStore((s) => Object.values(s.byProject).reduce((n, p) => n + p.approvals.length, 0));
+  return { names, count: names.length, approvals };
 }
 
 /** Llama a un comando de Rust; fuera de Tauri (navegador) no hace nada. */

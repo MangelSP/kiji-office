@@ -4,6 +4,7 @@ import type { AgentUpdateParams } from "../../../shared/protocol";
 import type { Agent } from "../../store/agents";
 import { CLAUDE_MODELS, COLORS, NAME_MAX, validateName } from "../CreateAgent/options";
 import { ROLE_LABEL } from "./format";
+import { useStore } from "../../store";
 import { useAgentsStore } from "./useAgentsStore";
 
 export const PERSONA_MAX = 4000;
@@ -92,7 +93,7 @@ export default function AgentProfile({ agent }: { agent: Agent }) {
     const ok = await updateAgent({ agentId: String(agent.id), ...patch });
     setSaving(false);
     if (ok) setSaved(true);
-    else setError(useAgentsStore.getState().notice ?? "El core no aceptó los cambios.");
+    else setError(useStore.getState().notice ?? "El core no aceptó los cambios.");
   };
 
   return (

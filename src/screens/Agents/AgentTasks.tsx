@@ -5,7 +5,7 @@ import { accessLabel } from "../../components/TaskList";
 import type { Agent } from "../../store/agents";
 import type { Task } from "../../store/tasks";
 import { CLAUDE_MODELS } from "../CreateAgent/options";
-import { fmtDuration, fmtUsd, isBoss, STATE_LABEL } from "./format";
+import { fmtDuration, fmtUsd, isBoss, queueInfo, STATE_LABEL } from "./format";
 import { useAgentsStore } from "./useAgentsStore";
 
 /** Campos que añade `task.list` en 0.2a (aún no están en el tipo `Task` del store). */
@@ -49,6 +49,7 @@ function TaskCard({ task: t, agent, others }: { task: TaskView; agent: Agent; ot
   const refreshSteps = useAgentsStore((s) => s.refreshSteps);
   const steps = useAgentsStore((s) => s.stepsByTask[String(t.id)]);
   const unavailable = useAgentsStore((s) => s.unavailable);
+  const queueChange = useAgentsStore((s) => s.queue[String(t.id)]);
   const live = useAgentsStore((s) => Object.values(s.liveRuns).find((r) => String(r.taskId) === String(t.id)));
   const [diff, setDiff] = useState<string>();
   const [loadingDiff, setLoadingDiff] = useState(false);
@@ -57,6 +58,7 @@ function TaskCard({ task: t, agent, others }: { task: TaskView; agent: Agent; ot
 
   const model = live?.model ?? t.model ?? undefined;
   const cost = live?.costUsd ?? t.cost_usd ?? undefined;
+  const queue = queueInfo(t, queueChange);
   const access = accessLabel(t);
   const readOnly = t.read_only === true || t.files?.length === 0;
   const result = t.result ?? "";
@@ -92,6 +94,10 @@ function TaskCard({ task: t, agent, others }: { task: TaskView; agent: Agent; ot
         <h4 className="ag-sec">Estado</h4>
         <p className="ag-state">
           <span className={`ag-badge ag-badge-${t.status}`}>{STATE_LABEL[t.status] ?? t.status}</span>
+          {queue && (
+            <span className="ag-badge ag-badge-queued">{queue.position > 0 ? `En cola #${queue.position}` : "En cola"}</span>
+          )}
+          {queue?.budget && <span className="ag-badge ag-badge-budget">bloqueada por tope de gasto</span>}
           {access && <span className="tag muted">{access}</span>}
           {model && <span className="ag-chip">{model}</span>}
           {cost !== undefined && <span className="muted small">{fmtUsd(cost)}</span>}

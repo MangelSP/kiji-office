@@ -14,22 +14,20 @@ vi.mock("../core/client", () => ({
 }));
 
 import { useStore } from ".";
-import { createMetricsSlice, type MetricsSlice } from "./metrics";
+import { P, proj, resetStore, seed } from "./testing";
 
-type Full = ReturnType<typeof useStore.getState> & MetricsSlice;
-const st = () => useStore.getState() as Full;
+const st = () => ({ ...useStore.getState(), ...proj() });
 
 const run = (over: Partial<RunMetrics> = {}): RunMetrics => ({
-  runId: "r1", taskId: "t1", agentId: "a2", model: "sonnet",
+  projectId: "p1", runId: "r1", taskId: "t1", agentId: "a2", model: "sonnet",
   input: 100, output: 50, cacheRead: 1000, cacheWrite: 200,
   contextTokens: 1300, contextWindow: 200000, costUsd: 0.01, live: true, ...over,
 });
 
 beforeEach(() => {
   mocks.request.mockReset();
-  // Instala la slice aunque `index.ts` aún no la componga (con el cableado de C es idempotente).
-  useStore.setState(createMetricsSlice(useStore.setState as never, useStore.getState as never, useStore as never));
-  useStore.setState({ metricsByAgent: {}, liveRuns: {}, stepsByTask: {}, skills: [], notice: null, unavailable: {} } as never);
+  resetStore();
+  useStore.setState({ skills: [] });
 });
 
 describe("applyRunMetrics", () => {
@@ -72,7 +70,7 @@ describe("applyRunMetrics", () => {
   });
 
   it("parte de los totales que dio agent.metrics sin contarlos dos veces", () => {
-    useStore.setState({
+    seed({
       metricsByAgent: {
         a2: { agentId: "a2", model: "sonnet", runs: 3, costUsd: 1, input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
           lastContextTokens: 0, lastContextWindow: 200000, recent: [run({ costUsd: 0.4, input: 100, output: 50, cacheRead: 1000, cacheWrite: 200 })] },
@@ -87,17 +85,17 @@ describe("applyRunMetrics", () => {
 describe("llamadas al core", () => {
   it("refreshMetrics guarda el resultado y, si el método no existe, no deja aviso", async () => {
     mocks.request.mockResolvedValueOnce({ agentId: "a2", model: "opus", runs: 1, costUsd: 2, input: 1, output: 1, cacheRead: 0, cacheWrite: 0, lastContextTokens: 5, lastContextWindow: 10, recent: [] });
-    await st().refreshMetrics("a2");
-    expect(mocks.request).toHaveBeenCalledWith("agent.metrics", { agentId: "a2" });
+    await useStore.getState().refreshMetrics(P, "a2");
+    expect(mocks.request).toHaveBeenCalledWith("agent.metrics", { agentId: "a2", projectId: "p1" });
     expect(st().metricsByAgent.a2.model).toBe("opus");
     mocks.request.mockRejectedValueOnce(Object.assign(new Error("x"), { code: "unknown_method" }));
-    await st().refreshMetrics("a3");
+    await useStore.getState().refreshMetrics(P, "a3");
     expect(st().notice).toBeNull();
   });
 
   it("refreshSteps y refreshSkills guardan las listas", async () => {
     mocks.request.mockResolvedValueOnce([{ name: "Read", target: "a.ts", ok: true, startedAt: 1, endedAt: 2 }]);
-    await st().refreshSteps("t1");
+    await useStore.getState().refreshSteps(P, "t1");
     expect(st().stepsByTask.t1).toHaveLength(1);
     mocks.request.mockResolvedValueOnce([{ name: "frontend-design", description: "UI" }]);
     await st().refreshSkills();
@@ -105,16 +103,16 @@ describe("llamadas al core", () => {
   });
 
   it("switchTask manda los parámetros y fusiona la tarea devuelta", async () => {
-    useStore.setState({ tasks: [{ id: "t1", title: "x", status: "running" }] });
+    seed({ tasks: [{ id: "t1", title: "x", status: "running" }] });
     mocks.request.mockResolvedValueOnce({ id: "t1", title: "x", status: "running", agent_id: "a3" });
-    expect(await st().switchTask({ taskId: "t1", agentId: "a3" })).toBe(true);
-    expect(mocks.request).toHaveBeenCalledWith("task.switch", { taskId: "t1", agentId: "a3" });
+    expect(await useStore.getState().switchTask(P, { taskId: "t1", agentId: "a3" })).toBe(true);
+    expect(mocks.request).toHaveBeenCalledWith("task.switch", { taskId: "t1", agentId: "a3", projectId: "p1" });
     expect(st().tasks[0].agent_id).toBe("a3");
   });
 
   it("switchTask devuelve false y deja aviso si el core falla", async () => {
     mocks.request.mockRejectedValueOnce(new Error("task.switch: sin límite"));
-    expect(await st().switchTask({ taskId: "t1", model: "opus" })).toBe(false);
+    expect(await useStore.getState().switchTask(P, { taskId: "t1", model: "opus" })).toBe(false);
     expect(st().notice).toBe("task.switch: sin límite");
   });
 });

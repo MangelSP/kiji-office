@@ -1,16 +1,14 @@
-// Slice `core`: estado de la conexión con el core, proyecto abierto y llamadas con manejo de errores.
+// Slice `core`: estado de la conexión con el core y llamadas con manejo de errores.
 import type { StateCreator } from "zustand";
 import { core, CoreError } from "../core/client";
 import type { AppState } from "./index";
 
 export type CoreStatus = "connecting" | "ok" | "down";
-export type Project = { path: string; name?: string };
 
 export type CoreSlice = {
   coreStatus: CoreStatus;
   /** Motivo cuando está caído (p. ej. "sin conexión"). */
   coreDetail?: string;
-  project: Project | null;
   /** Métodos que el core aún no implementa (`unknown_method`). */
   unavailable: Record<string, boolean>;
   /** Último aviso para la persona usuaria (error o "aún no disponible"). */
@@ -22,13 +20,11 @@ export type CoreSlice = {
   /** Como `call`, pero nunca lanza: deja un aviso (salvo `silent`) y devuelve `undefined`. */
   callSafe: <T = unknown>(method: string, params?: unknown, opts?: { silent?: boolean }) => Promise<T | undefined>;
   ping: () => Promise<boolean>;
-  openProject: (path: string) => Promise<void>;
 };
 
 export const createCoreSlice: StateCreator<AppState, [], [], CoreSlice> = (set, get) => ({
   coreStatus: "connecting",
   coreDetail: undefined,
-  project: null,
   unavailable: {},
   notice: null,
 
@@ -79,13 +75,6 @@ export const createCoreSlice: StateCreator<AppState, [], [], CoreSlice> = (set, 
       set({ coreStatus: "down", coreDetail: detail });
     }
     return false;
-  },
-
-  openProject: async (path) => {
-    const result = await get().callSafe<{ name?: string } | null>("project.open", { path });
-    if (result === undefined) return; // error o método no disponible: el aviso ya está puesto
-    set({ project: { path, name: result?.name }, notice: null });
-    await get().refreshAll();
   },
 });
 

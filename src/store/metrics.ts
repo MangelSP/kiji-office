@@ -8,20 +8,14 @@ import type { Task } from "./tasks";
 export type { AgentMetrics, RunMetrics, SkillInfo, ToolStep, TaskSwitchParams };
 
 export type MetricsSlice = {
-  /** Totales por agente (clave = id del agente como texto). */
-  metricsByAgent: Record<string, AgentMetrics>;
-  /** Runs en curso (clave = runId); se quitan cuando llega `live: false`. */
-  liveRuns: Record<string, RunMetrics>;
   skills: SkillInfo[];
-  /** Pasos de herramientas del último run de cada tarea (clave = id de la tarea). */
-  stepsByTask: Record<string, ToolStep[]>;
-  /** Aplica una notificación `run.metrics`: actualiza `liveRuns` y suma la diferencia a los totales del agente. */
+  /** Aplica una notificación `run.metrics` (lleva su `projectId`): actualiza `liveRuns` y suma la diferencia a los totales del agente. */
   applyRunMetrics: (m: RunMetrics) => void;
-  refreshMetrics: (agentId: Id) => Promise<void>;
+  refreshMetrics: (projectId: string, agentId: Id) => Promise<void>;
   refreshSkills: () => Promise<void>;
-  refreshSteps: (taskId: Id) => Promise<void>;
+  refreshSteps: (projectId: string, taskId: Id) => Promise<void>;
   /** Cambia el modelo o el agente de una tarea. `true` si el core aceptó el cambio. */
-  switchTask: (params: TaskSwitchParams) => Promise<boolean>;
+  switchTask: (projectId: string, params: TaskSwitchParams) => Promise<boolean>;
 };
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -64,28 +58,25 @@ export function mergeRunIntoAgent(prev: AgentMetrics | undefined, m: RunMetrics,
   };
 }
 
-export const createMetricsSlice: StateCreator<AppState & MetricsSlice, [], [], MetricsSlice> = (set, get) => ({
-  metricsByAgent: {},
-  liveRuns: {},
+export const createMetricsSlice: StateCreator<AppState, [], [], MetricsSlice> = (set, get) => ({
   skills: [],
-  stepsByTask: {},
 
   applyRunMetrics: (m) =>
-    set((s) => {
+    get().patchProject(m.projectId, (p) => {
       const key = String(m.agentId);
-      const liveRuns = { ...s.liveRuns };
+      const liveRuns = { ...p.liveRuns };
       if (m.live) liveRuns[m.runId] = m;
       else delete liveRuns[m.runId];
       return {
         liveRuns,
-        metricsByAgent: { ...s.metricsByAgent, [key]: mergeRunIntoAgent(s.metricsByAgent[key], m, s.liveRuns[m.runId]) },
+        metricsByAgent: { ...p.metricsByAgent, [key]: mergeRunIntoAgent(p.metricsByAgent[key], m, p.liveRuns[m.runId]) },
       };
     }),
 
-  refreshMetrics: async (agentId) => {
-    const res = await get().callSafe<AgentMetrics>("agent.metrics", { agentId: String(agentId) }, { silent: true });
+  refreshMetrics: async (pid, agentId) => {
+    const res = await get().callSafe<AgentMetrics>("agent.metrics", { agentId: String(agentId), projectId: pid }, { silent: true });
     if (res && typeof res === "object" && Array.isArray(res.recent)) {
-      set((s) => ({ metricsByAgent: { ...s.metricsByAgent, [String(agentId)]: res } }));
+      get().patchProject(pid, (p) => ({ metricsByAgent: { ...p.metricsByAgent, [String(agentId)]: res } }));
     }
   },
 
@@ -94,16 +85,16 @@ export const createMetricsSlice: StateCreator<AppState & MetricsSlice, [], [], M
     if (Array.isArray(res)) set({ skills: res });
   },
 
-  refreshSteps: async (taskId) => {
-    const res = await get().callSafe<ToolStep[]>("task.steps", { taskId: String(taskId) }, { silent: true });
-    if (Array.isArray(res)) set((s) => ({ stepsByTask: { ...s.stepsByTask, [String(taskId)]: res } }));
+  refreshSteps: async (pid, taskId) => {
+    const res = await get().callSafe<ToolStep[]>("task.steps", { taskId: String(taskId), projectId: pid }, { silent: true });
+    if (Array.isArray(res)) get().patchProject(pid, (p) => ({ stepsByTask: { ...p.stepsByTask, [String(taskId)]: res } }));
   },
 
-  switchTask: async (params) => {
-    const res = await get().callSafe<Task | null>("task.switch", params);
+  switchTask: async (pid, params) => {
+    const res = await get().callSafe<Task | null>("task.switch", { ...params, projectId: pid });
     if (res === undefined) return false;
-    if (res && typeof res === "object" && "id" in res) get().upsertTask(res);
-    else await get().refreshTasks();
+    if (res && typeof res === "object" && "id" in res) get().upsertTask(pid, res);
+    else await get().refreshTasks(pid);
     return true;
   },
 });

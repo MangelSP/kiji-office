@@ -16,6 +16,7 @@ vi.mock("../core/client", () => ({
 }));
 
 import { useStore } from "../store";
+import { resetStore, seed } from "../store/testing";
 import ProvidersPanel, { COUNTDOWN_REFRESH_MS, formatCountdown, percent } from "./ProvidersPanel";
 
 const NOW = new Date(2026, 9, 23, 12, 0).getTime();
@@ -42,12 +43,9 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
   vi.setSystemTime(NOW);
   mocks.request.mockReset();
-  useStore.setState({
-    providers: [],
-    relays: [],
-    tasks: [],
-    unavailable: {},
-    notice: null,
+  resetStore();
+  useStore.setState({ providers: [] });
+  seed({
     agents: [
       { id: "a1", name: "Jefe", is_boss: 1, status: "idle" },
       { id: "a2", name: "Clau", status: "thinking" },
@@ -131,11 +129,11 @@ describe("ProvidersPanel", () => {
   });
 
   it("lista el historial de relevos", () => {
-    useStore.setState({
-      providers: [claude],
+    useStore.setState({ providers: [claude] });
+    seed({
       relays: [
         {
-          id: 1, taskId: "t1", fromAgentId: "a2", toAgentId: "a2", fromModel: "sonnet", toModel: "haiku",
+          id: 1, projectId: "p1", taskId: "t1", fromAgentId: "a2", toAgentId: "a2", fromModel: "sonnet", toModel: "haiku",
           reason: "limit", detail: "límite semanal de Sonnet", createdAt: new Date(2026, 9, 23, 1, 20).getTime(),
         },
       ],
@@ -145,8 +143,8 @@ describe("ProvidersPanel", () => {
   });
 
   it("Cambiar IA ahora: confirma antes de llamar a task.switch", async () => {
-    useStore.setState({
-      providers: [claude],
+    useStore.setState({ providers: [claude] });
+    seed({
       tasks: [
         { id: "t1", title: "Arreglar login", status: "running", agent_id: "a2" },
         { id: "t2", title: "Otra", status: "review", agent_id: "a3" },
@@ -164,12 +162,12 @@ describe("ProvidersPanel", () => {
     expect(mocks.request).not.toHaveBeenCalled();
     expect(screen.getByRole("alertdialog").textContent).toContain("¿Pasar «Arreglar login» a haiku?");
     fireEvent.click(screen.getByRole("button", { name: "Sí, cambiar" }));
-    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("task.switch", { taskId: "t1", model: "haiku" }));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("task.switch", { taskId: "t1", model: "haiku", projectId: "p1" }));
     await waitFor(() => expect(useStore.getState().notice).toBe("«Arreglar login» ahora usa haiku."));
   });
 
   it("cambiar a otro agente manda agentId; cancelar no llama", async () => {
-    useStore.setState({ tasks: [{ id: "t1", title: "Tarea", status: "paused_limit", agent_id: "a2" }] });
+    seed({ tasks: [{ id: "t1", title: "Tarea", status: "paused_limit", agent_id: "a2" }] });
     mocks.request.mockResolvedValue(null);
     render(<ProvidersPanel />);
     const select = screen.getByLabelText("Cambiar la IA de «Tarea»");
@@ -179,6 +177,6 @@ describe("ProvidersPanel", () => {
     expect(mocks.request).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cambiar" }));
     fireEvent.click(screen.getByRole("button", { name: "Sí, cambiar" }));
-    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("task.switch", { taskId: "t1", agentId: "a3" }));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("task.switch", { taskId: "t1", agentId: "a3", projectId: "p1" }));
   });
 });
