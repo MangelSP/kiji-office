@@ -6,12 +6,13 @@ import type { AgentRow, TaskRow } from '../db/repos.js';
 import { commitAll, runTests } from '../git/integrate.js';
 import { createWorktree, branchName, changedFiles, diff } from '../git/worktree.js';
 import { denyPending, onPermissionRequest } from './approvals.js';
-import { type Ctx, type Handler, type LiveRun, asParams, str } from './context.js';
+import { type Ctx, type Handler, type LiveRun, asParams, assertSameProject, str } from './context.js';
 import { logEvent } from './events.js';
 import { applyUsage, finalizeMetrics, newUsageState, preferredModel, sessionBaseline, writeUsage } from './metrics.js';
 import { forkPoint, foreignFiles, revertFiles } from './ownership.js';
 import { contextWindowFor } from '../adapters/claude.js';
 import { recordRate, scheduleLimitsNotify } from './quota.js';
+import { clearQueue, dequeue, pumpQueue, requestStart } from './queue.js';
 import { clearResumeTimers, planAfterRateLimit } from './relay.js';
 import { resolveSkills } from './skills.js';
 import { robotStatusFor, setRobotStatus } from './status.js';
@@ -118,18 +119,26 @@ function buildPrompt(ctx: Ctx, task: TaskRow, files: string[], resumeNote?: stri
 
 export function runHandlers(ctx: Ctx): Record<string, Handler> {
   return {
+    /** `{id, projectId?}`: arranca ya o, si no hay hueco o presupuesto, deja la tarea en la cola global (`queued: true`). */
     'task.start': async (params) => {
       const p = asParams(params, 'task.start');
-      return startTask(ctx, str(p.id, 'id', 'task.start'));
+      const task = getTask(ctx, str(p.id, 'id', 'task.start'));
+      assertSameProject(p, projectOfTask(ctx, task).id, 'task.start');
+      return requestStart(ctx, task.id, {}, 'start');
     },
+    /** `{id, projectId?}`: para el run; si la tarea estaba en la cola, la saca de ella. */
     'task.stop': async (params) => {
       const p = asParams(params, 'task.stop');
-      return stopTask(ctx, str(p.id, 'id', 'task.stop'));
+      const task = getTask(ctx, str(p.id, 'id', 'task.stop'));
+      assertSameProject(p, projectOfTask(ctx, task).id, 'task.stop');
+      if (!ctx.live.has(task.id) && dequeue(ctx, task.id)) return taskView(ctx, getTask(ctx, task.id));
+      return stopTask(ctx, task.id);
     },
     'task.diff': async (params) => {
       const p = asParams(params, 'task.diff');
       const task = getTask(ctx, str(p.id, 'id', 'task.diff'));
       const project = projectOfTask(ctx, task);
+      assertSameProject(p, project.id, 'task.diff');
       if (!task.worktree_path || !existsSync(task.worktree_path)) {
         throw new Error('la tarea no tiene worktree (aún no se ha iniciado o ya se integró)');
       }
@@ -147,8 +156,14 @@ export function runHandlers(ctx: Ctx): Record<string, Handler> {
 // Arranque
 // ---------------------------------------------------------------------------
 
-export async function startTask(ctx: Ctx, taskId: string, opts: StartOptions = {}) {
+/** El agente de la tarea ya tiene otro run: la cola espera en lugar de descartar la tarea. */
+export class AgentBusyError extends Error {}
+
+/** Comprobaciones previas a iniciar (o encolar) una tarea; lanza un error claro si no se puede. */
+export function checkStartable(ctx: Ctx, taskId: string) {
   const task = getTask(ctx, taskId);
+  const project = projectOfTask(ctx, task);
+  if (!ctx.projects.has(project.id)) throw new Error(`el proyecto «${project.name}» no está abierto: ábrelo antes de iniciar sus tareas`);
   if (ctx.live.has(taskId)) throw new Error('la tarea ya tiene un run en curso');
   if (!STARTABLE.has(task.status)) {
     throw new Error(
@@ -159,10 +174,15 @@ export async function startTask(ctx: Ctx, taskId: string, opts: StartOptions = {
   const agent = ctx.repos.agents.get(task.agent_id);
   if (!agent) throw new Error(`el agente de la tarea ya no existe: ${task.agent_id}`);
   for (const l of ctx.live.values()) {
-    if (l.agentId === agent.id) throw new Error(`${agent.name} ya está ocupado con otra tarea; espera a que termine o páralo`);
+    if (l.agentId === agent.id) throw new AgentBusyError(`${agent.name} ya está ocupado con otra tarea; espera a que termine o páralo`);
   }
+  return { task, agent, project };
+}
+
+/** Arranca el run ya (sin pasar por la cola: para eso, `requestStart`). */
+export async function startTask(ctx: Ctx, taskId: string, opts: StartOptions = {}) {
+  const { task, agent, project } = checkStartable(ctx, taskId);
   const adapter = ctx.adapterFactory(agent); // falla antes de tocar nada si el proveedor no está soportado
-  const project = projectOfTask(ctx, task);
   const files = ctx.repos.taskFiles.list(task.id).map((f) => f.path);
   const readOnly = isReadOnlyTask(ctx, task.id); // consulta: sin archivos, sin worktree, trabaja en el repo principal
   const resumeHint = readResumeHint(ctx, task);
@@ -259,6 +279,7 @@ async function consume(ctx: Ctx, live: LiveRun, stream: AsyncIterable<AgentEvent
     const next = live.onEnded;
     live.onEnded = null;
     if (next) await next().catch((e) => process.stderr.write(`orquestador: falló la continuación del run: ${msg(e)}\n`));
+    void pumpQueue(ctx); // se liberó un hueco (tras el relevo, que tiene prioridad)
   }
 }
 
@@ -453,7 +474,8 @@ export async function settledLive(ctx: Ctx, taskId: string): Promise<LiveRun | u
   return live?.ended ? undefined : live;
 }
 
-export async function stopTask(ctx: Ctx, taskId: string, reason = 'detenida por el usuario') {
+/** `pump: false` en el cambio manual: el hueco que deja es para el run que se relanza, no para la cola. */
+export async function stopTask(ctx: Ctx, taskId: string, reason = 'detenida por el usuario', opts: { pump?: boolean } = {}) {
   const live = await settledLive(ctx, taskId);
   if (!live) throw new Error('la tarea no tiene un run en curso');
   if (live.finishing) throw new Error('el run ya terminó y se está guardando el trabajo; espera unos segundos');
@@ -465,13 +487,18 @@ export async function stopTask(ctx: Ctx, taskId: string, reason = 'detenida por 
   });
   ctx.live.delete(taskId);
   setRobotStatus(ctx, live.agentId, 'idle');
-  return transition(ctx, taskId, 'assigned', reason);
+  const view = transition(ctx, taskId, 'assigned', reason);
+  if (opts.pump !== false) void pumpQueue(ctx);
+  return view;
 }
 
 /** Para todos los runs (apagado del core). Las tareas quedan `running`: el próximo `project.open` las pasa a `blocked`. */
 export async function stopAll(ctx: Ctx): Promise<void> {
   ctx.closed = true;
   clearResumeTimers(ctx);
+  clearQueue(ctx);
+  if (ctx.workspacesTimer) clearTimeout(ctx.workspacesTimer);
+  ctx.workspacesTimer = null;
   if (ctx.limitsNotifyTimer) clearTimeout(ctx.limitsNotifyTimer);
   ctx.limitsNotifyTimer = null;
   for (const l of ctx.live.values()) {

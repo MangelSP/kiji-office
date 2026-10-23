@@ -69,7 +69,7 @@ describe('tareas de solo lectura', () => {
     expect(existsSync(join(repo, '.kiji', 'worktrees', t.id))).toBe(false);
     expect(git(repo, 'rev-parse', 'main')).toBe(mainBefore);
     expect(h.orch.ctx.repos.testRuns.latestByTask(t.id)).toBeUndefined();
-    const events = h.orch.ctx.repos.events.tail(h.orch.ctx.activeProject!.id, { limit: 500 });
+    const events = h.orch.ctx.repos.events.tail(h.orch.ctx.projects.get(h.orch.ctx.lastProjectId!)!.id, { limit: 500 });
     expect(events.filter((e) => e.kind === 'git' || e.kind === 'test')).toEqual([]);
     expect(h.orch.ctx.repos.runs.latestByTask(t.id)).toMatchObject({ status: 'done' });
   });

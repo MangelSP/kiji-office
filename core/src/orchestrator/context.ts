@@ -1,8 +1,9 @@
-// Estado compartido del orquestador: una sola instancia por proceso del core (un proyecto activo a la vez en 0.1).
+// Estado compartido del orquestador: una sola instancia por proceso del core, con varios proyectos abiertos a la vez (0.2c).
 import type { DatabaseSync } from 'node:sqlite';
 import type { LimitWindow, LimitWindowType, ProviderStatus } from '../../../shared/protocol.js';
 import type { AgentAdapter } from '../adapters/types.js';
 import type { AgentRow, ProjectRow, Repos } from '../db/repos.js';
+import type { StartOptions } from './runs.js';
 
 /** Consumo acumulado de un run en memoria (D8); la fila de `runs` se actualiza con límite de frecuencia. */
 export interface RunUsageState {
@@ -53,6 +54,24 @@ export interface LiveRun {
   finished: Promise<void>;
 }
 
+/** Tarea esperando un hueco en la cola global (0.2c, C3). */
+export interface QueueEntry {
+  taskId: string;
+  projectId: string;
+  opts: StartOptions;
+  /** Quién la pidió: la persona (`start`), un relevo de modelo o la reanudación al reset. */
+  reason: 'start' | 'relay' | 'resume';
+  /** Qué la retiene ahora mismo. */
+  blockedBy: 'slots' | 'budget';
+  queuedAt: number;
+  /** Última posición|motivo anunciados con `queue.changed` (para no repetir avisos). */
+  announced?: string;
+  /** Se llama cuando el run ya arrancó (p. ej. registrar el relevo). */
+  onStarted?: () => void;
+  /** Se llama si al llegar su turno falla el arranque. */
+  onFailed?: (err: unknown) => void;
+}
+
 export type AdapterFactory = (agent: AgentRow) => AgentAdapter;
 
 export interface Ctx {
@@ -63,7 +82,10 @@ export interface Ctx {
   adapterFactory: AdapterFactory;
   /** Tiempo máximo del comando de tests del proyecto. */
   testTimeoutMs: number;
-  activeProject: ProjectRow | null;
+  /** Proyectos abiertos (workspaces) por id. */
+  projects: Map<string, ProjectRow>;
+  /** Último proyecto abierto: respaldo cuando una petición no trae `projectId` (transición de la UI de 0.2a). */
+  lastProjectId: string | null;
   /** Estado del robot por agente (`idle` si no consta). */
   agentStatus: Map<string, string>;
   /** Runs en curso por id de tarea. */
@@ -84,6 +106,17 @@ export interface Ctx {
   providerStatus: (() => Promise<ProviderStatus[]>) | null;
   limitsNotifyTimer: NodeJS.Timeout | null;
   limitsLastNotify: number;
+  // --- 0.2c ---
+  /** Cola global de arranques (FIFO). */
+  queue: QueueEntry[];
+  pumping: boolean;
+  pumpAgain: boolean;
+  /** Reintento de la cola a medianoche local cuando hay tareas retenidas por el tope diario. */
+  budgetTimer: NodeJS.Timeout | null;
+  /** Último `budget.reached` emitido (para no repetirlo en cada intento). */
+  budgetNoticeAt: number;
+  workspacesTimer: NodeJS.Timeout | null;
+  workspacesLastNotify: number;
   /** El core se está apagando: no se programan más avisos ni reanudaciones. */
   closed: boolean;
 }
@@ -103,7 +136,42 @@ export function str(value: unknown, field: string, method: string): string {
   return value;
 }
 
-export function requireProject(ctx: Ctx): ProjectRow {
-  if (!ctx.activeProject) throw new Error('no hay un proyecto abierto: llama antes a project.open');
-  return ctx.activeProject;
+/** `projectId` opcional de los parámetros de una petición (texto no vacío) o undefined. */
+export function projectIdOf(params: Record<string, unknown> | null | undefined): string | undefined {
+  const v = params?.projectId;
+  return typeof v === 'string' && v.trim() !== '' ? v : undefined;
+}
+
+/**
+ * Proyecto abierto al que va la petición: `projectId` si llega (debe estar abierto) o, si falta (transición:
+ * la UI de 0.2a no lo manda), el último abierto.
+ */
+export function requireProject(ctx: Ctx, projectId?: string): ProjectRow {
+  if (projectId !== undefined) {
+    const p = ctx.projects.get(projectId);
+    if (!p) throw new Error(`el proyecto ${projectId} no está abierto: llama antes a project.open`);
+    return p;
+  }
+  const last = ctx.lastProjectId ? ctx.projects.get(ctx.lastProjectId) : undefined;
+  if (!last) throw new Error('no hay un proyecto abierto: llama antes a project.open');
+  return last;
+}
+
+/** Como `requireProject`, pero devuelve null si no hay proyecto (listados que responden vacío sin proyecto). */
+export function optionalProject(ctx: Ctx, projectId?: string): ProjectRow | null {
+  if (projectId === undefined && !ctx.lastProjectId) return null;
+  return requireProject(ctx, projectId);
+}
+
+/** Falla si la petición trae un `projectId` distinto del proyecto al que pertenece el recurso (tarea, agente...). */
+export function assertSameProject(params: Record<string, unknown>, actualProjectId: string, method: string): void {
+  const given = projectIdOf(params);
+  if (given !== undefined && given !== actualProjectId) throw new Error(`${method}: el recurso no pertenece al proyecto ${given}`);
+}
+
+/** El proyecto abierto más reciente (para reponer `lastProjectId` al cerrar). */
+export function mostRecentOpen(ctx: Ctx): string | null {
+  let best: ProjectRow | null = null;
+  for (const p of ctx.projects.values()) if (!best || (p.last_opened_at ?? 0) >= (best.last_opened_at ?? 0)) best = p;
+  return best?.id ?? null;
 }

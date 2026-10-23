@@ -1,6 +1,7 @@
 // Estado del robot (`agent.status`): thinking / writing / needs_you / error / done / idle.
 import type { AgentEvent } from '../adapters/types.js';
 import type { Ctx } from './context.js';
+import { scheduleWorkspacesNotify } from './workspaces.js';
 
 export type RobotStatus = 'idle' | 'thinking' | 'writing' | 'needs_you' | 'error' | 'done';
 
@@ -31,5 +32,6 @@ export function getRobotStatus(ctx: Ctx, agentId: string): RobotStatus {
 export function setRobotStatus(ctx: Ctx, agentId: string, status: RobotStatus): void {
   if (getRobotStatus(ctx, agentId) === status) return;
   ctx.agentStatus.set(agentId, status);
-  ctx.emit('agent.status', { agent_id: agentId, status });
+  ctx.emit('agent.status', { projectId: ctx.repos.agents.get(agentId)?.project_id ?? null, agent_id: agentId, status });
+  scheduleWorkspacesNotify(ctx);
 }

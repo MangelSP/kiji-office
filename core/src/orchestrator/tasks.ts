@@ -2,9 +2,11 @@
 import { posix } from 'node:path';
 import type { ToolStep } from '../../../shared/protocol.js';
 import { FileClaimError, type EventRow, type ObjectiveRow, type ProjectRow, type TaskRow, type TaskStatus } from '../db/repos.js';
-import { type Ctx, type Handler, asParams, requireProject, str } from './context.js';
+import { type Ctx, type Handler, asParams, assertSameProject, optionalProject, projectIdOf, requireProject, str } from './context.js';
 import { logEvent } from './events.js';
 import { contextPct } from './metrics.js';
+import { queuePosition } from './queue.js';
+import { scheduleWorkspacesNotify } from './workspaces.js';
 
 /**
  * Transiciones permitidas. Todo lo que no figure aquí se rechaza.
@@ -42,6 +44,12 @@ export function isReadOnlyTask(ctx: Ctx, taskId: string): boolean {
 }
 
 export type TaskView = TaskRow & {
+  /** Proyecto al que pertenece (0.2c). */
+  projectId: string;
+  /** En la cola global esperando hueco (0.2c, C3); la tarea conserva su estado (`assigned`, `paused_limit`...). */
+  queued: boolean;
+  /** Posición en la cola, 1-based; null si no está en cola. */
+  queue_position: number | null;
   files: string[];
   read_only: boolean;
   result: string | null;
@@ -66,8 +74,12 @@ export function taskView(ctx: Ctx, task: TaskRow): TaskView {
   const agent = task.agent_id ? ctx.repos.agents.get(task.agent_id) : undefined;
   const tokens = live && live.runId === last?.id ? live.usage.contextTokens : (last?.context_tokens ?? 0);
   const window = live && live.runId === last?.id ? live.usage.contextWindow : (last?.context_window ?? 0);
+  const position = queuePosition(ctx, task.id);
   return {
     ...task,
+    projectId: ctx.repos.objectives.get(task.objective_id)?.project_id ?? '',
+    queued: position !== null,
+    queue_position: position,
     files,
     read_only: files.length === 0,
     result: ctx.repos.events.lastDoneText(task.id)?.slice(0, MAX_RESULT_CHARS) ?? null,
@@ -129,6 +141,7 @@ export function publishTask(ctx: Ctx, taskId: string): TaskView {
   if (!task) throw new Error(`tarea inexistente: ${taskId}`);
   const view = taskView(ctx, task);
   ctx.emit('task.changed', view);
+  scheduleWorkspacesNotify(ctx);
   return view;
 }
 
@@ -204,22 +217,25 @@ export function checkAssignable(ctx: Ctx, project: ProjectRow, agentId: string) 
 
 export function taskHandlers(ctx: Ctx): Record<string, Handler> {
   return {
-    'task.list': () => {
-      if (!ctx.activeProject) return [];
-      return ctx.repos.tasks.listByProject(ctx.activeProject.id).map((t) => taskView(ctx, t));
+    /** `{projectId?}` */
+    'task.list': (params) => {
+      const project = optionalProject(ctx, projectIdOf(params == null ? {} : asParams(params, 'task.list')));
+      if (!project) return [];
+      return ctx.repos.tasks.listByProject(project.id).map((t) => taskView(ctx, t));
     },
 
     /** `{taskId}` -> cronología de herramientas del último run. */
     'task.steps': (params) => {
       const p = asParams(params, 'task.steps');
       const task = getTask(ctx, str(p.taskId, 'taskId', 'task.steps'));
+      assertSameProject(p, projectOfTask(ctx, task).id, 'task.steps');
       const last = ctx.repos.runs.latestByTask(task.id);
       return last ? buildSteps(ctx.repos.events.listByRun(last.id, 'tool')) : [];
     },
 
     'task.create': (params) => {
       const p = asParams(params, 'task.create');
-      const project = requireProject(ctx);
+      const project = requireProject(ctx, projectIdOf(p));
       const title = str(p.title, 'title', 'task.create').trim();
       const description = typeof p.description === 'string' ? p.description : '';
       // Sin `files` (ausente o vacío) la tarea es de solo lectura: no reserva archivos.
@@ -258,6 +274,7 @@ export function taskHandlers(ctx: Ctx): Record<string, Handler> {
       const p = asParams(params, 'task.assign');
       const task = getTask(ctx, str(p.id, 'id', 'task.assign'));
       const project = projectOfTask(ctx, task);
+      assertSameProject(p, project.id, 'task.assign');
       checkAssignable(ctx, project, str(p.agent_id, 'agent_id', 'task.assign'));
       if (ctx.live.has(task.id) || task.status === 'running' || task.status === 'needs_you') {
         throw new Error('no se puede reasignar una tarea mientras se ejecuta: páralas antes (task.stop)');

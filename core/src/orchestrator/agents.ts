@@ -1,11 +1,14 @@
 // Agentes: agent.list, agent.create y agent.update (en 0.1 solo Claude; el jefe se crea solo al abrir el proyecto).
 import type { AgentRow } from '../db/repos.js';
-import { type Ctx, type Handler, asParams, requireProject, str } from './context.js';
+import { type Ctx, type Handler, asParams, assertSameProject, optionalProject, projectIdOf, requireProject, str } from './context.js';
 import { modelFamily } from './quota.js';
 import { loadSkills } from './skills.js';
 import { getRobotStatus } from './status.js';
+import { scheduleWorkspacesNotify } from './workspaces.js';
 
 export type AgentView = Omit<AgentRow, 'skills' | 'relay_order'> & {
+  /** Proyecto del agente (0.2c). */
+  projectId: string;
   status: string;
   skills: string[];
   relay_order: string[];
@@ -36,6 +39,7 @@ export function agentView(ctx: Ctx, a: AgentRow): AgentView {
   const live = [...ctx.live.values()].find((l) => l.agentId === a.id);
   return {
     ...a,
+    projectId: a.project_id,
     skills: stringArray(a.skills) ?? [],
     relay_order: relayOrderOf(a),
     status: getRobotStatus(ctx, a.id),
@@ -65,14 +69,16 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], field: s
 
 export function agentHandlers(ctx: Ctx): Record<string, Handler> {
   return {
-    'agent.list': () => {
-      if (!ctx.activeProject) return [];
-      return ctx.repos.agents.list(ctx.activeProject.id).map((a) => agentView(ctx, a));
+    /** `{projectId?}` */
+    'agent.list': (params) => {
+      const project = optionalProject(ctx, projectIdOf(params == null ? {} : asParams(params, 'agent.list')));
+      if (!project) return [];
+      return ctx.repos.agents.list(project.id).map((a) => agentView(ctx, a));
     },
 
     'agent.create': (params) => {
       const p = asParams(params, 'agent.create');
-      const project = requireProject(ctx);
+      const project = requireProject(ctx, projectIdOf(p));
       const provider = str(p.provider, 'provider', 'agent.create');
       if (provider === 'codex') throw new Error('agent.create: el proveedor "codex" llega en el paso 15; por ahora solo "claude"');
       if (['api', 'ollama', 'gemini', 'openai'].includes(provider)) {
@@ -93,14 +99,18 @@ export function agentHandlers(ctx: Ctx): Record<string, Handler> {
       const role = oneOf(p.role, AGENT_ROLES, 'rol', 'programador');
       const model = oneOf(p.model, CLAUDE_MODELS, 'modelo', 'sonnet');
       const color = oneOf(p.color, AGENT_COLORS, 'color', 'terracota');
-      return agentView(ctx, ctx.repos.agents.create({ projectId: project.id, name, provider: 'claude', model, role, color }));
+      const view = agentView(ctx, ctx.repos.agents.create({ projectId: project.id, name, provider: 'claude', model, role, color }));
+      scheduleWorkspacesNotify(ctx);
+      return view;
     },
 
     /** `{agentId, name?, model?, color?, persona?, skills?, relayOrder?, autoRelay?}`: perfil del agente (D12). */
     'agent.update': (params) => {
       const p = asParams(params, 'agent.update');
       const agent = ctx.repos.agents.get(str(p.agentId, 'agentId', 'agent.update'));
-      if (!agent || agent.project_id !== requireProject(ctx).id) throw new Error('agent.update: agente inexistente en este proyecto');
+      if (!agent) throw new Error('agent.update: agente inexistente en este proyecto');
+      assertSameProject(p, agent.project_id, 'agent.update');
+      if (!ctx.projects.has(agent.project_id)) throw new Error('agent.update: el proyecto del agente no está abierto');
       const patch: Partial<Pick<AgentRow, 'name' | 'model' | 'color' | 'persona' | 'skills' | 'relay_order' | 'auto_relay'>> = {};
 
       if (p.name !== undefined) {
@@ -161,6 +171,7 @@ export function agentHandlers(ctx: Ctx): Record<string, Handler> {
 
       const view = agentView(ctx, ctx.repos.agents.update(agent.id, patch)!);
       ctx.emit('agent.changed', view);
+      scheduleWorkspacesNotify(ctx);
       return view;
     },
   };

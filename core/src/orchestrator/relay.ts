@@ -8,13 +8,14 @@ import type { LimitWindowType, RelayReason, RelayRow } from '../../../shared/pro
 import type { AgentEvent } from '../adapters/types.js';
 import type { AgentRow, ProjectRow, RelayDbRow, TaskRow } from '../db/repos.js';
 import { runGitRaw } from '../git/run.js';
-import { type Ctx, type Handler, type LiveRun, asParams, str } from './context.js';
+import { type Ctx, type Handler, type LiveRun, asParams, assertSameProject, optionalProject, projectIdOf, str } from './context.js';
 import { CLAUDE_MODELS, relayOrderOf } from './agents.js';
 import { logEvent } from './events.js';
 import { preferredModel } from './metrics.js';
 import { forkPoint } from './ownership.js';
 import { isModelWindow, modelFamily, modelLimitedUntil, scheduleLimitsNotify, windowTypeOf } from './quota.js';
-import { settledLive, startTask, stopTask } from './runs.js';
+import { dequeue, requestStart } from './queue.js';
+import { settledLive, stopTask } from './runs.js';
 import { checkAssignable, getTask, projectOfTask, transition } from './tasks.js';
 
 type LimitEvent = Extract<AgentEvent, { type: 'limit' }>;
@@ -51,7 +52,7 @@ const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 export function relayView(r: RelayDbRow): RelayRow {
   return {
-    id: r.id, taskId: r.task_id, fromAgentId: r.from_agent_id, toAgentId: r.to_agent_id,
+    id: r.id, projectId: r.project_id, taskId: r.task_id, fromAgentId: r.from_agent_id, toAgentId: r.to_agent_id,
     fromModel: r.from_model, toModel: r.to_model, reason: r.reason, detail: r.detail, createdAt: r.created_at,
   };
 }
@@ -101,24 +102,33 @@ export function planAfterRateLimit(ctx: Ctx, live: LiveRun, ev: LimitEvent): voi
 async function relayToModel(ctx: Ctx, live: LiveRun, agent: AgentRow, to: string, ev: LimitEvent): Promise<void> {
   const task = getTask(ctx, live.taskId);
   const from = live.model;
-  try {
-    await startTask(ctx, task.id, {
-      model: to,
-      resumeSessionId: ev.sessionId ?? live.sessionId,
-      resumeNote: `Continúa donde lo dejaste: se alcanzó el límite de uso de ${modelLabel(from)} y ahora trabajas con ${modelLabel(to)}. Mantén el mismo enfoque y no repitas lo ya hecho.`,
-    });
-  } catch (err) {
+  const onFailed = (err: unknown) => {
     logEvent(ctx, {
       projectId: live.projectId, kind: 'error', taskId: task.id, agentId: agent.id,
       payload: { message: `no se pudo relevar a ${modelLabel(to)}: ${msg(err)}`, retryable: false },
     });
     if (ev.resetsAt !== undefined) scheduleResume(ctx, task.id, ev.resetsAt);
-    return;
+  };
+  const onStarted = () =>
+    recordRelay(ctx, {
+      projectId: live.projectId, taskId: task.id, fromAgentId: agent.id, toAgentId: agent.id, fromModel: from, toModel: to, reason: 'limit',
+      detail: `Límite de ${windowLabel(ev.rateLimitType)} alcanzado: ${agent.name} sigue la tarea «${task.title}» con ${modelLabel(to)} en lugar de ${modelLabel(from)}. Puede cambiar el estilo de las respuestas.`,
+    });
+  try {
+    // Pasa por la cola global (con prioridad): si no hay hueco, el relevo se registra cuando arranca de verdad.
+    await requestStart(
+      ctx, task.id,
+      {
+        model: to,
+        resumeSessionId: ev.sessionId ?? live.sessionId,
+        resumeNote: `Continúa donde lo dejaste: se alcanzó el límite de uso de ${modelLabel(from)} y ahora trabajas con ${modelLabel(to)}. Mantén el mismo enfoque y no repitas lo ya hecho.`,
+      },
+      'relay',
+      { onStarted, onFailed },
+    );
+  } catch (err) {
+    onFailed(err);
   }
-  recordRelay(ctx, {
-    projectId: live.projectId, taskId: task.id, fromAgentId: agent.id, toAgentId: agent.id, fromModel: from, toModel: to, reason: 'limit',
-    detail: `Límite de ${windowLabel(ev.rateLimitType)} alcanzado: ${agent.name} sigue la tarea «${task.title}» con ${modelLabel(to)} en lugar de ${modelLabel(from)}. Puede cambiar el estilo de las respuestas.`,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -169,12 +179,8 @@ function projectIdOfTask(ctx: Ctx, taskId: string): string | undefined {
   return task ? ctx.repos.objectives.get(task.objective_id)?.project_id : undefined;
 }
 
-/** Al abrir el proyecto: reprograma la reanudación de las tareas `paused_limit` cuyo último run guardó una hora de reset. */
+/** Al abrir un proyecto: reprograma la reanudación de sus tareas `paused_limit` cuyo último run guardó una hora de reset. */
 export function rescheduleResumes(ctx: Ctx, project: ProjectRow): void {
-  // los temporizadores de tareas de otros proyectos se descartan: se reprograman al reabrir ese proyecto
-  for (const id of [...ctx.resumeTimers.keys()]) {
-    if (projectIdOfTask(ctx, id) !== project.id) clearResume(ctx, id);
-  }
   for (const task of ctx.repos.tasks.listByProject(project.id)) {
     if (task.status !== 'paused_limit' || ctx.resumeTimers.has(task.id) || ctx.live.has(task.id)) continue;
     const hint = readHint(ctx.repos.runs.latestByTask(task.id)?.resume_hint);
@@ -182,10 +188,19 @@ export function rescheduleResumes(ctx: Ctx, project: ProjectRow): void {
   }
 }
 
+/** Al cerrar un proyecto: descarta los temporizadores de sus tareas (se reprograman al reabrirlo). */
+export function clearProjectResumes(ctx: Ctx, projectId: string): void {
+  for (const id of [...ctx.resumeTimers.keys()]) {
+    if (projectIdOfTask(ctx, id) === projectId) clearResume(ctx, id);
+  }
+}
+
 async function resumeAfterReset(ctx: Ctx, taskId: string): Promise<void> {
   const task = ctx.repos.tasks.get(taskId);
   if (!task || task.status !== 'paused_limit' || ctx.live.has(taskId) || !task.agent_id) return;
-  if (ctx.activeProject?.id !== projectIdOfTask(ctx, taskId)) return; // otro proyecto: se reprograma al reabrirlo (rescheduleResumes)
+  if (ctx.queue.some((e) => e.taskId === taskId)) return; // ya espera su turno
+  const projectId = projectIdOfTask(ctx, taskId);
+  if (!projectId || !ctx.projects.has(projectId)) return; // proyecto cerrado: se reprograma al reabrirlo (rescheduleResumes)
   const agent = ctx.repos.agents.get(task.agent_id);
   if (!agent) return;
   if ([...ctx.live.values()].some((l) => l.agentId === agent.id)) {
@@ -195,23 +210,31 @@ async function resumeAfterReset(ctx: Ctx, taskId: string): Promise<void> {
   const project = projectOfTask(ctx, task);
   const last = ctx.repos.runs.latestByTask(taskId);
   const model = last?.model ?? preferredModel(agent);
-  try {
-    await startTask(ctx, taskId, {
-      model,
-      resumeSessionId: readHint(last?.resume_hint).sessionId ?? last?.provider_session_id ?? null,
-      resumeNote: 'Continúa donde lo dejaste: el límite de uso ya se restableció.',
-    });
-  } catch (err) {
+  const onFailed = (err: unknown) =>
     logEvent(ctx, {
       projectId: project.id, kind: 'error', taskId, agentId: agent.id,
       payload: { message: `no se pudo reanudar tras el reset: ${msg(err)}`, retryable: true },
     });
-    return;
+  const onStarted = () =>
+    recordRelay(ctx, {
+      projectId: project.id, taskId, fromAgentId: agent.id, toAgentId: agent.id, fromModel: model, toModel: model, reason: 'resume_after_reset',
+      detail: `El límite de uso se restableció: se reanuda la tarea «${task.title}» con ${modelLabel(model)}.`,
+    });
+  try {
+    // Pasa por la cola global: respeta el tope de runs simultáneos y el de gasto diario.
+    await requestStart(
+      ctx, taskId,
+      {
+        model,
+        resumeSessionId: readHint(last?.resume_hint).sessionId ?? last?.provider_session_id ?? null,
+        resumeNote: 'Continúa donde lo dejaste: el límite de uso ya se restableció.',
+      },
+      'resume',
+      { onStarted, onFailed },
+    );
+  } catch (err) {
+    onFailed(err);
   }
-  recordRelay(ctx, {
-    projectId: project.id, taskId, fromAgentId: agent.id, toAgentId: agent.id, fromModel: model, toModel: model, reason: 'resume_after_reset',
-    detail: `El límite de uso se restableció: se reanuda la tarea «${task.title}» con ${modelLabel(model)}.`,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -272,6 +295,7 @@ async function buildHandover(ctx: Ctx, task: TaskRow, project: ProjectRow, from:
 async function switchTask(ctx: Ctx, params: unknown) {
   const p = asParams(params, 'task.switch');
   const task = getTask(ctx, str(p.taskId, 'taskId', 'task.switch'));
+  assertSameProject(p, projectOfTask(ctx, task).id, 'task.switch');
   if (p.model === undefined && p.agentId === undefined) throw new Error('task.switch: indica "model" y/o "agentId"');
   const model = p.model === undefined ? undefined : validModel(p.model);
   const project = projectOfTask(ctx, task);
@@ -297,38 +321,45 @@ async function switchTask(ctx: Ctx, params: unknown) {
   const sessionId = sameAgent
     ? (live?.sessionId ?? readHint(lastRun?.resume_hint).sessionId ?? lastRun?.provider_session_id ?? null)
     : null;
-  if (live && (await settledLive(ctx, task.id))) await stopTask(ctx, task.id, sameAgent ? 'cambio de modelo' : 'cambio de agente');
+  if (live && (await settledLive(ctx, task.id))) await stopTask(ctx, task.id, sameAgent ? 'cambio de modelo' : 'cambio de agente', { pump: false });
   clearResume(ctx, task.id);
+  dequeue(ctx, task.id); // si esperaba turno en la cola, este arranque la sustituye
 
   let handover: string | undefined;
   if (!sameAgent) {
     handover = await buildHandover(ctx, getTask(ctx, task.id), project, from, to);
     transition(ctx, task.id, getTask(ctx, task.id).status, 'traspaso a otro agente', { agent_id: to.id });
   }
-  const view = await startTask(ctx, task.id, {
-    model: toModel,
-    resumeSessionId: sessionId,
-    ...(sameAgent
-      ? { resumeNote: `Continúa donde lo dejaste: se cambió el modelo de ${modelLabel(fromModel)} a ${modelLabel(toModel)} a petición de la persona usuaria. Mantén el mismo enfoque y no repitas lo ya hecho.` }
-      : { handover }),
-  });
-  recordRelay(ctx, {
-    projectId: project.id, taskId: task.id, fromAgentId: from.id, toAgentId: to.id, fromModel, toModel, reason: 'manual',
-    detail: sameAgent
-      ? `Cambio manual en la tarea «${task.title}»: ${from.name} pasa de ${modelLabel(fromModel)} a ${modelLabel(toModel)}.`
-      : `Cambio manual: la tarea «${task.title}» pasa de ${from.name} a ${to.name} (${modelLabel(toModel)}).`,
-  });
-  return view;
+  const detail = sameAgent
+    ? `Cambio manual en la tarea «${task.title}»: ${from.name} pasa de ${modelLabel(fromModel)} a ${modelLabel(toModel)}.`
+    : `Cambio manual: la tarea «${task.title}» pasa de ${from.name} a ${to.name} (${modelLabel(toModel)}).`;
+  // Pasa por la cola con prioridad (el hueco que dejó el run parado es suyo); el relevo se registra al arrancar.
+  return requestStart(
+    ctx, task.id,
+    {
+      model: toModel,
+      resumeSessionId: sessionId,
+      ...(sameAgent
+        ? { resumeNote: `Continúa donde lo dejaste: se cambió el modelo de ${modelLabel(fromModel)} a ${modelLabel(toModel)} a petición de la persona usuaria. Mantén el mismo enfoque y no repitas lo ya hecho.` }
+        : { handover }),
+    },
+    'relay',
+    {
+      onStarted: () =>
+        recordRelay(ctx, { projectId: project.id, taskId: task.id, fromAgentId: from.id, toAgentId: to.id, fromModel, toModel, reason: 'manual', detail }),
+    },
+  );
 }
 
 export function relayHandlers(ctx: Ctx): Record<string, Handler> {
   return {
-    /** `{limit?}` -> RelayRow[] del proyecto activo, el más nuevo primero. */
+    /** `{projectId?, limit?}` -> RelayRow[] del proyecto, el más nuevo primero. */
     'relays.list': (params) => {
-      if (!ctx.activeProject) return [];
       const p = params == null ? {} : asParams(params, 'relays.list');
+      const project = optionalProject(ctx, projectIdOf(p));
+      if (!project) return [];
       const limit = typeof p.limit === 'number' && Number.isFinite(p.limit) ? Math.min(500, Math.max(1, Math.floor(p.limit))) : 50;
-      return ctx.repos.relays.list(ctx.activeProject.id, limit).map(relayView);
+      return ctx.repos.relays.list(project.id, limit).map(relayView);
     },
     'task.switch': (params) => switchTask(ctx, params),
   };

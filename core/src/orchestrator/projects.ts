@@ -1,15 +1,19 @@
-// Proyectos: project.open / project.get. Abrir un proyecto lo crea o recupera, limpia lo que dejó una sesión anterior
-// y deja listos al jefe y a un trabajador por defecto.
+// Proyectos (workspaces): project.open / reopen / close / list / get / update. Abrir un proyecto lo crea o recupera,
+// limpia lo que dejó una sesión anterior y deja listos al jefe y a un trabajador por defecto. Se pueden tener varios
+// abiertos a la vez (`ctx.projects`); abrir uno no cierra los demás.
 import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { ProjectRow } from '../db/repos.js';
 import { assertSafeRef, runGitRaw } from '../git/run.js';
 import { pruneWorktrees } from '../git/worktree.js';
-import { rescheduleResumes } from './relay.js';
-import { type Ctx, type Handler, asParams, requireProject, str } from './context.js';
+import { dequeueProject } from './queue.js';
+import { clearProjectResumes, rescheduleResumes } from './relay.js';
+import { type Ctx, type Handler, asParams, mostRecentOpen, projectIdOf, requireProject, str } from './context.js';
 import { logEvent } from './events.js';
 import { setRobotStatus } from './status.js';
+import { stopTask } from './runs.js';
 import { transition } from './tasks.js';
+import { listProjects, projectItem, scheduleWorkspacesNotify } from './workspaces.js';
 
 /** Raíz del repositorio git que contiene `path`; error claro si no es un repo. */
 async function repoRoot(path: string): Promise<string> {
@@ -49,49 +53,127 @@ function recoverStaleRuns(ctx: Ctx, project: ProjectRow): void {
   }
 }
 
+const SCENES = ['oficina', 'casa'] as const;
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+/** Abre (o reabre) el repositorio en `root` como workspace y lo deja listo. `touch: false` conserva `last_opened_at`. */
+async function openProject(ctx: Ctx, root: string, touch = true): Promise<ProjectRow> {
+  let project = ctx.repos.projects.getByPath(root);
+  if (!project) {
+    project = ctx.repos.projects.create({
+      path: root,
+      name: basename(root),
+      baseBranch: await currentBranch(root),
+      testCommand: existsSync(join(root, 'package.json')) ? 'npm test' : null,
+    });
+  }
+  const alreadyOpen = ctx.projects.has(project.id);
+
+  try {
+    await pruneWorktrees(root);
+  } catch (err) {
+    process.stderr.write(`project.open: no se pudo limpiar worktrees: ${err instanceof Error ? err.message : err}\n`);
+  }
+  if (!alreadyOpen) recoverStaleRuns(ctx, project); // solo al abrirlo en esta sesión: ahí no hay ningún run vivo suyo
+
+  // El jefe y, para H1, un trabajador por defecto.
+  if (!ctx.repos.agents.getBoss(project.id)) {
+    ctx.repos.agents.create({ projectId: project.id, name: 'Jefe', provider: 'claude', model: 'opus', role: 'jefe', color: 'terracota', isBoss: true });
+  }
+  if (!ctx.repos.agents.list(project.id).some((a) => a.is_boss === 0)) {
+    ctx.repos.agents.create({ projectId: project.id, name: 'Clau', provider: 'claude', model: 'sonnet', role: 'programador', color: 'terracota' });
+  }
+
+  project = ctx.repos.projects.setOpen(project.id, true, touch);
+  ctx.projects.set(project.id, project);
+  ctx.lastProjectId = project.id;
+  rescheduleResumes(ctx, project); // tareas pausadas por límite: la reanudación al reset sobrevive al reinicio
+  scheduleWorkspacesNotify(ctx);
+  return project;
+}
+
+/** Cierra el workspace: para sus runs (solo con `force`), saca sus tareas de la cola y lo marca como cerrado. */
+async function closeProject(ctx: Ctx, projectId: string, force: boolean) {
+  const project = ctx.projects.get(projectId);
+  if (!project) throw new Error(`project.close: el proyecto ${projectId} no está abierto`);
+  const lives = [...ctx.live.values()].filter((l) => l.projectId === projectId);
+  if (lives.length > 0 && !force) {
+    throw new Error(`project.close: «${project.name}» tiene ${lives.length} run(s) en marcha; páralos o usa force para detenerlos`);
+  }
+  for (const l of lives) l.onEnded = null; // un relevo pendiente no debe relanzar nada en un proyecto que se cierra
+  dequeueProject(ctx, projectId);
+  clearProjectResumes(ctx, projectId);
+  let stopped = 0;
+  for (const l of lives) {
+    if (l.finishing) {
+      await l.finished.catch(() => undefined); // ya terminó: solo está guardando el trabajo
+      continue;
+    }
+    try {
+      await stopTask(ctx, l.taskId, 'proyecto cerrado', { pump: false });
+      stopped++;
+    } catch (err) {
+      process.stderr.write(`project.close: no se pudo parar ${l.taskId}: ${err instanceof Error ? err.message : err}\n`);
+    }
+  }
+  ctx.projects.delete(projectId);
+  ctx.repos.projects.setOpen(projectId, false);
+  if (ctx.lastProjectId === projectId) ctx.lastProjectId = mostRecentOpen(ctx);
+  scheduleWorkspacesNotify(ctx);
+  return { projectId, closed: true as const, stoppedRuns: stopped };
+}
+
 export function projectHandlers(ctx: Ctx): Record<string, Handler> {
   return {
+    /** `{path}` -> fila del proyecto. No cierra los demás; pasa a ser el último abierto (`lastProjectId`). */
     'project.open': async (params) => {
       const p = asParams(params, 'project.open');
-      const root = await repoRoot(str(p.path, 'path', 'project.open'));
-
-      let project = ctx.repos.projects.getByPath(root);
-      if (!project) {
-        project = ctx.repos.projects.create({
-          path: root,
-          name: basename(root),
-          baseBranch: await currentBranch(root),
-          testCommand: existsSync(join(root, 'package.json')) ? 'npm test' : null,
-        });
-      }
-
-      try {
-        await pruneWorktrees(root);
-      } catch (err) {
-        process.stderr.write(`project.open: no se pudo limpiar worktrees: ${err instanceof Error ? err.message : err}\n`);
-      }
-      recoverStaleRuns(ctx, project);
-
-      // El jefe y, para H1, un trabajador por defecto.
-      if (!ctx.repos.agents.getBoss(project.id)) {
-        ctx.repos.agents.create({ projectId: project.id, name: 'Jefe', provider: 'claude', model: 'opus', role: 'jefe', color: 'terracota', isBoss: true });
-      }
-      if (!ctx.repos.agents.list(project.id).some((a) => a.is_boss === 0)) {
-        ctx.repos.agents.create({ projectId: project.id, name: 'Clau', provider: 'claude', model: 'sonnet', role: 'programador', color: 'terracota' });
-      }
-
-      ctx.activeProject = project;
-      rescheduleResumes(ctx, project); // tareas pausadas por límite: la reanudación al reset sobrevive al reinicio
-      return project;
+      return openProject(ctx, await repoRoot(str(p.path, 'path', 'project.open')));
     },
 
-    'project.get': () => ctx.activeProject,
+    /**
+     * Sin params. Reabre los proyectos que estaban abiertos al cerrar el core (`is_open = 1`): la UI lo llama una vez
+     * al recibir `core.ready` (el core no abre nada solo: abrir es asíncrono y toca git). Idempotente. Los que ya no se
+     * pueden abrir (carpeta borrada...) quedan cerrados y se devuelven en `failed`.
+     */
+    'project.reopen': async () => {
+      const failed: Array<{ projectId: string; path: string; error: string }> = [];
+      const opened: ProjectRow[] = [];
+      for (const prev of ctx.repos.projects.listOpen()) {
+        try {
+          opened.push(await openProject(ctx, await repoRoot(prev.path), false));
+        } catch (err) {
+          ctx.repos.projects.setOpen(prev.id, false);
+          failed.push({ projectId: prev.id, path: prev.path, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+      ctx.lastProjectId = mostRecentOpen(ctx);
+      const items = opened.map((o) => projectItem(ctx, ctx.projects.get(o.id)!));
+      return { opened: items, failed };
+    },
 
-    /** `{test_command?, base_branch?}` sobre el proyecto activo. La rama base debe existir como rama local. */
+    /** `{projectId?}` -> fila del proyecto abierto (sin `projectId`: el último abierto) o null. */
+    'project.get': (params) => {
+      const p = params == null ? {} : asParams(params, 'project.get');
+      const id = projectIdOf(p);
+      if (id !== undefined) return ctx.projects.get(id) ?? null;
+      return ctx.lastProjectId ? (ctx.projects.get(ctx.lastProjectId) ?? null) : null;
+    },
+
+    /** Todos los proyectos conocidos con contadores: ProjectListItem[] (abiertos primero, luego por última apertura). */
+    'project.list': () => listProjects(ctx),
+
+    /** `{projectId, force?}`: falla si hay runs vivos salvo `force` (los para limpiamente). */
+    'project.close': async (params) => {
+      const p = asParams(params, 'project.close');
+      return closeProject(ctx, str(p.projectId, 'projectId', 'project.close'), p.force === true);
+    },
+
+    /** `{projectId?, test_command?, base_branch?, scene?, color?}`. La rama base debe existir como rama local. */
     'project.update': async (params) => {
       const p = asParams(params, 'project.update');
-      const project = requireProject(ctx);
-      const patch: { baseBranch?: string; testCommand?: string | null } = {};
+      const project = requireProject(ctx, projectIdOf(p));
+      const patch: { baseBranch?: string; testCommand?: string | null; scene?: 'oficina' | 'casa'; color?: string | null } = {};
 
       if (p.base_branch !== undefined) {
         const branch = str(p.base_branch, 'base_branch', 'project.update').trim();
@@ -107,11 +189,25 @@ export function projectHandlers(ctx: Ctx): Record<string, Handler> {
         if (cmd.length > 1000 || /[\r\n\0]/.test(cmd)) throw new Error('project.update: "test_command" debe ser una sola línea de menos de 1000 caracteres');
         patch.testCommand = cmd === '' ? null : cmd;
       }
-      if (patch.baseBranch === undefined && patch.testCommand === undefined) {
-        throw new Error('project.update: indica "base_branch" y/o "test_command"');
+      if (p.scene !== undefined) {
+        if (typeof p.scene !== 'string' || !(SCENES as readonly string[]).includes(p.scene)) {
+          throw new Error(`project.update: scene "${String(p.scene)}" no válida (permitidas: ${SCENES.join(', ')})`);
+        }
+        patch.scene = p.scene as 'oficina' | 'casa';
       }
-      ctx.activeProject = ctx.repos.projects.update(project.id, patch);
-      return ctx.activeProject;
+      if (p.color !== undefined) {
+        if (p.color !== null && (typeof p.color !== 'string' || !COLOR_RE.test(p.color))) {
+          throw new Error('project.update: "color" debe ser #rrggbb o null');
+        }
+        patch.color = p.color as string | null;
+      }
+      if (Object.keys(patch).length === 0) {
+        throw new Error('project.update: indica "base_branch", "test_command", "scene" y/o "color"');
+      }
+      const updated = ctx.repos.projects.update(project.id, patch);
+      ctx.projects.set(updated.id, updated);
+      scheduleWorkspacesNotify(ctx);
+      return updated;
     },
   };
 }

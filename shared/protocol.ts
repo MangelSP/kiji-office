@@ -59,7 +59,15 @@ export type MethodName =
   | 'providers.status'
   | 'relays.list'
   | 'task.switch'
-  | 'task.steps';
+  | 'task.steps'
+  | 'settings.get'
+  | 'settings.set'
+  // 0.2c: varios workspaces (proyectos abiertos a la vez)
+  | 'project.list'
+  | 'project.update'
+  | 'project.close'
+  | 'project.reopen'
+  | 'workspaces.overview';
 
 /** Eventos de 0.1 (sección 4) más los propios del servidor. */
 export type EventName =
@@ -75,13 +83,18 @@ export type EventName =
   | 'run.metrics'
   | 'limits.changed'
   | 'relay.happened'
-  | 'agent.changed';
+  | 'agent.changed'
+  // 0.2c
+  | 'queue.changed'
+  | 'workspaces.changed'
+  | 'budget.reached';
 
 // ---------------------------------------------------------------------------
 // 0.2a: métricas, cupo, relevo y perfil (PLAN-0.2a.md, "Contrato core ⇄ UI")
 // ---------------------------------------------------------------------------
 
 export type RunMetrics = {
+  projectId: string;
   runId: string;
   taskId: string;
   agentId: string;
@@ -141,6 +154,7 @@ export type RelayReason = 'limit' | 'manual' | 'resume_after_reset';
 
 export type RelayRow = {
   id: number;
+  projectId: string;
   taskId: string | null;
   fromAgentId: string | null;
   toAgentId: string | null;
@@ -167,3 +181,135 @@ export type AgentUpdateParams = {
 };
 
 export type TaskSwitchParams = { taskId: string; model?: string; agentId?: string };
+
+// ---------------------------------------------------------------------------
+// 0.2c: varios workspaces (un workspace = un proyecto abierto), cola global y Home
+// ---------------------------------------------------------------------------
+//
+// Reglas generales:
+//  - Todo método de proyecto acepta `projectId` en sus params. Si falta, el core usa el último proyecto abierto
+//    (`lastProjectId`), así la UI de 0.2a sigue funcionando con uno solo. Los métodos por id de tarea/agente
+//    (`task.start {id}`, `agent.update {agentId}`...) deducen el proyecto del id; si además llega `projectId`
+//    y no coincide, fallan.
+//  - TODOS los eventos por proyecto llevan `projectId` (camelCase) en el payload: `task.changed`, `agent.status`,
+//    `event.appended`, `approval.requested`, `review.ready`, `run.metrics`, `relay.happened`, `agent.changed`,
+//    `plan.proposed`, `queue.changed`. `limits.changed` es de la cuenta (no lleva projectId).
+//  - Las filas que ya viajaban con columnas de BD (tarea, agente, proyecto) conservan su snake_case y ganan
+//    `projectId`; los tipos nuevos van en camelCase.
+
+export type ProjectScene = 'oficina' | 'casa';
+
+/** Recuento de tareas por estado (solo aparecen los estados con al menos una tarea). */
+export type TasksByStatus = Record<string, number>;
+
+/** `project.list`: todos los proyectos conocidos (abiertos primero, luego por `lastOpenedAt` descendente). */
+export type ProjectListItem = {
+  projectId: string;
+  name: string;
+  path: string;
+  baseBranch: string;
+  testCommand: string | null;
+  createdAt: number;
+  /** Abierto como workspace en esta sesión del core. */
+  open: boolean;
+  lastOpenedAt: number | null;
+  /** Color de la pestaña (`#rrggbb`) o null. */
+  color: string | null;
+  scene: ProjectScene;
+  /** Runs vivos ahora (sin contar el cierre de runs ya terminados). */
+  liveRuns: number;
+  /** Tareas en cola global. */
+  queued: number;
+  /** Tareas que esperan a la persona: estado `needs_you` o `review`. */
+  needsYou: number;
+  /** Aprobaciones de permiso sin contestar. */
+  approvalsPending: number;
+  tasksByStatus: TasksByStatus;
+};
+
+export type ProjectCloseParams = { projectId: string; force?: boolean };
+export type ProjectCloseResult = { projectId: string; closed: true; stoppedRuns: number };
+export type ProjectReopenResult = {
+  /** Proyectos que estaban abiertos (is_open=1) y se han vuelto a abrir. */
+  opened: ProjectListItem[];
+  /** Los que ya no se pueden abrir (carpeta borrada, ya no es repo...): quedan cerrados. */
+  failed: { projectId: string; path: string; error: string }[];
+};
+export type ProjectUpdateParams = {
+  projectId?: string;
+  base_branch?: string;
+  test_command?: string | null;
+  scene?: ProjectScene;
+  /** `#rrggbb` o null para quitarlo. */
+  color?: string | null;
+};
+
+/** Notificación `queue.changed`: una tarea entra, sale o cambia de sitio en la cola global. */
+export type QueueChange = {
+  projectId: string;
+  taskId: string;
+  queued: boolean;
+  /** Posición 1-based; 0 si ya no está en cola. */
+  position: number;
+  /** Qué la retiene: 'slots' (tope de runs simultáneos) o 'budget' (tope de gasto diario). null si no está en cola. */
+  blockedBy: 'slots' | 'budget' | null;
+};
+
+/** Notificación `budget.reached`: se bloqueó un arranque porque el gasto de hoy ya alcanzó el tope diario. */
+export type BudgetNotice = {
+  costTodayUsd: number;
+  dailyBudgetUsd: number;
+  message: string;
+  projectId?: string;
+  taskId?: string;
+};
+
+export type TokenTotals = { input: number; output: number; cacheRead: number; cacheWrite: number };
+
+export type WorkspaceAgent = {
+  id: string;
+  name: string;
+  /** Modelo en uso ahora (el del run vivo o el preferido). */
+  model: string;
+  /** Estado del robot: idle, thinking, writing, needs_you, error, done. */
+  status: string;
+  color: string | null;
+  isBoss: boolean;
+};
+
+/** Una tarjeta del Home: un proyecto conocido con sus métricas. */
+export type WorkspaceSummary = {
+  projectId: string;
+  name: string;
+  path: string;
+  open: boolean;
+  color: string | null;
+  scene: ProjectScene;
+  agents: WorkspaceAgent[];
+  liveRuns: number;
+  queued: number;
+  needsYou: number;
+  approvalsPending: number;
+  tasksByStatus: TasksByStatus;
+  /** Gasto de hoy (día local) y total del proyecto, en USD. */
+  costTodayUsd: number;
+  costTotalUsd: number;
+  tokensToday: TokenTotals;
+  /** Último evento registrado del proyecto (epoch ms) o null. */
+  lastActivityAt: number | null;
+  /** Último relevo de modelo/agente del proyecto, si hubo. */
+  lastRelay?: RelayRow;
+};
+
+export type WorkspaceTotals = {
+  /** Gasto de hoy (día local) de todos los proyectos. */
+  costTodayUsd: number;
+  liveRuns: number;
+  /** Tareas en cola global. */
+  queued: number;
+  maxConcurrentRuns: number;
+  dailyBudgetUsd: number;
+};
+
+/** `workspaces.overview` y payload de `workspaces.changed` (como mucho 1 por segundo). */
+export type WorkspaceOverview = { workspaces: WorkspaceSummary[]; totals: WorkspaceTotals };

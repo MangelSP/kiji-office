@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { openDb } from '../src/db/db.js';
+import { migrations, openDb } from '../src/db/db.js';
 import { createRepos, FileClaimError, type Repos } from '../src/db/repos.js';
 
 let repos: Repos;
@@ -226,7 +226,7 @@ describe('migraciones', () => {
   it('abrir dos veces la misma BD no re-aplica nada y conserva los datos', () => {
     const file = join(dir, 'kiji.db');
     const db1 = openDb(file);
-    expect((db1.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(2);
+    expect((db1.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3);
     expect((db1.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toBe('wal');
     expect((db1.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys).toBe(1);
     createRepos(db1).projects.create({ path: '/x', name: 'x' });
@@ -234,7 +234,7 @@ describe('migraciones', () => {
 
     // si re-aplicara schema.sql fallaría con "table projects already exists"
     const db2 = openDb(file);
-    expect((db2.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(2);
+    expect((db2.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3);
     expect(createRepos(db2).projects.getByPath('/x')).toBeDefined();
     db2.close();
   });
@@ -253,7 +253,7 @@ describe('migraciones', () => {
     old.close();
 
     const db = openDb(file);
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(2);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3);
     const repos = createRepos(db);
     expect(repos.agents.get('a')).toMatchObject({ name: 'Vieja', persona: '', skills: '[]', auto_relay: 1, relay_order: null });
     expect(repos.runs.get('r')).toMatchObject({
@@ -268,5 +268,35 @@ describe('migraciones', () => {
     repos.runs.update('r', { model: 'opus', cache_read_tokens: 7, cache_write_tokens: 3, context_tokens: 100, context_window: 1_000_000 });
     expect(repos.runs.get('r')).toMatchObject({ model: 'opus', cache_read_tokens: 7, cache_write_tokens: 3, context_tokens: 100, context_window: 1_000_000 });
     db.close();
+  });
+
+  it('migración 3: sobre una BD real de 0.2a (v2) con datos añade workspaces sin perder nada', () => {
+    const file = join(dir, 'v2.db');
+    const old = new DatabaseSync(file);
+    old.exec('PRAGMA foreign_keys = ON');
+    migrations[0]!(old); // esquema 0.1
+    migrations[1]!(old); // 0.2a
+    old.exec('PRAGMA user_version = 2');
+    old.exec(`INSERT INTO projects (id, path, name, base_branch, test_command, created_at) VALUES ('p', '/x', 'x', 'dev', 'npm test', 1)`);
+    old.exec(`INSERT INTO agents (id, project_id, name, provider, model, persona, skills, auto_relay, created_at) VALUES ('a', 'p', 'Vieja', 'claude', 'opus', 'calma', '["graphify"]', 0, 1)`);
+    old.exec(`INSERT INTO objectives (id, project_id, text, created_at) VALUES ('o', 'p', 't', 1)`);
+    old.exec(`INSERT INTO tasks (id, objective_id, title, status, updated_at) VALUES ('t', 'o', 't', 'running', 1)`);
+    old.exec(`INSERT INTO runs (id, task_id, agent_id, started_at, cost_usd, model, cache_read_tokens) VALUES ('r', 't', 'a', 1, 0.5, 'opus', 9)`);
+    old.exec(`INSERT INTO relays (project_id, task_id, reason, created_at) VALUES ('p', 't', 'limit', 1)`);
+    old.close();
+
+    const db = openDb(file);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3);
+    const repos = createRepos(db);
+    expect(repos.projects.get('p')).toMatchObject({
+      name: 'x', base_branch: 'dev', test_command: 'npm test', scene: 'oficina', last_opened_at: null, color: null, is_open: 0,
+    });
+    expect(repos.agents.get('a')).toMatchObject({ persona: 'calma', skills: '["graphify"]', auto_relay: 0 });
+    expect(repos.tasks.get('t')!.status).toBe('running');
+    expect(repos.runs.get('r')).toMatchObject({ cost_usd: 0.5, model: 'opus', cache_read_tokens: 9 });
+    expect(repos.relays.list('p')).toHaveLength(1);
+
+    expect(repos.projects.update('p', { scene: 'casa', color: '#aabbcc' })).toMatchObject({ scene: 'casa', color: '#aabbcc' });
+    expect(() => repos.projects.update('p', { scene: 'otra' as never })).toThrow(); // CHECK de la columna
   });
 });

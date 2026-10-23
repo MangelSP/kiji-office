@@ -1,6 +1,8 @@
 // Ajustes del core: settings.get / settings.set con lista blanca de claves.
 // Las claves de API NUNCA pasan por aquí: viven en el llavero del sistema y llegan al core por el entorno.
 import { type Ctx, type Handler, asParams, str } from './context.js';
+import { pumpQueue } from './queue.js';
+import { scheduleWorkspacesNotify } from './workspaces.js';
 
 export const OLLAMA_URL_DEFAULT = 'http://localhost:11434/v1';
 
@@ -21,6 +23,17 @@ const ALLOWED: Record<string, (value: string) => string> = {
   default_budget_usd(value) {
     const n = Number(value.trim());
     if (!Number.isFinite(n) || n <= 0 || n > 1000) throw new Error('settings.set: default_budget_usd debe ser un número entre 0 y 1000');
+    return String(n);
+  },
+  // Cola global (0.2c, C3)
+  max_concurrent_runs(value) {
+    const n = Number(value.trim());
+    if (!Number.isInteger(n) || n < 1 || n > 32) throw new Error('settings.set: max_concurrent_runs debe ser un entero entre 1 y 32');
+    return String(n);
+  },
+  daily_budget_usd(value) {
+    const n = Number(value.trim());
+    if (!Number.isFinite(n) || n <= 0 || n > 100_000) throw new Error('settings.set: daily_budget_usd debe ser un número mayor que 0 y como máximo 100000');
     return String(n);
   },
 };
@@ -51,6 +64,10 @@ export function settingsHandlers(ctx: Ctx): Record<string, Handler> {
       const key = allowedKey(p.key, 'settings.set');
       const value = ALLOWED[key]!(str(p.value, 'value', 'settings.set'));
       ctx.repos.settings.set(key, value);
+      if (key === 'max_concurrent_runs' || key === 'daily_budget_usd') {
+        void pumpQueue(ctx); // un tope más alto puede liberar tareas de la cola
+        scheduleWorkspacesNotify(ctx);
+      }
       return { key, value };
     },
   };

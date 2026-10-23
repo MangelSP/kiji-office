@@ -6,7 +6,8 @@ import type { AgentMetrics, RunMetrics } from '../../../shared/protocol.js';
 import { DEFAULT_CONTEXT_WINDOW } from '../adapters/claude.js';
 import type { AgentEvent } from '../adapters/types.js';
 import type { AgentRow, RunRow } from '../db/repos.js';
-import { type Ctx, type Handler, type LiveRun, type RunUsageState, asParams, str } from './context.js';
+import { type Ctx, type Handler, type LiveRun, type RunUsageState, asParams, assertSameProject, str } from './context.js';
+import { scheduleWorkspacesNotify } from './workspaces.js';
 
 type UsageEvent = Extract<AgentEvent, { type: 'usage' }>;
 
@@ -29,16 +30,16 @@ export const preferredModel = (a: Pick<AgentRow, 'model'>): string => a.model ??
 export function liveMetrics(live: LiveRun, isLive: boolean): RunMetrics {
   const u = live.usage;
   return {
-    runId: live.runId, taskId: live.taskId, agentId: live.agentId, model: u.model,
+    projectId: live.projectId, runId: live.runId, taskId: live.taskId, agentId: live.agentId, model: u.model,
     input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite,
     contextTokens: u.contextTokens, contextWindow: u.contextWindow, costUsd: u.costUsd, live: isLive,
   };
 }
 
 /** RunMetrics a partir de la fila guardada (`fallbackModel` para los runs anteriores a 0.2a, sin `model`). */
-export function rowMetrics(r: RunRow, fallbackModel: string, isLive = false): RunMetrics {
+export function rowMetrics(r: RunRow, fallbackModel: string, projectId: string, isLive = false): RunMetrics {
   return {
-    runId: r.id, taskId: r.task_id, agentId: r.agent_id, model: r.model ?? fallbackModel,
+    projectId, runId: r.id, taskId: r.task_id, agentId: r.agent_id, model: r.model ?? fallbackModel,
     input: r.input_tokens, output: r.output_tokens, cacheRead: r.cache_read_tokens, cacheWrite: r.cache_write_tokens,
     contextTokens: r.context_tokens, contextWindow: r.context_window, costUsd: r.cost_usd, live: isLive,
   };
@@ -80,6 +81,7 @@ function emitMetrics(ctx: Ctx, live: LiveRun, isLive: boolean): void {
   const u = live.usage;
   u.lastNotify = Date.now();
   ctx.emit('run.metrics', liveMetrics(live, isLive));
+  scheduleWorkspacesNotify(ctx);
 }
 
 /** Aplica un evento `usage` del adaptador: estado en memoria, escritura limitada y notificación limitada. */
@@ -133,6 +135,7 @@ export function metricsHandlers(ctx: Ctx): Record<string, Handler> {
       const p = asParams(params, 'agent.metrics');
       const agent = ctx.repos.agents.get(str(p.agentId, 'agentId', 'agent.metrics'));
       if (!agent) throw new Error('agent.metrics: agente inexistente');
+      assertSameProject(p, agent.project_id, 'agent.metrics');
       return agentMetrics(ctx, agent);
     },
   };
@@ -142,7 +145,7 @@ export function agentMetrics(ctx: Ctx, agent: AgentRow): AgentMetrics {
   const live = [...ctx.live.values()].find((l) => l.agentId === agent.id && l.runId !== '');
   const totals = ctx.repos.runs.totalsByAgent(agent.id);
   const recent = ctx.repos.runs.listByAgent(agent.id, RECENT_RUNS).map((r) =>
-    live && live.runId === r.id ? liveMetrics(live, true) : rowMetrics(r, preferredModel(agent)),
+    live && live.runId === r.id ? liveMetrics(live, true) : rowMetrics(r, preferredModel(agent), agent.project_id),
   );
   const last = recent[0];
   return {

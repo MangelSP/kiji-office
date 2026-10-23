@@ -21,6 +21,8 @@ export type ApprovalStatus = 'pending' | 'approved' | 'denied';
 
 export interface ProjectRow {
   id: string; path: string; name: string; base_branch: string; test_command: string | null; created_at: number;
+  // 0.2c (migración 3)
+  scene: 'oficina' | 'casa'; last_opened_at: number | null; color: string | null; is_open: 0 | 1;
 }
 export interface AgentRow {
   id: string; project_id: string; name: string; provider: Provider; api_base: string | null;
@@ -139,10 +141,23 @@ export function createRepos(db: DatabaseSync) {
     get: (id: string) => one<ProjectRow>('SELECT * FROM projects WHERE id = ?', id),
     getByPath: (path: string) => one<ProjectRow>('SELECT * FROM projects WHERE path = ?', path),
     list: () => all<ProjectRow>('SELECT * FROM projects ORDER BY created_at, id'),
-    update(id: string, patch: { baseBranch?: string; testCommand?: string | null }): ProjectRow {
-      patchRow(db, 'projects', id, { base_branch: patch.baseBranch, test_command: patch.testCommand }, ['base_branch', 'test_command']);
+    update(id: string, patch: { baseBranch?: string; testCommand?: string | null; scene?: 'oficina' | 'casa'; color?: string | null }): ProjectRow {
+      patchRow(
+        db, 'projects', id,
+        { base_branch: patch.baseBranch, test_command: patch.testCommand, scene: patch.scene, color: patch.color },
+        ['base_branch', 'test_command', 'scene', 'color'],
+      );
       return projects.get(id)!;
     },
+    /** Marca el proyecto como abierto/cerrado; al abrir guarda la hora de apertura. */
+    setOpen(id: string, open: boolean, touch = true): ProjectRow {
+      if (open && touch) db.prepare('UPDATE projects SET is_open = 1, last_opened_at = ? WHERE id = ?').run(now(), id);
+      else if (open) db.prepare('UPDATE projects SET is_open = 1 WHERE id = ?').run(id);
+      else db.prepare('UPDATE projects SET is_open = 0 WHERE id = ?').run(id);
+      return projects.get(id)!;
+    },
+    /** Los que estaban abiertos al cerrar el core, el último abierto al final. */
+    listOpen: () => all<ProjectRow>('SELECT * FROM projects WHERE is_open = 1 ORDER BY last_opened_at, created_at, id'),
   };
 
   // --- agents ---
@@ -252,6 +267,11 @@ export function createRepos(db: DatabaseSync) {
       all<TaskRow>(
         `SELECT t.* FROM tasks t JOIN objectives o ON o.id = t.objective_id
          WHERE o.project_id = ? ORDER BY o.created_at, t.sort_order, t.rowid`, projectId),
+    /** Tareas por proyecto y estado (todas las filas, para los contadores de `project.list` / `workspaces.overview`). */
+    countsByProjectStatus: () =>
+      all<{ project_id: string; status: TaskStatus; n: number }>(
+        `SELECT o.project_id AS project_id, t.status AS status, COUNT(*) AS n
+         FROM tasks t JOIN objectives o ON o.id = t.objective_id GROUP BY o.project_id, t.status`),
     /** Actualiza campos (nombres de columna). Si el estado final es terminal, libera sus archivos. */
     update(id: string, patch: Partial<Pick<TaskRow, (typeof TASK_FIELDS)[number]>>): TaskRow | undefined {
       tx(db, () => {
@@ -286,6 +306,18 @@ export function createRepos(db: DatabaseSync) {
                 COALESCE(SUM(output_tokens), 0) AS output, COALESCE(SUM(cache_read_tokens), 0) AS cache_read,
                 COALESCE(SUM(cache_write_tokens), 0) AS cache_write
          FROM runs WHERE agent_id = ?`, agentId)!,
+    /** Consumo por proyecto de los runs que empezaron desde `since` (epoch ms). */
+    usageByProjectSince: (since: number) =>
+      all<{ project_id: string; cost: number; input: number; output: number; cache_read: number; cache_write: number }>(
+        `SELECT a.project_id AS project_id, COALESCE(SUM(r.cost_usd), 0) AS cost, COALESCE(SUM(r.input_tokens), 0) AS input,
+                COALESCE(SUM(r.output_tokens), 0) AS output, COALESCE(SUM(r.cache_read_tokens), 0) AS cache_read,
+                COALESCE(SUM(r.cache_write_tokens), 0) AS cache_write
+         FROM runs r JOIN agents a ON a.id = r.agent_id WHERE r.started_at >= ? GROUP BY a.project_id`, since),
+    /** Gasto total por proyecto (todos los runs). */
+    costByProject: () =>
+      all<{ project_id: string; cost: number }>(
+        `SELECT a.project_id AS project_id, COALESCE(SUM(r.cost_usd), 0) AS cost
+         FROM runs r JOIN agents a ON a.id = r.agent_id GROUP BY a.project_id`),
     /** Runs del proyecto que empezaron desde `since` (epoch ms), con el modelo preferido del agente como respaldo. */
     listSince: (projectId: string, since: number) =>
       all<{ model: string | null; agent_model: string | null; cost_usd: number }>(
@@ -355,6 +387,10 @@ export function createRepos(db: DatabaseSync) {
     countToolStarts: (runId: string) =>
       one<{ n: number }>(
         `SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND kind = 'tool' AND json_extract(payload, '$.status') = 'start'`, runId)!.n,
+    /** Último evento por proyecto (epoch ms). */
+    lastActivityByProject: () =>
+      all<{ project_id: string; at: number }>(
+        'SELECT project_id, created_at AS at FROM events WHERE id IN (SELECT MAX(id) FROM events GROUP BY project_id)'),
     tail(projectId: string, o: {
       afterId?: number; beforeId?: number; limit?: number; agentId?: string; kind?: EventKind;
     } = {}): EventRow[] {
@@ -382,6 +418,12 @@ export function createRepos(db: DatabaseSync) {
       return approvals.get(id)!;
     },
     get: (id: string) => one<ApprovalRow>('SELECT * FROM approvals WHERE id = ?', id),
+    /** Aprobaciones pendientes por proyecto (a través de su tarea). */
+    pendingByProject: () =>
+      all<{ project_id: string; n: number }>(
+        `SELECT o.project_id AS project_id, COUNT(*) AS n
+         FROM approvals ap JOIN tasks t ON t.id = ap.task_id JOIN objectives o ON o.id = t.objective_id
+         WHERE ap.status = 'pending' GROUP BY o.project_id`),
     listPending: () => all<ApprovalRow>("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at, rowid"),
     /** Solo decide si sigue pendiente; devuelve false si ya estaba decidida. */
     decide(id: string, decision: 'approved' | 'denied'): boolean {
@@ -435,6 +477,8 @@ export function createRepos(db: DatabaseSync) {
     /** El más nuevo primero. */
     list: (projectId: string, limit = 50) =>
       all<RelayDbRow>('SELECT * FROM relays WHERE project_id = ? ORDER BY id DESC LIMIT ?', projectId, limit),
+    latest: (projectId: string) =>
+      one<RelayDbRow>('SELECT * FROM relays WHERE project_id = ? ORDER BY id DESC LIMIT 1', projectId),
   };
 
   // --- settings ---

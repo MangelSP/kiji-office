@@ -1,6 +1,7 @@
 // Registro de eventos: persiste en `events` (sin secretos) y avisa a la UI con `event.appended`.
 import type { EventKind, EventRow } from '../db/repos.js';
-import { type Ctx, type Handler, asParams } from './context.js';
+import { type Ctx, type Handler, asParams, optionalProject, projectIdOf } from './context.js';
+import { scheduleWorkspacesNotify } from './workspaces.js';
 
 const MAX_STRING = 8000;
 const MAX_ITEMS = 200;
@@ -46,19 +47,21 @@ export function logEvent(
   },
 ): EventRow {
   const row = ctx.repos.events.append({ ...e, payload: sanitize(e.payload ?? {}, 0, e.maxString) });
-  ctx.emit('event.appended', eventView(row));
+  ctx.emit('event.appended', { ...eventView(row), projectId: row.project_id });
+  scheduleWorkspacesNotify(ctx);
   return row;
 }
 
-/** `events.tail {after_id?, before_id?, limit?, agent_id?, kind?}` del proyecto activo. */
+/** `events.tail {projectId?, after_id?, before_id?, limit?, agent_id?, kind?}`. */
 export function eventHandlers(ctx: Ctx): Record<string, Handler> {
   return {
     'events.tail': (params) => {
-      if (!ctx.activeProject) return [];
       const p = params == null ? {} : asParams(params, 'events.tail');
+      const project = optionalProject(ctx, projectIdOf(p));
+      if (!project) return [];
       const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
       return ctx.repos.events
-        .tail(ctx.activeProject.id, {
+        .tail(project.id, {
           afterId: num(p.after_id),
           beforeId: num(p.before_id),
           limit: num(p.limit),

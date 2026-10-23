@@ -24,7 +24,7 @@ afterEach(async () => {
 
 const inFuture = (ms: number) => Date.now() + ms;
 const task = (id: string) => h.orch.ctx.repos.tasks.get(id)!;
-const relaysOf = () => h.orch.ctx.repos.relays.list(h.orch.ctx.activeProject!.id);
+const relaysOf = () => h.orch.ctx.repos.relays.list(h.orch.ctx.projects.get(h.orch.ctx.lastProjectId!)!.id);
 
 async function setup(opts: Parameters<typeof makeHarness>[0] = {}) {
   h = makeHarness(opts);
@@ -229,7 +229,7 @@ describe('reanudación automática al reset', () => {
     }
   });
 
-  it('no reanuda una tarea de otro proyecto; project.open descarta su temporizador y reprograma los del proyecto abierto', async () => {
+  it('abrir otro proyecto no toca el temporizador; cerrar el proyecto lo descarta y reabrirlo lo reprograma', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     const repo2 = makeNodeRepo();
     try {
@@ -237,10 +237,13 @@ describe('reanudación automática al reset', () => {
       h.adapters[0]!.push({ type: 'limit', kind: 'rate', rateLimitType: 'five_hour', resetsAt: inFuture(60_000), message: 'x', sessionId: 's' });
       await h.waitFor(() => task(t.id).status === 'paused_limit' && h.orch.ctx.live.size === 0, 'paused_limit');
       expect(h.orch.ctx.resumeTimers.has(t.id)).toBe(true);
-      await h.call('project.open', { path: repo2 }); // otro proyecto activo
+      const projectId = h.orch.ctx.lastProjectId!;
+      await h.call('project.open', { path: repo2 }); // otro workspace: el primero sigue abierto
+      expect(h.orch.ctx.resumeTimers.has(t.id)).toBe(true);
+      await h.call('project.close', { projectId });
       expect(h.orch.ctx.resumeTimers.size).toBe(0);
       await vi.advanceTimersByTimeAsync(200_000);
-      expect(h.adapters).toHaveLength(1); // no se reanudó
+      expect(h.adapters).toHaveLength(1); // proyecto cerrado: no se reanudó
       expect(task(t.id).status).toBe('paused_limit');
       await h.call('project.open', { path: repo }); // se reabre: se reprograma
       expect(h.orch.ctx.resumeTimers.has(t.id)).toBe(true);
@@ -250,21 +253,29 @@ describe('reanudación automática al reset', () => {
     }
   });
 
-  it('resumeAfterReset ignora la tarea si su proyecto no es el activo', async () => {
+  it('resumeAfterReset ignora la tarea si su proyecto está cerrado, y la reanuda si hay OTRO proyecto abierto además', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     const repo2 = makeNodeRepo();
     try {
       const { t } = await setup();
-      h.adapters[0]!.push({ type: 'limit', kind: 'rate', rateLimitType: 'five_hour', resetsAt: inFuture(60_000), message: 'x', sessionId: 's' });
+      h.adapters[0]!.push({ type: 'limit', kind: 'rate', rateLimitType: 'five_hour', resetsAt: Date.now() - RESUME_GRACE_MS + 3000, message: 'x', sessionId: 's' });
       await h.waitFor(() => task(t.id).status === 'paused_limit' && h.orch.ctx.live.size === 0, 'paused_limit');
-      const other = (await h.call('project.open', { path: repo2 }));
-      expect(h.orch.ctx.activeProject!.id).toBe(other.id);
-      // fuerza un temporizador de la tarea del otro proyecto (como si hubiera sobrevivido)
+      const first = h.orch.ctx.lastProjectId!;
+      const other = await h.call('project.open', { path: repo2 });
+      expect(h.orch.ctx.lastProjectId).toBe(other.id);
+      // el proyecto de la tarea sigue abierto aunque no sea el último: SÍ se reanuda
+      await vi.advanceTimersByTimeAsync(5000);
+      await h.waitFor(() => h.adapters.length === 2, 'reanudación en el proyecto abierto no activo');
+      expect(task(t.id).status).toBe('running');
+      h.adapters[1]!.push({ type: 'done', text: 'fin' });
+      await h.waitFor(() => task(t.id).status === 'review', 'review');
+      // y con el proyecto cerrado, un temporizador que sobreviva no hace nada
+      h.orch.ctx.repos.tasks.update(t.id, { status: 'paused_limit' });
+      await h.call('project.close', { projectId: first });
       const { scheduleResume } = await import('../../src/orchestrator/relay.js');
       scheduleResume(h.orch.ctx, t.id, Date.now(), 1000);
       await vi.advanceTimersByTimeAsync(5000);
-      expect(h.adapters).toHaveLength(1);
-      expect(task(t.id).status).toBe('paused_limit');
+      expect(h.adapters).toHaveLength(2);
     } finally {
       vi.useRealTimers();
       removeRepo(repo2);
@@ -465,7 +476,7 @@ describe('task.switch', () => {
     expect(all.map((r: any) => r.toModel)).toEqual(['haiku', 'opus']);
     expect(await h.call('relays.list', { limit: 1 })).toHaveLength(1);
     expect(all[0]).toEqual({
-      id: expect.any(Number), taskId: t.id, fromAgentId: expect.any(String), toAgentId: expect.any(String),
+      id: expect.any(Number), projectId: expect.any(String), taskId: t.id, fromAgentId: expect.any(String), toAgentId: expect.any(String),
       fromModel: 'opus', toModel: 'haiku', reason: 'manual', detail: expect.any(String), createdAt: expect.any(Number),
     });
   });

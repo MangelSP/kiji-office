@@ -22,6 +22,7 @@ export function onPermissionRequest(ctx: Ctx, live: LiveRun, ev: Extract<AgentEv
   if (getTask(ctx, live.taskId).status === 'running') transition(ctx, live.taskId, 'needs_you', `permiso: ${ev.tool}`);
   setRobotStatus(ctx, live.agentId, 'needs_you');
   ctx.emit('approval.requested', {
+    projectId: live.projectId,
     id: row.id,
     tool: ev.tool,
     input,

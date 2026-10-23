@@ -31,9 +31,23 @@ CREATE INDEX relays_project ON relays(project_id, id);
 CREATE INDEX events_run ON events(run_id, kind);
 `;
 
+// Migración 3 (0.2c, PLAN-0.2b.md parte 2): workspaces. Escena y color de la pestaña, última apertura y si el
+// proyecto estaba abierto al cerrar el core (para reabrirlo al arrancar con `project.reopen`).
+const MIGRATION_3 = `
+ALTER TABLE projects ADD COLUMN scene TEXT NOT NULL DEFAULT 'oficina' CHECK (scene IN ('oficina', 'casa'));
+ALTER TABLE projects ADD COLUMN last_opened_at INTEGER;
+ALTER TABLE projects ADD COLUMN color TEXT;
+ALTER TABLE projects ADD COLUMN is_open INTEGER NOT NULL DEFAULT 0 CHECK (is_open IN (0, 1));
+CREATE INDEX runs_started ON runs(started_at);
+`;
+
 // Migraciones en orden; la posición + 1 es el valor de user_version tras aplicarla.
 // Para cambiar el esquema en el futuro: añadir un elemento al final, nunca editar los anteriores.
-const migrations: Array<(db: DatabaseSync) => void> = [(db) => db.exec(schemaSql()), (db) => db.exec(MIGRATION_2)];
+export const migrations: Array<(db: DatabaseSync) => void> = [
+  (db) => db.exec(schemaSql()),
+  (db) => db.exec(MIGRATION_2),
+  (db) => db.exec(MIGRATION_3),
+];
 
 export function openDb(path: string): DatabaseSync {
   const db = new DatabaseSync(path);

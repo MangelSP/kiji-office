@@ -140,7 +140,7 @@ describe('task.create', () => {
     const assigned = await h.call('task.assign', { id: t.id, agent_id: worker.id });
     expect(assigned).toMatchObject({ status: 'assigned', agent_id: worker.id });
     // Las tareas sueltas viven en un único objetivo implícito.
-    const objectives = h.orch.ctx.repos.objectives.list(h.orch.ctx.activeProject!.id);
+    const objectives = h.orch.ctx.repos.objectives.list(h.orch.ctx.projects.get(h.orch.ctx.lastProjectId!)!.id);
     expect(objectives.map((o) => o.text)).toEqual(['Tareas sueltas']);
   });
 
@@ -213,7 +213,7 @@ describe('flujo completo con adaptador falso', () => {
     expect(fake.stopped).toBe(true);
 
     // Eventos persistidos, sin la clave que venía en el `env` ni patrones de claves.
-    const events = h.orch.ctx.repos.events.tail(h.orch.ctx.activeProject!.id, { limit: 500 });
+    const events = h.orch.ctx.repos.events.tail(h.orch.ctx.projects.get(h.orch.ctx.lastProjectId!)!.id, { limit: 500 });
     const kinds = new Set(events.map((e) => e.kind));
     for (const k of ['thinking', 'text', 'tool', 'permission', 'status', 'git', 'test']) expect(kinds.has(k as any)).toBe(true);
     const all = events.map((e) => e.payload).join('\n');
@@ -279,7 +279,8 @@ describe('flujo completo con adaptador falso', () => {
   it('si fallan los tests la tarea igualmente pasa a review con el test_run guardado', async () => {
     await open();
     h.orch.ctx.db.prepare("UPDATE projects SET test_command = 'node -e \"process.exit(3)\"'").run();
-    h.orch.ctx.activeProject = h.orch.ctx.repos.projects.list()[0]!;
+    const refreshed = h.orch.ctx.repos.projects.list()[0]!;
+    h.orch.ctx.projects.set(refreshed.id, refreshed);
     const { worker } = await open();
     const t = await h.call('task.create', { title: 'x', files: ['src/a.ts'], agent_id: worker.id });
     await h.call('task.start', { id: t.id });
@@ -312,7 +313,7 @@ describe('red de seguridad de propiedad', () => {
     expect(readFileSync(join(cwd, 'src/a.ts'), 'utf8')).toBe('export const a = 2;\n');
     expect(git(cwd, 'status', '--porcelain')).toBe('M src/a.ts');
 
-    const finding = h.orch.ctx.repos.events.tail(h.orch.ctx.activeProject!.id, { kind: 'git' }).map((e) => JSON.parse(e.payload)).find((p) => p.finding);
+    const finding = h.orch.ctx.repos.events.tail(h.orch.ctx.projects.get(h.orch.ctx.lastProjectId!)!.id, { kind: 'git' }).map((e) => JSON.parse(e.payload)).find((p) => p.finding);
     expect(finding.files).toEqual(['package.json', 'src/intruso.ts', 'src/other.ts']);
     expect(finding.message).toMatch(/^tocó archivos ajenos: /);
     expect(h.orch.ctx.repos.testRuns.latestByTask(t.id)).toBeUndefined(); // no se corrieron tests ni hubo commit
@@ -360,7 +361,7 @@ describe('límites, errores y parada', () => {
       model: 'sonnet',
     });
     expect(h.robot(worker.id).at(-1)).toBe('idle');
-    expect(h.orch.ctx.repos.events.tail(h.orch.ctx.activeProject!.id, { kind: 'limit' })).toHaveLength(1);
+    expect(h.orch.ctx.repos.events.tail(h.orch.ctx.projects.get(h.orch.ctx.lastProjectId!)!.id, { kind: 'limit' })).toHaveLength(1);
     expect(existsSync(fake.spec!.cwd)).toBe(true);
 
     await h.call('task.start', { id: t.id });

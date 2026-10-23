@@ -12,11 +12,13 @@ import { METRICS_NOTIFY_MS, METRICS_WRITE_MS, metricsHandlers } from './metrics.
 import { type ProviderDeps, providerHandlers } from './providers.js';
 import { projectHandlers } from './projects.js';
 import { loadLimitsSnapshot } from './quota.js';
+import { queueHandlers } from './queue.js';
 import { relayHandlers } from './relay.js';
 import { runHandlers, stopAll, whenIdle } from './runs.js';
 import { settingsHandlers } from './settings.js';
 import { defaultSkillsDir, skillHandlers } from './skills.js';
 import { taskHandlers } from './tasks.js';
+import { workspaceHandlers } from './workspaces.js';
 
 export interface OrchestratorOptions {
   db: DatabaseSync;
@@ -46,7 +48,8 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     emit: opts.emit,
     adapterFactory: opts.adapterFactory ?? defaultAdapterFactory,
     testTimeoutMs: opts.testTimeoutMs ?? 5 * 60_000,
-    activeProject: null,
+    projects: new Map(),
+    lastProjectId: null,
     agentStatus: new Map(),
     live: new Map(),
     approvalIndex: new Map(),
@@ -58,6 +61,13 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     providerStatus: null,
     limitsNotifyTimer: null,
     limitsLastNotify: 0,
+    queue: [],
+    pumping: false,
+    pumpAgain: false,
+    budgetTimer: null,
+    budgetNoticeAt: 0,
+    workspacesTimer: null,
+    workspacesLastNotify: 0,
     closed: false,
   };
   loadLimitsSnapshot(ctx);
@@ -73,6 +83,8 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     ...relayHandlers(ctx),
     ...approvalHandlers(ctx),
     ...eventHandlers(ctx),
+    ...queueHandlers(ctx),
+    ...workspaceHandlers(ctx),
   };
   return {
     handlers,

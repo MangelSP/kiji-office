@@ -228,12 +228,13 @@ export function createProviderStatus(ctx: Ctx, deps: ProviderDeps = {}) {
     else if (windows.some((w) => w.status === 'allowed_warning' || (w.utilization ?? 0) >= WARNING_UTILIZATION)) state = 'warning';
     else state = windows.length > 0 ? 'ok' : 'unknown';
 
-    const project = ctx.activeProject;
-    const agents = project ? ctx.repos.agents.list(project.id) : [];
-    const lives = [...ctx.live.values()].filter((l) => l.projectId === project?.id);
+    // Agrega todos los proyectos abiertos (0.2c): la cuenta de Claude es una sola para todos ellos.
+    const open = [...ctx.projects.keys()];
+    const agents = open.flatMap((id) => ctx.repos.agents.list(id));
+    const lives = [...ctx.live.values()].filter((l) => ctx.projects.has(l.projectId));
     const day = new Date(now);
     day.setHours(0, 0, 0, 0);
-    const today = project ? ctx.repos.runs.listSince(project.id, day.getTime()) : [];
+    const today = open.flatMap((id) => ctx.repos.runs.listSince(id, day.getTime()));
     const models = CLAUDE_MODEL_ALIASES.map((model) => {
       const inUse = (a: { id: string; model: string | null }) => lives.find((l) => l.agentId === a.id)?.model ?? a.model ?? 'sonnet';
       return {
