@@ -1,6 +1,7 @@
 // Integración: commit, rebase, tests, fast-forward merge y revert. Solo la hace el core a nombre del jefe.
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
+import { safeEnv } from '../adapters/tools/index.js';
 import { killTree, shellCommand, spawnOptions, type PlatformDeps } from '../adapters/tools/platform.js';
 import { assertSafeRef, GitError, NO_SIGN, runGit, runGitRaw } from './run.js';
 
@@ -158,7 +159,7 @@ export function runTests(
     let drainTimer: NodeJS.Timeout | undefined;
     const child = spawnFn(file, args, {
       cwd: resolve(worktree),
-      env: process.env,
+      env: safeEnv(), // sin claves del llavero: el test_command es del repo, no de confianza
       ...spawnOptions(deps), // detached solo en Unix; windowsHide en Windows
       stdio: ['ignore', 'pipe', 'pipe'],
     });

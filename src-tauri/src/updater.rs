@@ -60,19 +60,43 @@ pub async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
     Ok(found.map(|u| summarize(&u.version, u.body.as_deref(), u.date.map(|d| d.to_string()))))
 }
 
+const BUSY: &str = "Hay robots trabajando: espera a que terminen o detenlos";
+
+/// La UI ya lo comprueba, pero Rust es quien lo impone: no se instala con robots trabajando.
+fn ensure_idle(busy: u32) -> Result<(), String> {
+    if busy > 0 { Err(BUSY.into()) } else { Ok(()) }
+}
+
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
     check_config(&app)?;
-    let updater = app.updater().map_err(|e| e.to_string())?;
+    ensure_idle(crate::lifecycle::busy_count(&app))?;
+    // En Windows el plugin llama a `std::process::exit(0)` dentro de `install`, así que ni `shutdown` ni `restart`
+    // llegan a ejecutarse: el hook libera `kiji-node.exe` justo antes de lanzar el instalador.
+    let hook_app = app.clone();
+    let updater = app
+        .updater_builder()
+        .on_before_exit(move || crate::core_process::shutdown(&hook_app))
+        .build()
+        .map_err(|e| e.to_string())?;
     let Some(update) = updater.check().await.map_err(|e| format!("No se pudo comprobar: {e}"))? else {
         return Err("Ya tienes la última versión.".into());
     };
-    update
-        .download_and_install(|_, _| {}, || {})
+    let bytes = update
+        .download(|_, _| {}, || {})
         .await
-        .map_err(|e| format!("No se pudo instalar: {e}"))?;
-    // `restart` no emite `RunEvent::Exit`: se detiene el core a mano.
+        .map_err(|e| format!("No se pudo descargar: {e}"))?;
+    // La descarga es larga: puede haberse puesto a trabajar algún robot mientras tanto.
+    ensure_idle(crate::lifecycle::busy_count(&app))?;
+    // Se para el core antes de sustituir la app (en Windows, `node.exe` bloquearía el instalador).
     crate::core_process::shutdown(&app);
+    if let Err(e) = update.install(bytes) {
+        if let Err(r) = crate::core_process::relaunch(&app) {
+            eprintln!("[updater] no se pudo relanzar el core: {r}");
+        }
+        return Err(format!("No se pudo instalar: {e}"));
+    }
+    // `restart` no emite `RunEvent::Exit`; el core ya está parado.
     app.restart()
 }
 
@@ -88,6 +112,13 @@ mod tests {
         let key = json!({"endpoints": ["https://github.com/a/b/releases/latest/download/latest.json"], "pubkey": "REEMPLAZAR_CLAVE_PUBLICA"});
         assert_eq!(ensure_configured(Some(&key)).unwrap_err(), NOT_YET);
         assert!(ensure_configured(None).is_err());
+    }
+
+    #[test]
+    fn se_niega_con_robots_trabajando() {
+        assert_eq!(ensure_idle(1).unwrap_err(), BUSY);
+        assert_eq!(ensure_idle(3).unwrap_err(), BUSY);
+        assert!(ensure_idle(0).is_ok());
     }
 
     #[test]

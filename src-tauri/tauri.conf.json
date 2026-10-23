@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.kiji.office",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run fetch:node:host && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build:core && npm run build",
+    "beforeBuildCommand": "npm run fetch:node:host && npm run build:core && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -43,7 +43,7 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/node"
+      "binaries/kiji-node"
     ],
     "resources": {
       "../core/dist/kiji-core.mjs": "core/kiji-core.mjs"

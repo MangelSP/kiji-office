@@ -3,6 +3,11 @@
 Resumen: un tag `vX.Y.Z` dispara `.github/workflows/release.yml`, que compila en macOS (arm64 y x64), Windows y
 Linux y deja una **release borrador** con instaladores, firmas del updater y `latest.json`. Tú la revisas y la publicas.
 
+Requisitos de un clon nuevo: Rust y Node >= 22. `beforeDevCommand`/`beforeBuildCommand` ejecutan
+`npm run fetch:node:host`, que descarga a `src-tauri/binaries/kiji-node-<triple>` el Node del host si falta. El sidecar se
+llama `kiji-node` (no `node`) para no chocar con `/usr/bin/node` en .deb/.rpm; la app crea en su carpeta de datos un
+directorio `shims/` con `node` -> `kiji-node` y lo antepone al PATH del core.
+
 ## Secretos del repositorio (Settings → Secrets and variables → Actions)
 
 | Secreto | Obligatorio | Qué es |
@@ -99,7 +104,7 @@ Verificación:
 
 ```sh
 spctl -a -vv "src-tauri/target/release/bundle/macos/Kiji Office.app"   # accepted, source=Notarized Developer ID
-codesign -dv --entitlements - "src-tauri/target/release/bundle/macos/Kiji Office.app/Contents/MacOS/node"  # allow-jit
+codesign -dv --entitlements - "src-tauri/target/release/bundle/macos/Kiji Office.app/Contents/MacOS/kiji-node"  # allow-jit
 ```
 
 Si Apple rechaza la notarización: `xcrun notarytool log <id> --apple-id … --team-id …`.

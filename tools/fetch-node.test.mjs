@@ -33,9 +33,17 @@ describe("fetch-node", () => {
     expect(layout("v24.1.0", "aarch64-apple-darwin")).toEqual({
       archive: "node-v24.1.0-darwin-arm64.tar.gz",
       member: "node-v24.1.0-darwin-arm64/bin/node",
-      outName: "node-aarch64-apple-darwin",
+      outName: "kiji-node-aarch64-apple-darwin",
     });
-    expect(layout("v24.1.0", "x86_64-pc-windows-msvc").outName).toBe("node-x86_64-pc-windows-msvc.exe");
+    expect(layout("v24.1.0", "x86_64-pc-windows-msvc").outName).toBe("kiji-node-x86_64-pc-windows-msvc.exe");
     expect(() => layout("v24.1.0", "riscv")).toThrow();
+  });
+});
+
+import { hostTriple } from "./fetch-node-host.mjs";
+describe("hostTriple", () => {
+  it("extrae el host de rustc -vV", () => {
+    expect(hostTriple("rustc 1.90.0\nbinary: rustc\nhost: aarch64-apple-darwin\nrelease: 1.90.0\n")).toBe("aarch64-apple-darwin");
+    expect(() => hostTriple("nada")).toThrow();
   });
 });

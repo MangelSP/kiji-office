@@ -1,7 +1,7 @@
 // Ciclo de vida de la ventana: bandeja del sistema, segundo plano y aviso al cerrar.
 // Rust no decide: al cerrar o pedir salir emite `app-close-requested` y la UI (CloseGuard) responde con
 // `app_close_ack` (ya me ocupo), y luego `app_hide`, `app_quit` o nada (cancelar).
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -22,6 +22,8 @@ pub struct LifecycleState {
     stop_item: Mutex<Option<MenuItem<tauri::Wry>>>,
     /// El gerente está parado (`manager.halted`): el menú ofrece «Reanudar».
     halted: AtomicBool,
+    /// Robots trabajando según la UI (`tray_set_busy`); `install_update` se niega si es > 0.
+    busy: AtomicU32,
 }
 
 fn busy_label(n: u32) -> String {
@@ -140,9 +142,15 @@ pub fn app_quit(app: AppHandle) {
     quit(&app);
 }
 
+/// Robots trabajando según el último `tray_set_busy` de la UI.
+pub fn busy_count(app: &AppHandle) -> u32 {
+    app.state::<LifecycleState>().busy.load(Ordering::SeqCst)
+}
+
 /// Actualiza el texto «N robots trabajando» de la bandeja.
 #[tauri::command]
 pub fn tray_set_busy(app: AppHandle, state: State<'_, LifecycleState>, count: u32) {
+    state.busy.store(count, Ordering::SeqCst);
     let label = busy_label(count);
     if let Some(item) = state.busy_item.lock().unwrap().as_ref() {
         let _ = item.set_text(&label);

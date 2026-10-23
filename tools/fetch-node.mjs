@@ -1,5 +1,6 @@
 // Descarga el Node 24 LTS oficial para un target de Rust y lo deja como sidecar de Tauri:
-//   node tools/fetch-node.mjs <rust-target-triple>   →   src-tauri/binaries/node-<triple>[.exe]
+//   node tools/fetch-node.mjs <rust-target-triple>   →   src-tauri/binaries/kiji-node-<triple>[.exe]
+// (`kiji-node` y no `node`: en .deb/.rpm el sidecar acaba en /usr/bin y chocaría con el paquete nodejs.)
 // Verifica el sha256 contra SHASUMS256.txt de nodejs.org. Sin dependencias npm (fetch, crypto, `tar` del sistema).
 // NODE_VERSION=24.11.0 fija la versión; KIJI_CACHE_DIR cambia el directorio de caché.
 import { execFileSync } from "node:child_process";
@@ -44,7 +45,7 @@ export function layout(version, triple) {
   return {
     archive: `${dir}.${t.ext}`,
     member: t.exe ? `${dir}/node.exe` : `${dir}/bin/node`,
-    outName: `node-${triple}${t.exe ? ".exe" : ""}`,
+    outName: `kiji-node-${triple}${t.exe ? ".exe" : ""}`,
   };
 }
 

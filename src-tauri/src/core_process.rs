@@ -188,25 +188,33 @@ fn host_triple() -> &'static str {
     }
 }
 
-/// Node que ejecuta el core. Release: el sidecar junto al ejecutable (`Contents/MacOS/node`). Debug: el sidecar
-/// descargado en `src-tauri/binaries/node-<triple>` si existe; si no, el `node` del sistema.
+/// Node que ejecuta el core. Release: el sidecar `kiji-node` junto al ejecutable (`Contents/MacOS/kiji-node`).
+/// Debug: el sidecar descargado en `src-tauri/binaries/kiji-node-<triple>`. Si no existe, el `node` del sistema.
+/// (Se llama `kiji-node` para no chocar con `/usr/bin/node` del paquete nodejs en .deb/.rpm.)
 fn node_path() -> Result<PathBuf, String> {
+    let ext = if cfg!(windows) { ".exe" } else { "" };
     #[cfg(not(debug_assertions))]
-    {
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let dir = exe.parent().ok_or("el ejecutable no tiene carpeta")?;
-        let p = dir.join(if cfg!(windows) { "node.exe" } else { "node" });
-        if p.is_file() { Ok(p) } else { Err(format!("no existe el sidecar {}", p.display())) }
-    }
+    let sidecar = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.join(format!("kiji-node{ext}"))));
     #[cfg(debug_assertions)]
-    {
-        let ext = if cfg!(windows) { ".exe" } else { "" };
-        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("binaries/node-{}{ext}", host_triple()));
-        if p.is_file() {
-            return Ok(p);
-        }
-        detect::find_binary("node").ok_or_else(|| "no se encontró `node` (se necesita Node >= 22.13)".to_string())
+    let sidecar = Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("binaries/kiji-node-{}{ext}", host_triple())));
+    if let Some(p) = sidecar.filter(|p| p.is_file()) {
+        return Ok(p);
     }
+    detect::find_binary("node").ok_or_else(|| "no se encontró el sidecar `kiji-node` ni `node` (se necesita Node >= 22.13)".to_string())
+}
+
+/// Crea `<dir>/node[.exe]` apuntando a `node` (enlace simbólico; en Windows enlace duro o, si no, copia) para que
+/// las CLIs con `#!/usr/bin/env node` (Gemini) encuentren Node aunque el sidecar se llame `kiji-node`.
+fn ensure_node_shim(dir: &std::path::Path, node: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let link = dir.join(if cfg!(windows) { "node.exe" } else { "node" });
+    if std::fs::symlink_metadata(&link).is_ok() {
+        std::fs::remove_file(&link)?;
+    }
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(node, &link);
+    #[cfg(windows)]
+    return std::fs::hard_link(node, &link).or_else(|_| std::fs::copy(node, &link).map(|_| ()));
 }
 
 /// Entrada del core. Release: recurso empaquetado `core/kiji-core.mjs`. Debug: `core/dist/index.js` del repo
@@ -224,10 +232,10 @@ fn core_entry(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|_| format!("no existe {} (¿falta `npm run build:core`?)", path.display()))
 }
 
-/// PATH del core: carpeta del sidecar al frente (Gemini CLI, que es una app Node, funciona sin Node instalado)
-/// y después el PATH ampliado.
-fn child_path(node: &std::path::Path) -> std::ffi::OsString {
-    let mut dirs: Vec<PathBuf> = node.parent().map(|d| d.to_path_buf()).into_iter().collect();
+/// PATH del core: la carpeta de shims (con `node`) al frente (Gemini CLI, que es una app Node, funciona sin Node
+/// instalado) y después el PATH ampliado.
+fn child_path(shims: &std::path::Path) -> std::ffi::OsString {
+    let mut dirs: Vec<PathBuf> = vec![shims.to_path_buf()];
     dirs.extend(std::env::split_paths(&detect::extended_path()));
     std::env::join_paths(dirs).unwrap_or_default()
 }
@@ -245,6 +253,10 @@ fn spawn(app: &AppHandle, inner: &mut Inner) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| format!("no se pudo crear el directorio de datos: {e}"))?;
     let db = data_dir.join("kiji.db");
+    let shims = data_dir.join("shims");
+    if let Err(e) = ensure_node_shim(&shims, &node) {
+        eprintln!("[core] no se pudo crear el shim de node: {e}");
+    }
 
     let mut cmd = Command::new(&node);
     cmd.arg(&entry).arg("--db").arg(&db);
@@ -257,7 +269,7 @@ fn spawn(app: &AppHandle, inner: &mut Inner) -> Result<(), String> {
         }
     }
     // PATH ampliado: el core lanzará claude/codex/git y una app GUI de macOS no hereda el PATH de la shell.
-    cmd.env("PATH", child_path(&node));
+    cmd.env("PATH", child_path(&shims));
     // Ruta del `claude` nativo instalado por el usuario (el adaptador la usa como pathToClaudeCodeExecutable).
     if let Some(claude) = detect::find_native("claude") {
         cmd.env("KIJI_CLAUDE_PATH", claude);
@@ -412,6 +424,16 @@ pub fn shutdown(app: &AppHandle) {
     stop(&mut g);
 }
 
+/// Vuelve a lanzar el core tras un `shutdown` que no acabó en salida (p. ej. la instalación de una actualización falló).
+pub fn relaunch(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<CoreState>();
+    let mut g = state.0.lock().unwrap();
+    g.shutting_down = false;
+    g.restarts = 0;
+    stop(&mut g);
+    spawn(app, &mut g)
+}
+
 /// Escribe una línea NDJSON en el stdin del core.
 #[tauri::command]
 pub async fn core_send(state: State<'_, CoreState>, line: String) -> Result<(), String> {
@@ -443,10 +465,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn path_del_hijo_empieza_por_el_sidecar() {
-        let dir = std::env::temp_dir();
-        let p = child_path(&dir.join("node"));
+    fn path_del_hijo_empieza_por_los_shims() {
+        let dir = std::env::temp_dir().join("shims");
+        let p = child_path(&dir);
         assert_eq!(std::env::split_paths(&p).next().unwrap(), dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shim_node_apunta_al_sidecar_y_se_regenera() {
+        let base = std::env::temp_dir().join(format!("kiji-shim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let (a, b) = (base.join("kiji-node-a"), base.join("kiji-node-b"));
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        let shims = base.join("shims");
+        ensure_node_shim(&shims, &a).unwrap();
+        assert_eq!(std::fs::read_link(shims.join("node")).unwrap(), a);
+        ensure_node_shim(&shims, &b).unwrap(); // arranque posterior con otra ruta (p. ej. tras actualizar)
+        assert_eq!(std::fs::read_link(shims.join("node")).unwrap(), b);
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

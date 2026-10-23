@@ -245,6 +245,20 @@ describe('runTests en Windows (plataforma simulada)', () => {
 });
 
 describe('runTests', () => {
+  it('no pasa las claves de API del entorno al test_command', async () => {
+    const keys = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY'] as const;
+    const prev = keys.map((k) => process.env[k]);
+    keys.forEach((k) => (process.env[k] = 'sk-secreto'));
+    try {
+      const r = await runTests(repo, `node -p "JSON.stringify(Object.keys(process.env).filter(k => /API_KEY/.test(k)))"`, 20_000);
+      expect(r.exitCode).toBe(0);
+      expect(r.output).not.toMatch(/API_KEY/);
+      expect(r.output).not.toContain('sk-secreto');
+    } finally {
+      keys.forEach((k, i) => (prev[i] === undefined ? delete process.env[k] : (process.env[k] = prev[i])));
+    }
+  });
+
   it('comando que pasa', async () => {
     const r = await runTests(repo, `node -e "console.log('todo bien')"`, 20_000);
     expect(r.exitCode).toBe(0);
