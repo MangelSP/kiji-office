@@ -298,3 +298,9 @@
 .wz-footer-inline {
   margin-top: 24px;
 }
+
+.wz-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

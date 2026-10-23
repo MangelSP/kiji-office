@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -205,6 +206,41 @@ describe('splitCommand', () => {
   });
   it('no expande variables ni sustituciones (se pasan literales)', () => {
     expect(splitCommand('echo $HOME $(whoami)')).toEqual(['echo', '$HOME', '$(whoami)']);
+  });
+});
+
+describe('runTests en Windows (plataforma simulada)', () => {
+  const bash = 'C:\\Program Files\\Git\\bin\\bash.exe';
+  const fakeSpawn = () => {
+    const calls: any[] = [];
+    const fn: any = (file: string, args: string[], opts: any) => {
+      calls.push({ file, args, opts });
+      return spawn(process.execPath, ['-e', "console.log('hecho')"], { stdio: ['ignore', 'pipe', 'pipe'] });
+    };
+    return { calls, fn };
+  };
+
+  it('lanza por el bash de Git con los argumentos entre comillas, sin detached', async () => {
+    const s = fakeSpawn();
+    const r = await runTests(repo, `npm test -- "a b"`, 20_000, { platform: 'win32', env: { ProgramFiles: 'C:\\Program Files' }, exists: (p) => p === bash, whereGit: () => '', spawn: s.fn });
+    expect(r.exitCode).toBe(0);
+    expect(r.output).toContain('hecho');
+    expect(s.calls[0].file).toBe(bash);
+    expect(s.calls[0].args).toEqual(['-c', "'npm' 'test' '--' 'a b'"]);
+    expect(s.calls[0].opts).toMatchObject({ windowsHide: true });
+    expect(s.calls[0].opts.detached).toBeUndefined();
+  });
+
+  it('sin Git for Windows: 127 con el mensaje', async () => {
+    const r = await runTests(repo, 'npm test', 1000, { platform: 'win32', env: {}, exists: () => false, whereGit: () => '' });
+    expect(r.exitCode).toBe(127);
+    expect(r.output).toContain('Git for Windows');
+  });
+
+  it('Unix: sin shell, el programa va directo', async () => {
+    const s = fakeSpawn();
+    await runTests(repo, 'npm test', 20_000, { platform: 'linux', spawn: s.fn });
+    expect(s.calls[0]).toMatchObject({ file: 'npm', args: ['test'] });
   });
 });
 

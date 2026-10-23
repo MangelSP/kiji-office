@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { query as sdkQuery, type Options } from '@anthropic-ai/claude-agent-sdk';
+import { claudePathFromEnv, claudeVersionWarning, friendlyClaudeError } from '../adapters/claude.js';
 import type { LimitWindow, ProviderStatus } from '../../../shared/protocol.js';
 import { type Ctx, type Handler, asParams, str } from './context.js';
 import { limitedUntilOf, modelFamily, modelLimitedUntil } from './quota.js';
@@ -32,6 +33,8 @@ export interface ProviderDeps {
   ollamaTimeoutMs?: number;
   apiTimeoutMs?: number;
   claudeTimeoutMs?: number;
+  /** `claude --version` simulado en tests. */
+  execFile?: typeof import('node:child_process').execFile;
   /** `providers.status`: tiempo máximo del sondeo de Ollama (ms, por defecto 1500) y carpeta personal (para buscar ~/.claude). */
   ollamaStatusTimeoutMs?: number;
   homeDir?: string;
@@ -148,6 +151,8 @@ export function createProviderTester(ctx: Ctx, deps: ProviderDeps = {}) {
       canUseTool: async () => ({ behavior: 'deny', message: 'Prueba de conexión: sin herramientas.' }),
     };
     if (deps.env) options.env = { ...process.env, ...deps.env };
+    const claudePath = claudePathFromEnv(env());
+    if (claudePath) options.pathToClaudeCodeExecutable = claudePath;
     let q: ReturnType<typeof sdkQuery> | undefined;
     try {
       q = query({ prompt: 'responde solo: ok', options });
@@ -156,7 +161,8 @@ export function createProviderTester(ctx: Ctx, deps: ProviderDeps = {}) {
         if (msg.type !== 'result') continue;
         if (msg.subtype === 'success' && !msg.is_error) {
           const cost = typeof msg.total_cost_usd === 'number' ? ` (coste ${msg.total_cost_usd.toFixed(4)} USD)` : '';
-          return { ok: true, detail: red(`Claude responde: "${String(msg.result ?? '').trim().slice(0, 40)}"${cost}`) };
+          const warn = claudePath ? await claudeVersionWarning(claudePath, deps.execFile) : null;
+          return { ok: true, detail: red(`Claude responde: "${String(msg.result ?? '').trim().slice(0, 40)}"${cost}${warn ? `. Aviso: ${warn}` : ''}`) };
         }
         const why = Array.isArray(msg.errors) && msg.errors.length > 0 ? msg.errors.map(String).join('; ') : String(msg.result ?? msg.subtype ?? 'error');
         return { ok: false, detail: red(`Claude falló: ${why}`) };
@@ -164,7 +170,8 @@ export function createProviderTester(ctx: Ctx, deps: ProviderDeps = {}) {
       return { ok: false, detail: 'Claude terminó sin devolver resultado' };
     } catch (e) {
       if (abortController.signal.aborted) return { ok: false, detail: `Claude no respondió en ${Math.round(timeoutMs / 1000)} s` };
-      return { ok: false, detail: red(`Claude falló: ${errText(e)}`) };
+      const m = friendlyClaudeError(errText(e));
+      return { ok: false, detail: m === errText(e) ? red(`Claude falló: ${m}`) : m };
     } finally {
       clearTimeout(timer);
       try {

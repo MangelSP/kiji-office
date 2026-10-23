@@ -8,6 +8,7 @@
 // - `result.subtype === 'error_max_budget_usd'` y las demás señales de D2 pasan por `toLimit`.
 // - Solo se emite UN evento terminal (`done` | `error` | `limit`) por run.
 
+import { execFile } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,6 +27,65 @@ import { AsyncQueue } from './queue.js';
 import type { AgentAdapter, AgentEvent, RunSpec } from './types.js';
 
 type LimitEvent = Extract<AgentEvent, { type: 'limit' }>;
+
+/**
+ * Versión mínima del CLI `claude`: la que viene emparejada con el SDK fijado (`claudeCodeVersion` en su package.json).
+ * Un test comprueba que sigue igual al actualizar el SDK (PLAN-0.3, D2).
+ */
+export const MIN_CLAUDE_VERSION = '2.1.308';
+
+export const CLAUDE_NOT_FOUND_MESSAGE =
+  'Claude Code no está instalado o no se encuentra: instálalo (curl -fsSL https://claude.ai/install.sh | bash en macOS/Linux; irm https://claude.ai/install.ps1 | iex en Windows) y vuelve a abrir Kiji';
+
+/** Ruta del `claude` instalado que pasa Rust (`KIJI_CLAUDE_PATH`), o undefined. */
+export function claudePathFromEnv(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const p = env.KIJI_CLAUDE_PATH?.trim();
+  return p ? p : undefined;
+}
+
+/** Cambia el fallo del SDK por falta de binario por un mensaje que dice qué hacer; el resto pasa igual. */
+export function friendlyClaudeError(message: string): string {
+  return /Native CLI binary .*not found|pathToClaudeCodeExecutable|Claude Code executable not found|spawn .*claude.* ENOENT/i.test(message)
+    ? CLAUDE_NOT_FOUND_MESSAGE
+    : message;
+}
+
+/** Compara versiones `a.b.c` (ignora sufijos): -1, 0, 1; null si alguna no se entiende. */
+export function compareVersions(a: string, b: string): number | null {
+  const parse = (v: string) => /(\d+)\.(\d+)(?:\.(\d+))?/.exec(v)?.slice(1).map((n) => Number(n ?? 0));
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < 3; i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * Lanza `claude --version` (tiempo corto) y devuelve un aviso legible si es anterior a MIN_CLAUDE_VERSION;
+ * null si está bien o no se pudo saber.
+ */
+export function claudeVersionWarning(
+  claudePath: string,
+  run: typeof execFile = execFile,
+  timeoutMs = 3000,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      run(claudePath, ['--version'], { timeout: timeoutMs, windowsHide: true }, (err, stdout) => {
+        if (err) return resolve(null);
+        const cmp = compareVersions(String(stdout), MIN_CLAUDE_VERSION);
+        if (cmp === null || cmp >= 0) return resolve(null);
+        const v = /\d+\.\d+(?:\.\d+)?/.exec(String(stdout))?.[0];
+        resolve(`Tu Claude Code (${v}) es anterior a ${MIN_CLAUDE_VERSION}: actualízalo con \`claude update\``);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
 
 export type ClaudeAdapterOptions = {
   /** Ruta de un `claude` concreto; por defecto el SDK usa el binario que trae empaquetado. */
@@ -240,7 +300,8 @@ export class ClaudeAdapter implements AgentAdapter {
     if (spec.readOnly) options.tools = this.hasSkills ? [...READ_ONLY_TOOLS, 'Skill'] : READ_ONLY_TOOLS; // el jefe solo lee
     if (spec.outputSchema) options.outputFormat = { type: 'json_schema', schema: spec.outputSchema as Record<string, unknown> };
     if (spec.resumeSessionId) options.resume = spec.resumeSessionId;
-    if (this.opts.pathToClaudeCodeExecutable) options.pathToClaudeCodeExecutable = this.opts.pathToClaudeCodeExecutable;
+    const claudePath = this.opts.pathToClaudeCodeExecutable ?? claudePathFromEnv();
+    if (claudePath) options.pathToClaudeCodeExecutable = claudePath;
     if (this.opts.env) options.env = { ...process.env, ...this.opts.env };
 
     let q: Query;
@@ -248,7 +309,7 @@ export class ClaudeAdapter implements AgentAdapter {
       q = sdkQuery({ prompt: input, options });
     } catch (e) {
       this.removeSkillsDir();
-      out.push({ type: 'error', message: errMessage(e), retryable: false });
+      out.push({ type: 'error', message: friendlyClaudeError(errMessage(e)), retryable: false });
       out.end();
       return out;
     }
@@ -526,7 +587,7 @@ export class ClaudeAdapter implements AgentAdapter {
       }
     } catch (e) {
       if (!this.aborted && !terminal) {
-        const message = errMessage(e);
+        const message = friendlyClaudeError(errMessage(e));
         const lim = toLimit('claude', { type: 'result', is_error: true, errors: [message] }) ?? pendingLimit;
         if (lim) finish({ ...lim, sessionId });
         else finish({ type: 'error', message: withStderr(message, this.stderrTail), retryable: false, sessionId });

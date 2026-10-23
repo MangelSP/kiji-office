@@ -1,8 +1,10 @@
 import { NODE_HELP, nodeProblem } from "./nodeVersion";
 import type { CliInfo } from "./tauri";
+import ClaudeCard from "./ClaudeCard";
+import { claudeProblem } from "./claudeInstall";
 
 const LABELS: Record<string, { title: string; note?: string }> = {
-  claude: { title: "Claude Code", note: "Jefe y trabajadores con Claude (sesión local o clave de Anthropic)." },
+  claude: { title: "Claude Code", note: "Jefe y trabajadores con Claude: necesita Claude Code instalado y la clave de API de Anthropic." },
   codex: { title: "Codex (OpenAI)", note: "Opcional: llega en una entrega posterior." },
   agy: { title: "Antigravity (agy)", note: "Gemini en 0.1 va por API key: agy solo se detecta, aún no se usa." },
   gemini: { title: "Gemini CLI", note: "Gemini en 0.1 va por API key: la CLI solo se detecta, aún no se usa." },
@@ -19,6 +21,8 @@ type Props = {
 
 export default function StepDetect({ clis, error, loading, onRefresh }: Props) {
   const node = clis?.find((c) => c.name === "node");
+  const claude = clis?.find((c) => c.name === "claude");
+  const claudeIssue = clis && clis.length > 0 ? claudeProblem(claude?.found ?? false, claude?.version) : null;
   const problem = node ? nodeProblem(node.found, node.version) : null;
 
   return (
@@ -43,6 +47,8 @@ export default function StepDetect({ clis, error, loading, onRefresh }: Props) {
           </ul>
         </div>
       )}
+
+      {claudeIssue && <ClaudeCard problem={claudeIssue} />}
 
       {clis && (
         <ul className="wz-list">

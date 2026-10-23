@@ -42,6 +42,31 @@ function fakeQuery(messages: unknown[] | (() => never)) {
 }
 
 describe('providers.test — claude (SDK simulado)', () => {
+  it('KIJI_CLAUDE_PATH va a pathToClaudeCodeExecutable; versión antigua da aviso', async () => {
+    const q = fakeQuery([{ type: 'result', subtype: 'success', is_error: false, result: 'ok' }]);
+    const exec: any = (_f: string, _a: string[], _o: unknown, cb: any) => cb(null, '2.0.1 (Claude Code)\n', '');
+    const r = await call(makeOrch({ query: q.fn, env: { ...ENV, KIJI_CLAUDE_PATH: '/x/claude' }, execFile: exec }), 'providers.test', { provider: 'claude' });
+    expect(q.calls[0].options.pathToClaudeCodeExecutable).toBe('/x/claude');
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain('claude update');
+  });
+
+  it('sin KIJI_CLAUDE_PATH no se fija la ruta', async () => {
+    const q = fakeQuery([{ type: 'result', subtype: 'success', is_error: false, result: 'ok' }]);
+    await call(makeOrch({ query: q.fn }), 'providers.test', { provider: 'claude' });
+    expect(q.calls[0].options.pathToClaudeCodeExecutable).toBeUndefined();
+  });
+
+  it('SDK sin binario nativo: mensaje claro de instalación', async () => {
+    const q = fakeQuery(() => {
+      throw new Error('Native CLI binary for darwin-arm64 not found. Reinstall or set options.pathToClaudeCodeExecutable');
+    });
+    const r = await call(makeOrch({ query: q.fn }), 'providers.test', { provider: 'claude' });
+    expect(r.ok).toBe(false);
+    expect(r.detail).toContain('Claude Code no está instalado');
+    expect(r.detail).toContain('install.ps1');
+  });
+
   it('ok: una llamada mínima, haiku, 0.02 USD, sin herramientas', async () => {
     const q = fakeQuery([{ type: 'assistant' }, { type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: 0.0003 }]);
     const o = makeOrch({ query: q.fn });

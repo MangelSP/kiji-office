@@ -2,7 +2,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), open: vi.fn() }));
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), open: vi.fn(), openUrl: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: mocks.openUrl }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open }));
@@ -11,6 +12,7 @@ import { useStore } from "../../store";
 import Wizard from "./Wizard";
 import type { CliInfo } from "./tauri";
 import { nodeProblem } from "./nodeVersion";
+import { claudeProblem, CLAUDE_DOCS_URL } from "./claudeInstall";
 import { markWizardDone, readWizardDone } from "./wizardState";
 
 const SECRET = "sk-ant-api03-SUPERSECRETVALUE-wxyz";
@@ -178,5 +180,34 @@ describe("nodeProblem y bandera", () => {
     });
     expect(readWizardDone()).toBe(false);
     expect(() => markWizardDone()).not.toThrow();
+  });
+});
+
+describe("Claude Code instalado", () => {
+  it("claudeProblem: ausente, antiguo, bien o ilegible", () => {
+    expect(claudeProblem(false, null)).toBe("missing");
+    expect(claudeProblem(true, "2.1.296 (Claude Code)")).toBe("tooOld");
+    expect(claudeProblem(true, "2.1.308")).toBeNull();
+    expect(claudeProblem(true, "3.0.0")).toBeNull();
+    expect(claudeProblem(true, "raro")).toBeNull();
+  });
+
+  it("sin claude: tarjeta con comando, Copiar y Abrir guía", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    fakeInvoke(CLIS.map((c) => (c.name === "claude" ? { name: "claude", found: false } : c)));
+    render(<Wizard onClose={() => {}} />);
+    await screen.findByText("Claude Code no está instalado");
+    expect(screen.getAllByText(/clave de API de Anthropic/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Copiar" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/install\.(sh|ps1)/)));
+    fireEvent.click(screen.getByRole("button", { name: "Abrir guía" }));
+    await waitFor(() => expect(mocks.openUrl).toHaveBeenCalledWith(CLAUDE_DOCS_URL));
+  });
+
+  it("claude antiguo: pide claude update", async () => {
+    render(<Wizard onClose={() => {}} />); // el mock trae 2.1.296
+    await screen.findByText("Tu Claude Code es antiguo");
+    expect(screen.getAllByText("claude update").length).toBeGreaterThan(0);
   });
 });

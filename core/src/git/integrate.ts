@@ -1,7 +1,7 @@
 // Integración: commit, rebase, tests, fast-forward merge y revert. Solo la hace el core a nombre del jefe.
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
-import { killTree, spawnOptions } from '../adapters/tools/platform.js';
+import { killTree, shellCommand, spawnOptions, type PlatformDeps } from '../adapters/tools/platform.js';
 import { assertSafeRef, GitError, NO_SIGN, runGit, runGitRaw } from './run.js';
 
 /**
@@ -130,18 +130,36 @@ const DRAIN_GRACE_MS = 1000;
  * plano reteniendo stdout/stderr. Se resuelve en `exit` (esperando como mucho `DRAIN_GRACE_MS` a que se vacíen
  * los pipes) y se destruyen los streams, de modo que nunca se queda colgada por procesos huérfanos.
  */
-export function runTests(worktree: string, command: string, timeoutMs: number): Promise<TestRunResult> {
-  const [file, ...args] = splitCommand(command);
+export function runTests(
+  worktree: string,
+  command: string,
+  timeoutMs: number,
+  deps: PlatformDeps & { spawn?: typeof spawn } = {},
+): Promise<TestRunResult> {
+  const platform = deps.platform ?? process.platform;
+  const spawnFn = deps.spawn ?? spawn;
+  const argv = splitCommand(command);
+  let [file, ...args] = argv as [string, ...string[]];
+  if (platform === 'win32') {
+    // `npm` es `npm.cmd` y Node no lanza .cmd directo, así que en Windows va por el bash de Git for Windows (D4),
+    // con cada argumento entre comillas simples para no interpretar nada (misma garantía que sin shell).
+    const quoted = argv.map((a) => `'${a.replace(/'/g, `'\\''`)}'`).join(' ');
+    try {
+      [file, args] = shellCommand(quoted, deps);
+    } catch (e) {
+      return Promise.resolve({ exitCode: 127, output: `${e instanceof Error ? e.message : String(e)}\n`, timedOut: false });
+    }
+  }
   const tail = new TailBuffer(TEST_OUTPUT_LIMIT);
   return new Promise((resolvePromise) => {
     let timedOut = false;
     let exitCode: number | null = null; // null = aún sin código
     let done = false;
     let drainTimer: NodeJS.Timeout | undefined;
-    const child = spawn(file!, args, {
+    const child = spawnFn(file, args, {
       cwd: resolve(worktree),
       env: process.env,
-      ...spawnOptions(), // detached solo en Unix; windowsHide en Windows
+      ...spawnOptions(deps), // detached solo en Unix; windowsHide en Windows
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const finish = (): void => {
@@ -168,7 +186,7 @@ export function runTests(worktree: string, command: string, timeoutMs: number): 
     child.on('exit', (code) => {
       exitCode = timedOut ? 124 : (code ?? 1);
       // Mata a los nietos que sigan vivos (tests en segundo plano, workers) para que suelten los pipes.
-      if (process.platform !== 'win32') killTree(child);
+      if (platform !== 'win32') killTree(child);
       child.on('close', finish);
       drainTimer = setTimeout(finish, DRAIN_GRACE_MS);
     });
