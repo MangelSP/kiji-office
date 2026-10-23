@@ -91,7 +91,9 @@ export type MethodName =
   | 'memory.add'
   | 'memory.archive'
   | 'notifications.list'
-  | 'notifications.markRead';
+  | 'notifications.markRead'
+  // 0.4a: pizarra Scrum (PLAN-0.4-pizarra.md)
+  | 'board.move';
 
 /** Eventos de 0.1 (sección 4) más los propios del servidor. */
 export type EventName =
@@ -122,7 +124,9 @@ export type EventName =
   | 'manager.tick'
   | 'manager.action'
   | 'manager.halted'
-  | 'notify';
+  | 'notify'
+  // 0.4a
+  | 'board.moved';
 
 // ---------------------------------------------------------------------------
 // 0.2a: métricas, cupo, relevo y perfil (PLAN-0.2a.md, "Contrato core ⇄ UI")
@@ -554,3 +558,26 @@ export type NotificationRow = {
 };
 /** Evento `notify`: Rust lanza la notificación del sistema; la UI la añade a la campana. */
 export type NotifyEvent = { projectId: string; id: number; level: NotificationLevel; title: string; body: string; approvalId?: string };
+
+
+// ---------------------------------------------------------------------------
+// 0.4a: pizarra Scrum (PLAN-0.4-pizarra.md)
+// ---------------------------------------------------------------------------
+
+/** En orden de flujo. Este archivo solo lleva tipos: core y UI declaran su propia lista con este orden. */
+export type BoardColumn =
+  | 'refinement' | 'refined' | 'doing_dev' | 'committed' | 'doing_qa' | 'bug' | 'fix' | 'functional' | 'done' | 'done_prod';
+export type BoardFlag = 'blocked' | 'failed' | 'paused_limit' | null;
+/** Campos que `task.list`/`task.changed` añaden a la vista de tarea. */
+export type BoardTaskFields = { board_column: BoardColumn; board_manual: 0 | 1; board_flag: BoardFlag };
+export type BoardMoveParams = { taskId: string; projectId?: string; column: BoardColumn };
+export type BoardMovedEvent = {
+  projectId: string;
+  taskId: string;
+  /** Robot que camina a la pizarra (el de la tarea; si no tiene, el jefe). */
+  agentId: string | null;
+  from: BoardColumn | null;
+  to: BoardColumn;
+  /** true = movida por el core al cambiar de estado; false = la arrastró Alexis. */
+  auto: boolean;
+};
