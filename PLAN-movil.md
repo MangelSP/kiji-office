@@ -29,7 +29,17 @@ que están trabajando y se gestionan, como Claude Code en remoto. Estado del rep
  │ chat con un robot    │  E2E       │ tokens, NO lee contenido   │   E2E          │ NDJSON por stdio     │
  └──────────────────────┘            └──────────────────────────┘                └──────────────────────┘
           ▲  push APNs/FCM sin contenido ("Kiji necesita tu respuesta")
+          │
+          │ 1. Iniciar sesión con Google (móvil y Mac, misma cuenta)
+          ▼
+ ┌──────────────────────────────────────────────┐
+ │ Puerta (gateway): valida el token de Google,   │  2. Crea el relay del usuario la primera vez (API de Coolify)
+ │ guarda correo → relay, emite un pase corto     │  3. Devuelve la URL del relay y un pase de 5 min
+ └──────────────────────────────────────────────┘
 ```
+
+Flujo de conexión: **Google** dice quién eres, la **puerta** te lleva a tu servidor, y el **QR** (cifrado E2E)
+decide en qué dispositivos se confía. Se necesitan las tres capas a la vez.
 
 ### D1. El Mac sale hacia el servidor (nunca al revés)
 
@@ -77,6 +87,32 @@ El puente en Rust filtra cada método antes de pasarlo al core. Lo que no está 
 - Al abrirlo, la app se conecta y descarga el detalle cifrado.
 - Así ni Apple ni Google ni el relay ven el texto de la pregunta.
 
+### D7. Inicio de sesión con Google y la puerta
+
+- **Móvil:** `google_sign_in` en Flutter devuelve un ID token de Google.
+- **Mac:** Kiji abre el navegador del sistema (OAuth 2.0 con PKCE y redirección a `127.0.0.1:<puerto>`), con el
+  plugin `opener` que ya está. El refresh token se guarda en el llavero (cuenta `google:session`), nunca en un
+  archivo.
+- **Puerta (`gateway/`):** Node 24, un servicio para todos los usuarios. Hace tres cosas:
+  1. Valida el ID token con `google-auth-library`: firma de Google, `aud` igual a uno de los 3 client IDs de Kiji,
+     `iss`, caducidad y `email_verified`.
+  2. La primera vez, crea el relay del usuario con la API de Coolify y guarda `sub de Google → URL del relay` en su
+     propia base de datos (SQLite). El `sub` es el id estable de la cuenta; el correo puede cambiar.
+  3. Emite un **pase** (JWT firmado por la puerta, 5 minutos, con `sub` y el tipo de dispositivo) para entrar a ese
+     relay.
+- **Relay:** solo acepta conexiones con un pase válido de la puerta. Además, **solo empareja un móvil con un Mac del
+  mismo `sub`**.
+- **Lista de acceso en la beta:** la puerta solo deja entrar a los correos de una lista (para no crear servidores a
+  cualquiera).
+- **Por qué no basta con Google:** si alguien roba la cuenta de Google puede entrar al relay, pero sin las claves
+  del QR (D3) no puede leer nada ni mandar órdenes. Además, el Mac avisa cada vez que se vincula un dispositivo
+  nuevo.
+- **Lo que configura Alexis** en Google Cloud (el mismo proyecto de Firebase que el push):
+  - 3 client IDs OAuth: iOS, Android (con el SHA-1 de la firma) y Escritorio para el Mac;
+  - la pantalla de consentimiento, con nombre, logo y URL de la política de privacidad.
+  - Los client IDs no son secretos. La clave de firma de los pases y el token de la API de Coolify viven solo como
+    variables de entorno de la puerta en Coolify.
+
 ### D6. App en Flutter
 
 - **Por qué Flutter:** Alexis ya trabaja con él, y un solo código sirve para iOS y Android.
@@ -91,7 +127,7 @@ El puente en Rust filtra cada método antes de pasarlo al core. Lo que no está 
 
 ## 2. Pantallas de la app (beta)
 
-1. **Vincular:** escanear el QR que muestra Kiji en el Mac.
+1. **Entrar y vincular:** «Continuar con Google» y, la primera vez, escanear el QR que muestra Kiji en el Mac.
 2. **Workspaces:** la versión móvil de la tarjeta de Home. Por proyecto muestra los robots trabajando, las tareas por
    estado, el coste de hoy y si hay algo esperando respuesta.
 3. **Workspace:** los robots con su avatar y estado en vivo, las tareas, una pizarra simple (columnas en scroll) y
@@ -111,8 +147,15 @@ El puente en Rust filtra cada método antes de pasarlo al core. Lo que no está 
 - **Prueba:** un cliente de prueba en Node, contra el puente por un socket local, con tests de la lista blanca.
   `secrets.put` y `connection.create` tienen que dar error.
 
-### M1. Relay y emparejamiento
+### M1. Google Sign-In, puerta, relay y emparejamiento
+- **Puerta** `gateway/` (D7): validación de Google, lista de correos permitidos, creación del relay por Coolify y
+  emisión de pases.
+  - **Tests:** token de otra app (`aud` distinto), token caducado, correo sin verificar y correo fuera de la lista
+    son rechazados.
+- **En el Mac:** botón «Iniciar sesión con Google» en Ajustes › Móvil (PKCE en el navegador del sistema) y la
+  sesión guardada en el llavero.
 - `relay/`, un servicio Node 24 + `ws` de unas 300 líneas:
+  - solo entra quien tiene un pase de la puerta, y solo se emparejan dispositivos del mismo `sub`;
   - salas por usuario y sobres cifrados;
   - tokens de emparejamiento de un solo uso con caducidad de 5 minutos;
   - límite de tamaño y de ritmo por conexión;
@@ -150,6 +193,8 @@ El puente en Rust filtra cada método antes de pasarlo al core. Lo que no está 
 | Riesgo | Mitigación |
 |---|---|
 | El Mac se duerme y el móvil no ve nada | Opción en Ajustes «Mantener despierto mientras haya robots trabajando» (aserción `IOPMAssertion` desde Rust). En la app, estado claro de "Mac dormido o desconectado". |
+| Robo de la cuenta de Google | Sin las claves del QR no se lee ni se ordena nada (D3). El Mac avisa de cada vinculación nueva y permite revocar. |
+| Caída de la puerta | Los dispositivos ya vinculados guardan la URL de su relay y el pase se renueva con la sesión de Google; sin puerta solo falla el primer acceso. |
 | Robo del móvil | Clave del dispositivo en el Secure Enclave o el Keystore, app bloqueada con Face ID para aprobar, y revocación desde el Mac. |
 | Robo o fallo del relay | Cifrado E2E (D3): sin contenido legible y sin poder mandar órdenes. Lista blanca en el Mac (D4). |
 | Coste de un contenedor por usuario | Beta con pocos usuarios. Con muchos, el plan de salas compartidas (D2). |
@@ -161,14 +206,15 @@ El puente en Rust filtra cada método antes de pasarlo al core. Lo que no está 
 1. **Relay:** un contenedor por usuario en tu Coolify (este plan), o uno compartido desde el principio.
 2. **¿Se puede integrar (`integration.apply`) desde el móvil, o solo desde el Mac?** El plan dice solo desde el Mac.
 3. **¿M4 (cerebro en el servidor, sin Mac) entra en la primera versión o después?** El plan dice después.
-4. **Nombre y dominio** del relay y de la app.
+4. **Nombre y dominio** del relay, de la puerta y de la app.
+5. **Correos de la lista de acceso** de la beta. Decidido: el inicio de sesión es con Google (D7).
 
 ## 6. Orden de trabajo y tamaño
 
 | Fase | Contenido | Tamaño aproximado |
 |---|---|---|
 | M0 | `approval.list` y el puente en Rust con la lista blanca | 1–2 días |
-| M1 | Relay, QR, cifrado y Ajustes › Móvil | 3–4 días |
+| M1 | Google Sign-In, puerta, relay, QR, cifrado y Ajustes › Móvil | 5–6 días |
 | M2 | App Flutter para ver, aprobar y recibir avisos | 5–7 días |
 | M3 | App Flutter para trabajar | 3–4 días |
 | M4 | Cerebro en el servidor | 1–2 semanas |
