@@ -2,46 +2,37 @@
 .ag-tabs {
   padding: 12px;
 }
-.ag-tablist,
+/* Subpestañas con el estilo de los chips "Para:" de OfficeComposer: botones pixel, el activo en amarillo. */
 .ag-subtabs {
   display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  border-bottom: 1px solid #3a3e56;
-}
-.ag-tab,
-.ag-subtab {
-  display: inline-flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-  min-height: 44px;
-  padding: 0 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+.ag-subtab {
+  min-height: 32px;
+  padding: 0 10px;
   font: inherit;
-  color: #c9cbe0;
-  background: transparent;
-  border: 0;
-  border-bottom: 3px solid transparent;
+  color: #f1ece2;
+  background: #2d3148;
+  border: 2px solid #4a4f6d;
+  border-radius: 0;
   cursor: pointer;
-  white-space: nowrap;
 }
-.ag-tab:hover,
 .ag-subtab:hover {
-  color: #f1ece2;
+  background: #3a3e5c;
 }
-.ag-tab[aria-selected="true"],
 .ag-subtab[aria-selected="true"] {
-  color: #f1ece2;
-  border-bottom-color: #f4c542;
-  font-weight: 600;
+  color: #1b1d2b;
+  background: #f4c542;
+  border-color: #f4c542;
+  font-weight: 700;
 }
-.ag-tab:focus-visible,
 .ag-subtab:focus-visible,
 .ag-ov-card:focus-visible {
   outline: 3px solid #f4c542;
-  outline-offset: -3px;
-}
-.ag-tab-status {
-  font-size: 11px;
+  outline-offset: 1px;
 }
 .ag-dot {
   width: 12px;
@@ -56,7 +47,7 @@
   border-radius: 6px;
 }
 .ag-panel {
-  padding-top: 12px;
+  padding-top: 8px;
 }
 .ag-subpanel {
   padding-top: 12px;

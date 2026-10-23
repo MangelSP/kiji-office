@@ -91,6 +91,67 @@
   background: #ff6b57;
 }
 
+/* Lista vertical de pestañas (columna derecha): tarjetas compactas; con más de 5 robots hace scroll propio. */
+.strip-v {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 392px;
+  overflow-y: auto;
+  padding: 3px;
+}
+.strip-v .strip-card {
+  min-height: 0;
+  padding: 6px 10px;
+  flex: 0 0 auto;
+}
+.strip-v .strip-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+}
+.strip-v .strip-top {
+  display: contents;
+}
+.strip-v .strip-name {
+  grid-column: 1;
+}
+.strip-v .ag-chip {
+  grid-column: 2;
+  justify-self: end;
+}
+.strip-v .strip-status {
+  grid-column: 1;
+}
+.strip-v .strip-cost {
+  grid-column: 2;
+  justify-self: end;
+}
+.strip-v .strip-meter {
+  grid-column: 1 / -1;
+}
+.strip-v .strip-seg {
+  height: 5px;
+}
+.strip-v .strip-all .strip-body {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+/* En pantallas estrechas las mismas tarjetas van en fila con scroll horizontal. */
+@media (max-width: 1099px) {
+  .strip-v {
+    flex-direction: row;
+    max-height: none;
+    overflow: auto hidden;
+    scroll-snap-type: x proximity;
+    padding-bottom: 8px;
+  }
+  .strip-v .strip-card {
+    width: 200px;
+    scroll-snap-align: start;
+  }
+}
+
 /* Elementos compartidos con las pestañas de agente. */
 .ag-chip {
   display: inline-block;

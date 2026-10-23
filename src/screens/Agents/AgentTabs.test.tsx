@@ -47,16 +47,33 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("AgentTabs", () => {
-  it("muestra Todos y una pestaña por agente, y selecciona al hacer clic", () => {
+  it("muestra Todos y una tarjeta-pestaña por agente, y selecciona al hacer clic", () => {
     const onSelect = vi.fn();
     render(<AgentTabs selectedId={null} onSelect={onSelect} />);
-    const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["Todos", "Jefepensando", "Clauescribiendo"]);
-    expect(screen.getByRole("tab", { name: /Todos/ }).getAttribute("aria-selected")).toBe("true");
-    fireEvent.click(screen.getByRole("tab", { name: /Clau/ }));
+    const tabs = within(screen.getByRole("tablist", { name: "Robots" })).getAllByRole("tab");
+    expect(tabs).toHaveLength(3);
+    expect(tabs[0].textContent).toContain("Todos");
+    expect(tabs[0].textContent).toContain("2 robots · 2 trabajando");
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: /^Jefe/ }).getAttribute("aria-selected")).toBe("false");
+    fireEvent.click(screen.getByRole("tab", { name: /^Clau/ }));
     expect(onSelect).toHaveBeenCalledWith("a2");
     fireEvent.click(screen.getByRole("button", { name: "Abrir Jefe" }));
     expect(onSelect).toHaveBeenCalledWith("a1");
+  });
+
+  it("clic en la tarjeta seleccionada o en Todos vuelve a Todos; las flechas cambian de tarjeta", () => {
+    const onSelect = vi.fn();
+    render(<AgentTabs selectedId="a2" onSelect={onSelect} />);
+    const clau = screen.getByRole("tab", { name: /^Clau/ });
+    expect(clau.getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(clau);
+    expect(onSelect).toHaveBeenLastCalledWith(null);
+    fireEvent.click(screen.getByRole("tab", { name: /^Todos/ }));
+    expect(onSelect).toHaveBeenLastCalledWith(null);
+    clau.focus();
+    fireEvent.keyDown(clau, { key: "ArrowUp" });
+    expect(onSelect).toHaveBeenLastCalledWith("a1");
   });
 
   it("Todos resume modelo, estado, tareas y coste de cada agente", () => {
@@ -71,7 +88,8 @@ describe("AgentTabs", () => {
 
   it("cambia de subpestaña y pide las métricas del agente", async () => {
     render(<AgentTabs selectedId="a2" onSelect={vi.fn()} />);
-    await waitFor(() => expect(calls("agent.metrics")[0]?.[1]).toEqual({ agentId: "a2" }));
+    await waitFor(() => expect(calls("agent.metrics").map((c) => c[1])).toContainEqual({ agentId: "a2" }));
+    expect(screen.getByRole("tablist", { name: "Secciones de Clau" }).querySelector(".ag-subtab")).not.toBeNull();
     expect(screen.getByRole("tab", { name: "Tareas" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Arreglar el login")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Métricas" }));

@@ -1,8 +1,7 @@
-// Pantalla principal: la oficina (escena + caja de pedido), la tira de robots, las pestañas por agente
-// y, a la derecha, las IAs en vivo, las aprobaciones, el proyecto y el registro.
+// Pantalla principal: la oficina (escena + caja de pedido) y, a su derecha, las tarjetas de robots con su detalle;
+// debajo, las IAs en vivo, las aprobaciones, el proyecto y el registro.
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import AgentStrip from "../../components/AgentStrip";
 import ApprovalCard from "../../components/ApprovalCard";
 import LogPanel from "../../components/LogPanel";
 import OfficeComposer from "../../components/OfficeComposer";
@@ -147,7 +146,7 @@ export default function OfficeV0() {
 
       {narrow && approvals}
 
-      {/* Arriba: la oficina (con su caja de pedido y la tira de robots) y, a su derecha, el panel del robot elegido. */}
+      {/* Arriba: la oficina (con su caja de pedido) y, a su derecha, las tarjetas de robots con el detalle del elegido. */}
       <div className="office-top">
         <div className="office-left">
           <section className="panel scene-panel" aria-label="Oficina">
@@ -156,7 +155,6 @@ export default function OfficeV0() {
               <OfficeComposer selectedId={selectedId} onSelect={setSelectedId} />
             </div>
           </section>
-          <AgentStrip selectedId={selectedId} onSelect={setSelectedId} />
         </div>
         <aside className="office-agent" aria-label="Panel del robot">
           {unavailableAgentList && <p className="muted">Aún no disponible: el core no implementa agent.list.</p>}

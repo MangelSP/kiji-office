@@ -1,5 +1,5 @@
-// Pestañas por agente: "Todos" (resumen) y una por robot con Tareas, Métricas, Perfil y Registro.
-// Controlado por `selectedId` para sincronizarse con la escena y la tira de tarjetas.
+// Panel de agentes de la columna derecha: tarjetas-pestaña (AgentStrip vertical) y, debajo, el resumen "Todos"
+// o el detalle del agente con Tareas, Métricas, Perfil y Registro. Controlado por `selectedId` (escena y caja de pedido).
 import { useEffect, useId, useState, type KeyboardEvent } from "react";
 import type { Agent } from "../../store/agents";
 import AgentLog from "./AgentLog";
@@ -8,7 +8,7 @@ import AgentProfile from "./AgentProfile";
 import AgentTasks from "./AgentTasks";
 import { fmtUsd, isBoss, paletteHex, ROLE_LABEL, statusInfo } from "./format";
 import { useAgentsStore } from "./useAgentsStore";
-import "../../components/AgentStrip.css"; // .ag-chip y .ag-status-dot compartidos
+import AgentStrip from "../../components/AgentStrip"; // también aporta .ag-chip y .ag-status-dot
 import "./AgentTabs.css";
 
 const SUBTABS = [
@@ -55,41 +55,7 @@ export default function AgentTabs({ selectedId, onSelect }: Props) {
 
   return (
     <section className="panel ag-tabs" aria-label="Agentes">
-      <div className="ag-tablist" role="tablist" aria-label="Agentes" onKeyDown={arrowNav}>
-        <button
-          type="button"
-          role="tab"
-          id={tabId("all")}
-          aria-selected={!agent}
-          aria-controls={panelId}
-          tabIndex={!agent ? 0 : -1}
-          className="ag-tab"
-          onClick={() => onSelect(null)}
-        >
-          Todos
-        </button>
-        {agents.map((a) => {
-          const on = agent !== undefined && String(a.id) === String(agent.id);
-          const st = statusInfo(a.status);
-          return (
-            <button
-              key={String(a.id)}
-              type="button"
-              role="tab"
-              id={tabId(String(a.id))}
-              aria-selected={on}
-              aria-controls={panelId}
-              tabIndex={on ? 0 : -1}
-              className="ag-tab"
-              onClick={() => onSelect(String(a.id))}
-            >
-              <span className="ag-dot" style={{ background: paletteHex(a.color) }} aria-hidden="true" />
-              <span className="ag-tab-name">{a.name}</span>
-              <span className="ag-tab-status muted">{st.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      <AgentStrip layout="vertical" selectedId={selectedId} onSelect={onSelect} idPrefix={uid} panelId={panelId} />
 
       <div role="tabpanel" id={panelId} aria-labelledby={tabId(agent ? String(agent.id) : "all")} className="ag-panel">
         {!agent ? (
