@@ -22,7 +22,28 @@ export type ApiLoopOptions = {
   prices?: Record<string, { in: number; out: number }>;
   toolQuality?: 'unknown' | 'ok' | 'weak' | 'none';
   fetch?: typeof fetch;
+  /** Espera entre reintentos (inyectable en tests). Debe rechazar o resolver al abortar la señal. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 };
+
+/** Intentos totales por petición y espera base (ms) antes de cada reintento: ≈2 s, 5 s, 12 s (± jitter). */
+export const MAX_ATTEMPTS = 4;
+export const RETRY_BASE_MS = [2000, 5000, 12000] as const;
+export const RETRY_MAX_MS = 60_000;
+
+const defaultSleep = (ms: number, signal: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const t = setTimeout(done, ms);
+    function done() {
+      clearTimeout(t);
+      signal.removeEventListener('abort', done);
+      resolve();
+    }
+    signal.addEventListener('abort', done);
+  });
+
+const TRANSIENT_NET = /ECONNRESET|ETIMEDOUT|socket hang up|other side closed|UND_ERR_SOCKET/i;
 
 export const MAX_TURNS = 40;
 export const SUMMARY_THRESHOLD = 0.8;
@@ -337,19 +358,13 @@ export class ApiLoopAdapter implements AgentAdapter {
       if (noTools) body.tool_choice = 'none';
     }
 
-    let res: Response;
-    try {
-      res = await (this.opts.fetch ?? fetch)(`${this.opts.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        redirect: 'error',
-        signal: this.abort.signal,
-      });
-    } catch (e) {
-      throw this.networkError(e);
-    }
-    if (!res.ok) throw await this.httpError(res);
+    const res = await this.request(`${this.opts.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      redirect: 'error',
+      signal: this.abort.signal,
+    });
     if (!res.body) throw new Terminal({ type: 'error', message: 'El servidor respondió sin cuerpo.', retryable: true });
 
     const turn: Turn = { text: '', calls: [] };
@@ -412,12 +427,79 @@ export class ApiLoopAdapter implements AgentAdapter {
     return turn;
   }
 
+  /** Servidor propio (localhost / LAN): ahí tiene sentido "¿está en marcha?". */
+  private isLocal(): boolean {
+    try {
+      const h = new URL(this.opts.baseUrl).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+      return (
+        h === 'localhost' || h === '::1' || h.endsWith('.local') || h.endsWith('.localhost') ||
+        /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private providerName(): string {
+    try {
+      const h = new URL(this.opts.baseUrl).hostname;
+      if (/generativelanguage\.googleapis/i.test(h)) return 'Gemini';
+    } catch {
+      /* URL inválida */
+    }
+    return this.origin();
+  }
+
+  /** Solo la petición HTTP del turno actual se repite (el historial `messages` no cambia, no se re-ejecuta ninguna herramienta). */
+  private async request(url: string, init: RequestInit): Promise<Response> {
+    const sleep = this.opts.sleep ?? defaultSleep;
+    for (let attempt = 1; ; attempt++) {
+      let failure: Terminal;
+      let status = 0;
+      let retryAfterMs: number | undefined;
+      let transient = false;
+      let what = '';
+      try {
+        const res = await (this.opts.fetch ?? fetch)(url, init);
+        if (res.ok) return res;
+        status = res.status;
+        failure = await this.httpError(res);
+        const ra = res.headers.get('retry-after');
+        const raAt = parseRetryAfter(ra);
+        if (raAt !== undefined) retryAfterMs = Math.max(0, raAt - Date.now());
+        const ev = failure.event;
+        transient =
+          [500, 502, 503, 504, 408].includes(status) ||
+          (status === 429 && ev.type === 'limit' && ev.kind === 'rate');
+        what = status === 503 || status === 429 ? `está saturado (${status})` : `falló (${status})`;
+      } catch (e) {
+        if (this.aborted) throw this.networkError(e);
+        const code = String((e as any)?.cause?.code ?? (e as any)?.code ?? '');
+        const msg = `${code} ${e instanceof Error ? e.message : ''} ${(e as any)?.cause?.message ?? ''}`;
+        transient = code !== 'ECONNREFUSED' && TRANSIENT_NET.test(msg);
+        failure = this.networkError(e) as Terminal;
+        what = 'perdió la conexión';
+      }
+      if (!transient || attempt >= MAX_ATTEMPTS) throw failure;
+      const base = RETRY_BASE_MS[attempt - 1]!;
+      let wait = base * (0.8 + Math.random() * 0.4);
+      if (retryAfterMs !== undefined) wait = retryAfterMs;
+      wait = Math.min(RETRY_MAX_MS, Math.max(0, Math.round(wait)));
+      const note = `\n[${this.redact(this.providerName())} ${what}; reintento ${attempt + 1}/${MAX_ATTEMPTS} en ${Math.round(wait / 1000)} s…]\n`;
+      this.log(note.trim());
+      this.out?.push({ type: 'text', delta: note });
+      await sleep(wait, this.abort.signal);
+      if (this.aborted) throw new Error('abortado');
+    }
+  }
+
   private networkError(e: unknown, midStream = false): Error {
     if (this.aborted) return new Error('abortado');
     const code = (e as any)?.cause?.code ?? (e as any)?.code;
     const msg = e instanceof Error ? e.message : String(e);
     if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN' || code === 'ECONNRESET' || code === 'UND_ERR_CONNECT_TIMEOUT') {
-      const text = midStream ? `Se cortó la conexión con ${this.origin()}.` : `${this.origin()} no responde: ¿está en marcha?`;
+      const hint = this.isLocal() ? '¿está en marcha?' : 'el servicio no respondió bien; inténtalo más tarde o cambia de IA';
+      const text = midStream ? `Se cortó la conexión con ${this.origin()}.` : `${this.origin()} no responde: ${hint}`;
       return new Terminal({ type: 'error', message: this.redact(text), retryable: true });
     }
     if (/redirect/i.test(msg) || /redirect/i.test(String((e as any)?.cause?.message ?? ''))) {
@@ -458,7 +540,7 @@ export class ApiLoopAdapter implements AgentAdapter {
     }
     return new Terminal({
       type: 'error',
-      message: status >= 500 ? `${this.origin()} falló (${status}): ${message}. ¿Está bien el modelo cargado?` : `El proveedor rechazó la petición (${status}): ${message}`,
+      message: status >= 500 ? `${this.origin()} falló (${status}): ${message.replace(/[.\s]+$/, '')}. ${this.isLocal() ? '¿Está bien el modelo cargado?' : 'El servicio no respondió bien; inténtalo más tarde o cambia de IA.'}` : `El proveedor rechazó la petición (${status}): ${message}`,
       retryable: status >= 500 || status === 408,
     });
   }

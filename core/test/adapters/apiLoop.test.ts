@@ -232,8 +232,9 @@ describe('ApiLoopAdapter: protocolo', () => {
 describe('ApiLoopAdapter: errores y límites', () => {
   it('429 con Retry-After -> limit rate con resetsAt', async () => {
     script = [jsonErr(429, { error: { message: 'Rate limit reached', type: 'tokens', code: 'rate_limit_exceeded' } }, { 'retry-after': '30' })];
+    script = Array(4).fill(script[0]);
     const t0 = Date.now();
-    const evs = await collect(adapter(), spec());
+    const evs = await collect(adapter({ sleep: async () => {} }), spec());
     const lim = ofType(evs, 'limit')[0]!;
     expect(lim.kind).toBe('rate');
     expect(lim.resetsAt).toBeGreaterThanOrEqual(t0 + 30_000);
@@ -242,8 +243,8 @@ describe('ApiLoopAdapter: errores y límites', () => {
   });
 
   it('429 sin Retry-After -> limit sin resetsAt', async () => {
-    script = [jsonErr(429, { error: { message: 'slow down' } })];
-    const lim = ofType(await collect(adapter(), spec()), 'limit')[0]!;
+    script = Array(4).fill(jsonErr(429, { error: { message: 'slow down' } }));
+    const lim = ofType(await collect(adapter({ sleep: async () => {} }), spec()), 'limit')[0]!;
     expect(lim.kind).toBe('rate');
     expect(lim.resetsAt).toBeUndefined();
   });
@@ -270,10 +271,100 @@ describe('ApiLoopAdapter: errores y límites', () => {
   });
 
   it('5xx -> error (no limit)', async () => {
-    script = [jsonErr(503, { error: { message: 'model loading' } })];
-    const evs = await collect(adapter(), spec());
+    script = Array(4).fill(jsonErr(503, { error: { message: 'model loading' } }));
+    const evs = await collect(adapter({ sleep: async () => {} }), spec());
     expect(ofType(evs, 'limit')).toHaveLength(0);
     expect(terminal(evs)).toEqual([expect.objectContaining({ type: 'error', retryable: true })]);
+  });
+
+  describe('reintentos transitorios', () => {
+    const waits: number[] = [];
+    const sleep = async (ms: number) => void waits.push(ms);
+    beforeEach(() => void (waits.length = 0));
+    const texts = (evs: AgentEvent[]) => ofType(evs, 'text').map((e) => e.delta).join('');
+    const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/openai';
+    const busy = () => new Response(JSON.stringify([{ error: { code: 503, message: 'This model is currently experiencing high demand. Please try again later.' } }]), { status: 503 });
+
+    it('503 -> 503 -> 200 completa la tarea y avisa', async () => {
+      script = [jsonErr(503, { error: { message: 'busy' } }), jsonErr(503, { error: { message: 'busy' } }), textSse('listo')];
+      const evs = await collect(adapter({ sleep }), spec());
+      expect(terminal(evs)).toEqual([expect.objectContaining({ type: 'done', text: 'listo' })]);
+      expect(requests).toHaveLength(3);
+      expect(waits).toHaveLength(2);
+      expect(texts(evs)).toContain('reintento 2/4 en');
+      expect(texts(evs)).toContain('reintento 3/4 en');
+    });
+
+    it('el reintento no repite herramientas: el historial no cambia', async () => {
+      script = [callSse('list_dir', { path: '.' }), jsonErr(502, { error: { message: 'x' } }), textSse('ok')];
+      const evs = await collect(adapter({ sleep }), spec());
+      expect(ofType(evs, 'tool').filter((t) => t.status === 'end')).toHaveLength(1);
+      expect(requests[2]!.body.messages).toEqual(requests[1]!.body.messages);
+    });
+
+    it('503 x4 falla con mensaje final (nube: sin "modelo cargado")', async () => {
+      let n = 0;
+      const f = (async () => (n++, busy())) as unknown as typeof fetch;
+      const evs = await collect(adapter({ baseUrl: GEMINI, fetch: f, sleep }), spec());
+      expect(n).toBe(4);
+      expect(waits).toHaveLength(3);
+      const t = terminal(evs)[0] as any;
+      expect(t.type).toBe('error');
+      expect(t.retryable).toBe(true);
+      expect(t.message).toContain('inténtalo más tarde o cambia de IA');
+      expect(t.message).not.toContain('modelo cargado');
+      expect(texts(evs)).toContain('Gemini está saturado (503); reintento 2/4 en');
+    });
+
+    it('servidor local conserva "¿Está bien el modelo cargado?"', async () => {
+      script = Array(4).fill(jsonErr(500, { error: { message: 'boom' } }));
+      const evs = await collect(adapter({ sleep }), spec());
+      expect((terminal(evs)[0] as any).message).toContain('¿Está bien el modelo cargado?');
+    });
+
+    it('respeta Retry-After (con tope de 60 s)', async () => {
+      script = [jsonErr(503, { error: { message: 'b' } }, { 'retry-after': '7' }), jsonErr(503, { error: { message: 'b' } }, { 'retry-after': '999' }), textSse('ok')];
+      await collect(adapter({ sleep }), spec());
+      expect(waits[0]).toBeGreaterThan(5000);
+      expect(waits[0]).toBeLessThanOrEqual(7000);
+      expect(waits[1]).toBe(60_000);
+    });
+
+    it('stop() durante la espera aborta sin evento terminal', async () => {
+      script = [jsonErr(503, { error: { message: 'b' } }), textSse('no debe llegar')];
+      const a = adapter();
+      const evs: AgentEvent[] = [];
+      const it = (async () => {
+        for await (const e of a.start(spec())) {
+          evs.push(e);
+          if (e.type === 'text') void a.stop();
+        }
+      })();
+      await it;
+      expect(requests).toHaveLength(1);
+      expect(terminal(evs)).toHaveLength(0);
+    });
+
+    it('429 insufficient_quota -> limit sin reintento', async () => {
+      script = [jsonErr(429, { error: { message: 'You exceeded your current quota', code: 'insufficient_quota' } })];
+      const evs = await collect(adapter({ sleep }), spec());
+      expect(requests).toHaveLength(1);
+      expect(waits).toHaveLength(0);
+      expect(ofType(evs, 'limit')[0]!.kind).toBe('quota');
+    });
+
+    it('429 puntual se reintenta', async () => {
+      script = [jsonErr(429, { error: { message: 'slow down' } }), textSse('ok')];
+      const evs = await collect(adapter({ sleep }), spec());
+      expect(terminal(evs)).toEqual([expect.objectContaining({ type: 'done' })]);
+    });
+
+    it('ECONNRESET se reintenta', async () => {
+      script = [(q) => q.socket.destroy(), textSse('ok')];
+      const evs = await collect(adapter({ sleep }), spec());
+      expect(terminal(evs)).toEqual([expect.objectContaining({ type: 'done' })]);
+      expect(requests).toHaveLength(2);
+    });
   });
 
   it('401 -> error no retryable; la clave nunca aparece aunque el servidor la devuelva', async () => {
