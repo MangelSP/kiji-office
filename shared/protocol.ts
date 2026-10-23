@@ -41,6 +41,8 @@ export type MethodName =
   | 'objective.create'
   | 'plan.accept'
   | 'task.list'
+  | 'task.create'
+  | 'task.diff'
   | 'task.assign'
   | 'task.start'
   | 'task.stop'
