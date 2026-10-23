@@ -193,3 +193,7 @@ export function connectStore(): () => void {
   });
   return off;
 }
+
+// Desarrollo: si Vite recargara este módulo en caliente habría dos stores y los eventos del core seguirían
+// llegando al viejo (la pantalla se queda congelada). Cualquier cambio en el store recarga la página entera.
+if (import.meta.hot) import.meta.hot.accept(() => window.location.reload());

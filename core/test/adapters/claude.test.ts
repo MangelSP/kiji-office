@@ -310,6 +310,8 @@ describe('ClaudeAdapter — opciones del SDK', () => {
     });
     await collect(new ClaudeAdapter().start(spec()));
     expect(calls[0].options.strictMcpConfig).toBe(true);
+    // La memoria automática de Claude Code (fuera del repo) queda apagada.
+    expect(calls[0].options.settings).toEqual({ autoMemoryEnabled: false });
     expect(calls[0].options.mcpServers).toEqual({});
     expect(decision).toBe('pregunta'); // queda pendiente de respuesta del usuario
   });

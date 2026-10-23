@@ -140,6 +140,7 @@ export function createProviderTester(ctx: Ctx, deps: ProviderDeps = {}) {
       maxTurns: 1,
       maxBudgetUsd: CLAUDE_TEST_BUDGET_USD,
       settingSources: [], // ni CLAUDE.md ni ajustes del usuario
+      settings: { autoMemoryEnabled: false },
       systemPrompt: 'Responde solo con la palabra pedida.',
       persistSession: false,
       abortController,

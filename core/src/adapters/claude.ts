@@ -219,6 +219,9 @@ export class ClaudeAdapter implements AgentAdapter {
       abortController: this.abortController,
       permissionMode: 'default',
       settingSources: [], // aislamiento: ni CLAUDE.md ni settings del usuario
+      // Sin la memoria automática de Claude Code (~/.claude/projects/<repo>/memory): el CLI la deja leer sin
+      // preguntar y son notas de las sesiones del usuario, no del repo.
+      settings: { autoMemoryEnabled: false },
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
       disallowedTools: [...NEVER_TOOLS, ...SECRET_READ_RULES],
       maxBudgetUsd: spec.budgetUsd,

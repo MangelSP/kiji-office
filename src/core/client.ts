@@ -123,3 +123,6 @@ export function createCoreClient(timeoutMs = DEFAULT_TIMEOUT_MS) {
 export type CoreClient = ReturnType<typeof createCoreClient>;
 
 export const core = createCoreClient();
+
+// Desarrollo: un cliente nuevo por recarga en caliente perdería la escucha de `core:line`; mejor recargar todo.
+if (import.meta.hot) import.meta.hot.accept(() => window.location.reload());
