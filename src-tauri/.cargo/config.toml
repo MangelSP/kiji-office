@@ -1,0 +1,4 @@
+# Desarrollo en macOS: `tauri dev` lanza el binario con `cargo run`; este runner lo firma antes con una identidad
+# fija para que el "Permitir siempre" del llavero sobreviva a cada recompilación (ver dev-run.sh).
+[target.'cfg(target_os = "macos")']
+runner = "./dev-run.sh"
