@@ -1,0 +1,97 @@
+name: Release
+
+# Un tag vX.Y.Z crea una release BORRADOR con los instaladores, las firmas del updater y latest.json.
+# Los secretos y su significado están en docs/RELEASE.md.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-14 # macos-13 (Intel) está retirado; se cruza-compila desde Apple Silicon
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Dependencias de Tauri (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev \
+            pkg-config patchelf
+
+      - run: npm ci
+
+      - name: Sidecar de Node 24 para ${{ matrix.target }}
+        run: npm run fetch:node -- ${{ matrix.target }}
+
+      # `bundle.createUpdaterArtifacts` está en false en el repo (exige la clave privada); aquí se activa
+      # con un fichero de configuración extra, que evita problemas de comillas en cada shell.
+      - name: Activar artefactos del updater
+        run: node -e "require('fs').writeFileSync('updater-artifacts.json', JSON.stringify({bundle:{createUpdaterArtifacts:true}}))"
+
+      # Firma de Apple opcional: solo se exportan las variables si están TODOS los secretos. Si falta alguno,
+      # la build de macOS sale sin firmar ni notarizar (en vez de fallar). Las variables vacías se evitan a propósito.
+      - name: Firma de Apple (si hay secretos)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_CERTIFICATE_PASSWORD" ] && [ -n "$APPLE_SIGNING_IDENTITY" ] \
+             && [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              echo "$v=${!v}" >> "$GITHUB_ENV"
+            done
+            echo "Firma y notarización de Apple activadas."
+          else
+            echo "::warning::Faltan secretos de Apple: la build de macOS saldrá SIN firmar ni notarizar."
+          fi
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Kiji Office v__VERSION__
+          releaseBody: Ver CHANGELOG.md. Windows no está firmado (SmartScreen avisará); sha256 en las notas.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: --target ${{ matrix.target }} --config updater-artifacts.json

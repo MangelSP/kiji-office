@@ -11,7 +11,8 @@
     "build:core": "npm run build -w core",
     "test": "vitest run --passWithNoTests",
     "fetch:node": "node tools/fetch-node.mjs",
-    "bump": "node tools/bump-version.mjs"
+    "bump": "node tools/bump-version.mjs",
+    "release:mac": "npm run fetch:node -- $(rustc -vV | sed -n 's/^host: //p') && npm run build:core && tauri build --bundles app,dmg"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

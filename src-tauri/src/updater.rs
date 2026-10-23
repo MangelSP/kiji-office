@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn marcador_en_endpoint_o_clave_no_hace_red() {
-        let ep = json!({"endpoints": ["https://github.com/REEMPLAZAR_OWNER/REEMPLAZAR_REPO/releases/latest/download/latest.json"], "pubkey": "abc"});
+        let ep = json!({"endpoints": ["https://github.com/MangelSP/kiji-office/releases/latest/download/latest.json"], "pubkey": "abc"});
         assert_eq!(ensure_configured(Some(&ep)).unwrap_err(), NOT_YET);
         let key = json!({"endpoints": ["https://github.com/a/b/releases/latest/download/latest.json"], "pubkey": "REEMPLAZAR_CLAVE_PUBLICA"});
         assert_eq!(ensure_configured(Some(&key)).unwrap_err(), NOT_YET);
