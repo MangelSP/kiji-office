@@ -11,6 +11,7 @@ import { runGitRaw } from '../git/run.js';
 import { branchName, removeWorktree } from '../git/worktree.js';
 import { type Ctx, type Handler, asParams, assertSameProject, optionalProject, projectIdOf, str } from './context.js';
 import { markIntegrationTests, refreshBoard } from './board.js';
+import { testTimeoutMsOf } from './settings.js';
 import { logEvent } from './events.js';
 import { notify } from './notifications.js';
 import { getTask, isReadOnlyTask, projectOfTask, publishTask, recordFinding, transition } from './tasks.js';
@@ -126,7 +127,7 @@ export async function integrateTask(ctx: Ctx, taskId: string): Promise<Integrati
         let output: string;
         let timedOut = false;
         try {
-          ({ exitCode, output, timedOut } = await runTests(worktree, command, ctx.testTimeoutMs));
+          ({ exitCode, output, timedOut } = await runTests(worktree, command, testTimeoutMsOf(ctx)));
         } catch (err) {
           exitCode = 127;
           output = msg(err);

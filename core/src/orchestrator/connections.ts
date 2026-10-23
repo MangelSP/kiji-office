@@ -14,6 +14,7 @@ import type { AgentAdapter } from '../adapters/types.js';
 import type { AgentRow, ConnectionRow } from '../db/repos.js';
 import { type Ctx, type Handler, asParams, str } from './context.js';
 import { KEY_ALIASES, connAccount, hasUsableSecret, loadEnvSecrets, maskSecrets, requestSecrets, secretFor } from './secrets.js';
+import { claudePathSetting } from './settings.js';
 
 // ---------------------------------------------------------------------------
 // Presets (tabla D17; espejo en la UI)
@@ -518,7 +519,10 @@ export function autoCreateKeyConnections(ctx: Ctx, env: NodeJS.ProcessEnv): void
 export function makeAdapterFactory(ctx: Ctx, deps: ConnectionDeps = {}): (agent: AgentRow) => AgentAdapter {
   return (agent) => {
     if (!agent.connection_id) {
-      if (agent.provider === 'claude') return new ClaudeAdapter(); // la clave de API llega por el entorno del proceso
+      if (agent.provider === 'claude') {
+        const claudePath = claudePathSetting(ctx); // el ajuste manda sobre KIJI_CLAUDE_PATH
+        return new ClaudeAdapter(claudePath ? { pathToClaudeCodeExecutable: claudePath } : {});
+      }
       throw new Error(`el proveedor "${agent.provider}" no está soportado: usa Claude o una conexión`);
     }
     const c = ctx.repos.connections.get(agent.connection_id);

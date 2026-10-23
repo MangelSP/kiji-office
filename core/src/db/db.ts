@@ -138,6 +138,11 @@ ALTER TABLE tasks ADD COLUMN board_column TEXT NOT NULL DEFAULT 'refinement' CHE
 ALTER TABLE tasks ADD COLUMN board_manual INTEGER NOT NULL DEFAULT 0 CHECK (board_manual IN (0, 1));
 `;
 
+// Migración 7 (0.4b): índice para la limpieza de eventos de registro por antigüedad (events_retention_days).
+const MIGRATION_7 = `
+CREATE INDEX events_created ON events(created_at);
+`;
+
 function migration6(db: DatabaseSync): void {
   db.exec(MIGRATION_6);
   const tasks = db.prepare(
@@ -170,6 +175,7 @@ export const migrations: Array<(db: DatabaseSync) => void> = [
   (db) => db.exec(MIGRATION_4),
   (db) => db.exec(MIGRATION_5),
   migration6,
+  (db) => db.exec(MIGRATION_7),
 ];
 
 export function openDb(path: string): DatabaseSync {

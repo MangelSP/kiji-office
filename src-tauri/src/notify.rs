@@ -75,6 +75,11 @@ pub fn handle(app: &AppHandle, payload: &serde_json::Value) {
     let (Some(project), Some(title)) = (payload["projectId"].as_str(), payload["title"].as_str()) else { return };
     let level = payload["level"].as_str().unwrap_or("info");
     let id = payload["id"].as_i64().unwrap_or(0);
+    // El core ya aplicó los ajustes de avisos (sistema sí/no, niveles, horas de silencio): `system: false`
+    // = solo campana. Si falta el campo (core antiguo), se muestra como antes.
+    if payload["system"].as_bool() == Some(false) {
+        return;
+    }
     let focused = app
         .get_webview_window("main")
         .is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false));

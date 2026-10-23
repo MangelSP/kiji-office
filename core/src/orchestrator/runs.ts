@@ -13,6 +13,7 @@ import { parseConnTarget, runModelOf } from './connections.js';
 import { forkPoint, foreignFiles, revertFiles } from './ownership.js';
 import { contextWindowFor } from '../adapters/claude.js';
 import { recordRate, scheduleLimitsNotify } from './quota.js';
+import { testTimeoutMsOf } from './settings.js';
 import { clearQueue, dequeue, pumpQueue, requestStart } from './queue.js';
 import { clearResumeTimers, planAfterRateLimit } from './relay.js';
 import { resolveSkills } from './skills.js';
@@ -454,7 +455,7 @@ async function onDone(ctx: Ctx, live: LiveRun, ev: Extract<AgentEvent, { type: '
       let output: string;
       let timedOut = false;
       try {
-        const r = await runTests(worktree, project.test_command, ctx.testTimeoutMs);
+        const r = await runTests(worktree, project.test_command, testTimeoutMsOf(ctx));
         ({ exitCode, output, timedOut } = r);
       } catch (err) {
         exitCode = 127; // el comando no se pudo lanzar (p. ej. operadores de shell no admitidos)

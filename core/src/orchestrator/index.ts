@@ -24,7 +24,7 @@ import { resolveManagerOptions } from '../manager/policy.js';
 import { managerHandlers } from './manager.js';
 import { runHandlers, stopAll, whenIdle } from './runs.js';
 import { requestSecrets, secretsHandlers } from './secrets.js';
-import { settingsHandlers } from './settings.js';
+import { settingsHandlers, startRetention, stopRetention } from './settings.js';
 import { defaultSkillsDir, skillHandlers } from './skills.js';
 import { taskHandlers } from './tasks.js';
 import { workspaceHandlers } from './workspaces.js';
@@ -94,6 +94,7 @@ export function createOrchestrator(opts: OrchestratorOptions) {
   ctx.conn = connService;
   loadLimitsSnapshot(ctx);
   recoverAllProjects(ctx); // un corte previo no deja tareas running ni aprobaciones pending fantasma, ni en proyectos cerrados
+  startRetention(ctx); // limpieza de eventos al arrancar y cada 24 h (events_retention_days)
   ctx.manager = createManagerRuntime(ctx); // cierra ticks y preguntas huérfanos del corte anterior (no relanza nada)
   const handlers: Record<string, Handler> = {
     ...projectHandlers(ctx),
@@ -124,6 +125,7 @@ export function createOrchestrator(opts: OrchestratorOptions) {
     whenIdle: () => whenIdle(ctx),
     /** Para los adaptadores en marcha (apagado del core). */
     shutdown: async () => {
+      stopRetention(ctx);
       ctx.manager?.dispose();
       await stopAll(ctx);
     },

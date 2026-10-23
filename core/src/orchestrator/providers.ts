@@ -9,7 +9,7 @@ import type { LimitWindow, ProviderStatus } from '../../../shared/protocol.js';
 import { type Ctx, type Handler, asParams, str } from './context.js';
 import { limitedUntilOf, modelFamily, modelLimitedUntil } from './quota.js';
 import { connectionCards } from './connections.js';
-import { ollamaUrl } from './settings.js';
+import { claudePathSetting, ollamaUrl } from './settings.js';
 
 export type ProviderName = 'claude' | 'ollama' | 'openai' | 'gemini';
 export interface TestResult {
@@ -151,7 +151,7 @@ export function createProviderTester(ctx: Ctx, deps: ProviderDeps = {}) {
       canUseTool: async () => ({ behavior: 'deny', message: 'Prueba de conexión: sin herramientas.' }),
     };
     if (deps.env) options.env = { ...process.env, ...deps.env };
-    const claudePath = claudePathFromEnv(env());
+    const claudePath = claudePathSetting(ctx) ?? claudePathFromEnv(env());
     if (claudePath) options.pathToClaudeCodeExecutable = claudePath;
     let q: ReturnType<typeof sdkQuery> | undefined;
     try {

@@ -2,11 +2,11 @@
 // La fila de `runs` se actualiza como mucho cada `metricsWriteMs` (2 s) y al cerrar el run; la notificación
 // `run.metrics` sale como mucho cada `metricsNotifyMs` (500 ms) por run, con un envío final diferido para que la
 // UI nunca se quede con una cifra vieja.
-import type { AgentMetrics, RunMetrics } from '../../../shared/protocol.js';
+import type { AgentMetrics, ModelUsage, RunMetrics, StatsRange } from '../../../shared/protocol.js';
 import { DEFAULT_CONTEXT_WINDOW } from '../adapters/claude.js';
 import type { AgentEvent } from '../adapters/types.js';
 import type { AgentRow, RunRow } from '../db/repos.js';
-import { runModelOf } from './connections.js';
+import { parseConnTarget, runModelOf } from './connections.js';
 import { type Ctx, type Handler, type LiveRun, type RunUsageState, asParams, assertSameProject, str } from './context.js';
 import { scheduleWorkspacesNotify } from './workspaces.js';
 
@@ -130,8 +130,50 @@ export function finalizeMetrics(ctx: Ctx, live: LiveRun): void {
   emitMetrics(ctx, live, false);
 }
 
+const STATS_RANGE_DAYS: Record<Exclude<StatsRange, 'all'>, number> = { today: 1, '7d': 7, '30d': 30 };
+const STATS_DEFAULT_LIMIT = 50;
+
+/** Inicio del rango en epoch ms contando días locales (hoy = desde la medianoche local; 7d = hoy y los 6 anteriores). */
+export function statsSince(range: StatsRange, now = Date.now()): number {
+  if (range === 'all') return 0;
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - (STATS_RANGE_DAYS[range] - 1));
+  return d.getTime();
+}
+
+/**
+ * Modelos más usados en todos los proyectos (runs.model), por nº de runs y luego coste.
+ * Los ticks del gerente no se cuentan: no guardan modelo ni tokens (solo coste), así que no son atribuibles a un modelo.
+ */
+export function modelUsage(ctx: Ctx, range: StatsRange, limit = STATS_DEFAULT_LIMIT, now = Date.now()): ModelUsage[] {
+  const since = statsSince(range, now);
+  const agents = new Map<string, string[]>();
+  for (const r of ctx.repos.runs.agentsByModel(since)) (agents.get(r.model) ?? agents.set(r.model, []).get(r.model)!).push(r.name);
+  return ctx.repos.runs.usageByModel(since)
+    .map((r): ModelUsage => ({
+      model: r.model, provider: parseConnTarget(r.model)?.connectionId ?? 'claude', runs: r.runs, input: r.input, output: r.output,
+      cacheRead: r.cache_read, costUsd: r.cost, lastUsedAt: r.last_at, agents: agents.get(r.model) ?? [],
+    }))
+    .sort((a, b) => b.runs - a.runs || b.costUsd - a.costUsd || a.model.localeCompare(b.model))
+    .slice(0, limit);
+}
+
 export function metricsHandlers(ctx: Ctx): Record<string, Handler> {
   return {
+    /** `{range, limit?}` -> ModelUsage[] */
+    'stats.models': (params) => {
+      const p = asParams(params, 'stats.models');
+      if (p.range !== 'today' && p.range !== '7d' && p.range !== '30d' && p.range !== 'all') {
+        throw new Error('stats.models: "range" debe ser today, 7d, 30d o all');
+      }
+      let limit = STATS_DEFAULT_LIMIT;
+      if (p.limit !== undefined) {
+        if (typeof p.limit !== 'number' || !Number.isFinite(p.limit) || p.limit < 1) throw new Error('stats.models: "limit" debe ser un número mayor que 0');
+        limit = Math.min(Math.floor(p.limit), 500);
+      }
+      return modelUsage(ctx, p.range, limit);
+    },
     'agent.metrics': (params) => {
       const p = asParams(params, 'agent.metrics');
       const agent = ctx.repos.agents.get(str(p.agentId, 'agentId', 'agent.metrics'));

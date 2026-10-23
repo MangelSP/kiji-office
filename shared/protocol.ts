@@ -562,7 +562,16 @@ export type NotificationRow = {
   createdAt: number;
 };
 /** Evento `notify`: Rust lanza la notificación del sistema; la UI la añade a la campana. */
-export type NotifyEvent = { projectId: string; id: number; level: NotificationLevel; title: string; body: string; approvalId?: string };
+export type NotifyEvent = {
+  projectId: string;
+  id: number;
+  level: NotificationLevel;
+  title: string;
+  body: string;
+  approvalId?: string;
+  /** 0.4b: false = solo campana (ajustes de avisos u horas de silencio); Rust no lanza la notificación del sistema. */
+  system?: boolean;
+};
 
 
 // ---------------------------------------------------------------------------

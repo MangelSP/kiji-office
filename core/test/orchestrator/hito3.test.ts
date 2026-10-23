@@ -249,7 +249,7 @@ describe('avisos', () => {
     expect(row.body.length).toBe(120);
     expect(row.body.startsWith('Error en app.ts:12 y y.rs zzz')).toBe(true);
     expect(row.body).not.toMatch(/Users|\/repo/);
-    expect(events('notify').at(-1)!.payload).toEqual({ projectId: project.id, id: row.id, level: 'warn', title: row.title, body: row.body });
+    expect(events('notify').at(-1)!.payload).toEqual({ projectId: project.id, id: row.id, level: 'warn', title: row.title, body: row.body, system: true });
     notify(h.orch.ctx, { projectId: project.id, level: 'ask', title: 't', body: 'b', approvalId: 'ap1' });
     expect(events('notify').at(-1)!.payload.approvalId).toBe('ap1');
 

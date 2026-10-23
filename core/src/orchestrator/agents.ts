@@ -3,6 +3,7 @@ import type { AgentRow, ConnectionRow } from '../db/repos.js';
 import { type Ctx, type Handler, asParams, assertSameProject, optionalProject, projectIdOf, requireProject, str } from './context.js';
 import { notifyConnections, parseConnTarget } from './connections.js';
 import { modelFamily } from './quota.js';
+import { autoRelayDefault, defaultModelTarget } from './settings.js';
 import { loadSkills } from './skills.js';
 import { getRobotStatus } from './status.js';
 import { scheduleWorkspacesNotify } from './workspaces.js';
@@ -122,6 +123,11 @@ export function agentHandlers(ctx: Ctx): Record<string, Handler> {
         if (['api', 'ollama', 'gemini', 'openai'].includes(provider)) throw new Error(`agent.create: con el proveedor "${provider}" indica "connectionId" (crea una conexión en Conexiones)`);
         if (provider !== 'claude') throw new Error(`agent.create: proveedor desconocido "${provider}" (claude o una conexión)`);
       }
+      // 0.4b: sin modelo explícito, el ajuste `default_model` (alias de Claude o una conexión existente).
+      const noModel = p.model === undefined || p.model === null || (typeof p.model === 'string' && p.model.trim() === '');
+      const defTarget = defaultModelTarget(ctx);
+      let modelInput: unknown = p.model;
+      if (noModel && connectionId !== null && 'connectionId' in defTarget && defTarget.connectionId === connectionId) modelInput = defTarget.model;
       const conn = connectionId === null ? null : ctx.repos.connections.get(connectionId);
       if (connectionId !== null && !conn) throw new Error('agent.create: la conexión no existe');
 
@@ -139,12 +145,14 @@ export function agentHandlers(ctx: Ctx): Record<string, Handler> {
       let model: string;
       let warning: string | undefined;
       if (conn) {
-        ({ model, warning } = await connectionModel(ctx, conn, p.model, 'agent.create'));
+        ({ model, warning } = await connectionModel(ctx, conn, modelInput, 'agent.create'));
       } else {
-        model = oneOf(p.model, CLAUDE_MODELS, 'modelo', 'sonnet');
+        model = oneOf(p.model, CLAUDE_MODELS, 'modelo', 'alias' in defTarget ? (defTarget.alias as (typeof CLAUDE_MODELS)[number]) : 'sonnet');
       }
       const color = oneOf(p.color, AGENT_COLORS, 'color', 'terracota');
-      const row = ctx.repos.agents.create({ projectId: project.id, name, provider: conn ? 'api' : 'claude', model, role, color, connectionId: conn?.id ?? null });
+      if (p.autoRelay !== undefined && typeof p.autoRelay !== 'boolean') throw new Error('agent.create: "autoRelay" debe ser true o false');
+      const autoRelay = typeof p.autoRelay === 'boolean' ? p.autoRelay : autoRelayDefault(ctx);
+      const row = ctx.repos.agents.create({ projectId: project.id, name, provider: conn ? 'api' : 'claude', model, role, color, connectionId: conn?.id ?? null, autoRelay });
       const view = agentView(ctx, row);
       scheduleWorkspacesNotify(ctx);
       return warning ? { ...view, warning } : view;

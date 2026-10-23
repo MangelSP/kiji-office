@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import type { SkillInfo } from '../../../shared/protocol.js';
 import { type Ctx, type Handler } from './context.js';
+import { extraSkillRoots } from './settings.js';
 
 export const SKILLS_CACHE_MS = 60_000;
 const MAX_HEAD_BYTES = 16 * 1024;
@@ -75,8 +76,11 @@ export function parseFrontmatter(text: string): { name?: string; description?: s
 
 const inside = (root: string, p: string): boolean => p !== root && p.startsWith(root + sep);
 
-/** Recorre la carpeta de skills sin cachear. */
-export function scanSkills(skillsDir: string): SkillEntry[] {
+/**
+ * Recorre la carpeta de skills sin cachear. `extraRoots` (ajuste `extra_skill_roots`, ya resueltas con realpath) son
+ * raíces de confianza adicionales: un enlace de la carpeta de skills vale si apunta dentro de ella o de una raíz extra.
+ */
+export function scanSkills(skillsDir: string, extraRoots: string[] = []): SkillEntry[] {
   let root: string;
   try {
     root = realpathSync(skillsDir);
@@ -89,15 +93,17 @@ export function scanSkills(skillsDir: string): SkillEntry[] {
   } catch {
     return [];
   }
+  const trusted = [root, ...extraRoots];
+  const ok = (p: string): boolean => trusted.some((r) => inside(r, p));
   const seen = new Set<string>();
   const out: SkillEntry[] = [];
   for (const entry of names) {
     if (entry.startsWith('.') || out.length >= MAX_SKILLS) continue;
     try {
       const dir = realpathSync(join(root, entry)); // resuelve enlaces simbólicos
-      if (!inside(root, dir) || !statSync(dir).isDirectory()) continue; // enlaces que salen de la carpeta: fuera
+      if (!ok(dir) || !statSync(dir).isDirectory()) continue; // enlaces que salen de las raíces de confianza: fuera
       const file = realpathSync(join(dir, 'SKILL.md'));
-      if (!inside(root, file) || !statSync(file).isFile()) continue;
+      if (!ok(file) || !statSync(file).isFile()) continue;
       const fm = parseFrontmatter(readHead(file));
       const name = fm.name && NAME_RE.test(fm.name) ? fm.name : NAME_RE.test(entry) ? entry : '';
       if (name === '' || seen.has(name)) continue;
@@ -110,14 +116,16 @@ export function scanSkills(skillsDir: string): SkillEntry[] {
   return out.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.name.localeCompare(b.name));
 }
 
-const caches = new WeakMap<Ctx, { dir: string; at: number; list: SkillEntry[] }>();
+const caches = new WeakMap<Ctx, { key: string; at: number; list: SkillEntry[] }>();
 
 /** Skills disponibles (cache de 60 s por carpeta; `force` vuelve a leer). */
 export function loadSkills(ctx: Ctx, force = false): SkillEntry[] {
   const cache = caches.get(ctx);
-  if (!force && cache && cache.dir === ctx.skillsDir && Date.now() - cache.at < SKILLS_CACHE_MS) return cache.list;
-  const list = scanSkills(ctx.skillsDir);
-  caches.set(ctx, { dir: ctx.skillsDir, at: Date.now(), list });
+  const extra = extraSkillRoots(ctx);
+  const key = JSON.stringify([ctx.skillsDir, extra]); // cambiar las raíces extra invalida la cache
+  if (!force && cache && cache.key === key && Date.now() - cache.at < SKILLS_CACHE_MS) return cache.list;
+  const list = scanSkills(ctx.skillsDir, extra);
+  caches.set(ctx, { key, at: Date.now(), list });
   return list;
 }
 

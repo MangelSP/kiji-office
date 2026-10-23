@@ -219,13 +219,14 @@ export function createRepos(db: DatabaseSync) {
     create(a: {
       projectId: string; name: string; provider: Provider; apiBase?: string | null; model?: string | null;
       role?: string | null; color?: string | null; isBoss?: boolean; connectionId?: string | null;
+      autoRelay?: boolean;
     }): AgentRow {
       const id = newId();
       db.prepare(
-        `INSERT INTO agents (id, project_id, name, provider, api_base, model, role, color, is_boss, connection_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO agents (id, project_id, name, provider, api_base, model, role, color, is_boss, connection_id, auto_relay, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(id, a.projectId, a.name, a.provider, a.apiBase ?? null, a.model ?? null, a.role ?? null,
-        a.color ?? null, a.isBoss ? 1 : 0, a.connectionId ?? null, now());
+        a.color ?? null, a.isBoss ? 1 : 0, a.connectionId ?? null, a.autoRelay === false ? 0 : 1, now());
       return agents.get(id)!;
     },
     get: (id: string) => one<AgentRow>('SELECT * FROM agents WHERE id = ?', id),
@@ -407,6 +408,21 @@ export function createRepos(db: DatabaseSync) {
                 COALESCE(SUM(r.output_tokens), 0) AS output, COALESCE(SUM(r.cache_read_tokens), 0) AS cache_read,
                 COALESCE(SUM(r.cache_write_tokens), 0) AS cache_write
          FROM runs r JOIN agents a ON a.id = r.agent_id WHERE r.started_at >= ? GROUP BY a.project_id`, since),
+    /**
+     * Uso por modelo de los runs de TODOS los proyectos que empezaron desde `since` (epoch ms). El modelo del run;
+     * si falta (filas antiguas), el del agente.
+     */
+    usageByModel: (since: number) =>
+      all<{ model: string; runs: number; input: number; output: number; cache_read: number; cost: number; last_at: number | null }>(
+        `SELECT COALESCE(r.model, CASE WHEN a.connection_id IS NOT NULL THEN 'conn:' || a.connection_id || '/' || a.model ELSE a.model END, 'sonnet') AS model,
+                COUNT(*) AS runs, COALESCE(SUM(r.input_tokens), 0) AS input, COALESCE(SUM(r.output_tokens), 0) AS output,
+                COALESCE(SUM(r.cache_read_tokens), 0) AS cache_read, COALESCE(SUM(r.cost_usd), 0) AS cost, MAX(r.started_at) AS last_at
+         FROM runs r JOIN agents a ON a.id = r.agent_id WHERE r.started_at >= ? GROUP BY 1`, since),
+    /** Pares (modelo, nombre de robot) distintos de los runs desde `since`. */
+    agentsByModel: (since: number) =>
+      all<{ model: string; name: string }>(
+        `SELECT DISTINCT COALESCE(r.model, CASE WHEN a.connection_id IS NOT NULL THEN 'conn:' || a.connection_id || '/' || a.model ELSE a.model END, 'sonnet') AS model, a.name AS name
+         FROM runs r JOIN agents a ON a.id = r.agent_id WHERE r.started_at >= ? ORDER BY a.name`, since),
     /** Gasto total por proyecto (todos los runs). */
     costByProject: () =>
       all<{ project_id: string; cost: number }>(
@@ -492,6 +508,14 @@ export function createRepos(db: DatabaseSync) {
     countToolStarts: (runId: string) =>
       one<{ n: number }>(
         `SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND kind = 'tool' AND json_extract(payload, '$.status') = 'start'`, runId)!.n,
+    /**
+     * Retención (0.4b): borra los eventos de registro anteriores a `cutoff` (epoch ms). Conserva los hallazgos de las
+     * tareas (`git` con `finding`), que son datos de la tarea y no registro. Devuelve cuántos borró.
+     */
+    deleteOlderThan: (cutoff: number): number =>
+      Number(db.prepare(
+        `DELETE FROM events WHERE created_at < ? AND NOT (kind = 'git' AND json_extract(payload, '$.finding') IS NOT NULL)`,
+      ).run(cutoff).changes),
     /** Último evento por proyecto (epoch ms). */
     lastActivityByProject: () =>
       all<{ project_id: string; at: number }>(

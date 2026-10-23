@@ -3,6 +3,7 @@
 import type { NotificationLevel, NotificationRow, NotifyEvent } from '../../../shared/protocol.js';
 import type { NotificationDbRow } from '../db/repos.js';
 import { type Ctx, type Handler, asParams, projectIdOf } from './context.js';
+import { settingValue } from './settings.js';
 
 export const NOTIFY_BODY_MAX = 120;
 const TITLE_MAX = 80;
@@ -37,14 +38,51 @@ export interface NotifyInput {
   approvalId?: string;
 }
 
+/** ¿`now` (hora local) cae en las horas de silencio `{from,to}` (HH:MM)? Admite tramos que cruzan la medianoche. */
+export function inQuietHours(raw: string, now = new Date()): boolean {
+  if (raw.trim() === '') return false;
+  try {
+    const q = JSON.parse(raw) as { from?: string; to?: string };
+    const mins = (hm: string | undefined): number => {
+      const m = /^(\d{2}):(\d{2})$/.exec(hm ?? '');
+      if (!m) throw new Error('hora');
+      return Number(m[1]) * 60 + Number(m[2]);
+    };
+    const from = mins(q.from);
+    const to = mins(q.to);
+    const t = now.getHours() * 60 + now.getMinutes();
+    if (from === to) return false;
+    return from < to ? t >= from && t < to : t >= from || t < to;
+  } catch {
+    return false;
+  }
+}
+
+/** ¿Este aviso debe salir también como notificación del sistema? (La fila de la campana se guarda siempre.) */
+export function shouldNotifySystem(ctx: Ctx, level: NotificationLevel, now = new Date()): boolean {
+  if (settingValue(ctx, 'notify_system') !== '1') return false;
+  let levels: unknown;
+  try {
+    levels = JSON.parse(settingValue(ctx, 'notify_levels'));
+  } catch {
+    levels = [];
+  }
+  if (!Array.isArray(levels) || !levels.includes(level)) return false;
+  return !inQuietHours(settingValue(ctx, 'quiet_hours'), now);
+}
+
+/** `NotifyEvent` con `system`: false = solo campana, Rust no debe mostrar notificación del sistema. */
+export type NotifyEventWithSystem = NotifyEvent & { system: boolean };
+
 /** Guarda el aviso (título ≤80, cuerpo ≤120, sin rutas absolutas) y emite `notify`. Nunca lanza por culpa del emisor. */
 export function notify(ctx: Ctx, n: NotifyInput): NotificationRow {
   const row = ctx.repos.notifications.create({
     projectId: n.projectId, level: n.level, title: clean(n.title, TITLE_MAX), body: clean(n.body, NOTIFY_BODY_MAX),
     approvalId: n.approvalId ?? null,
   });
-  const event: NotifyEvent = {
+  const event: NotifyEventWithSystem = {
     projectId: row.project_id, id: row.id, level: row.level, title: row.title, body: row.body,
+    system: shouldNotifySystem(ctx, row.level),
     ...(row.approval_id ? { approvalId: row.approval_id } : {}),
   };
   ctx.emit('notify', event);
