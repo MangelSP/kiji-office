@@ -182,9 +182,18 @@ export function applyEvent(event: CoreEvent) {
   }
 }
 
-/** Conecta el store al cliente del core: eventos, ping inicial y primera carga. Devuelve la baja. */
+let subscribed = false;
+
+/**
+ * Conecta el store al cliente del core: eventos, ping inicial y primera carga.
+ * La suscripción a los eventos se hace una sola vez y vive lo que la página: atarla al ciclo de React dejaba la
+ * pantalla sin oyente (`handlers 0`) tras un desmontaje/remontaje y las tareas no se actualizaban.
+ */
 export function connectStore(): () => void {
-  const off = core.onEvent("*", applyEvent);
+  if (!subscribed) {
+    subscribed = true;
+    core.onEvent("*", applyEvent);
+  }
   void core.start().then(async (available) => {
     const s = useStore.getState();
     if (!available) {
@@ -199,7 +208,7 @@ export function connectStore(): () => void {
     }
     s.setBooted(true);
   });
-  return off;
+  return () => {};
 }
 
 // Desarrollo: si Vite recargara este módulo en caliente habría dos stores y los eventos del core seguirían
