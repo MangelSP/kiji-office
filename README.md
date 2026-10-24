@@ -6,6 +6,21 @@ trabajo, te avisa y te pide permiso para lo delicado.
 
 > Estado: **beta**. macOS es la plataforma principal. Windows y Linux se compilan en CI, pero están menos probados.
 
+![La oficina: robots trabajando y el panel de Ana con su chat](docs/screenshots/04-robot.png)
+
+## Capturas
+
+| | |
+|---|---|
+| ![Pantalla de inicio](docs/screenshots/01-inicio.png) | ![Home con métricas](docs/screenshots/02-home.png) |
+| **Inicio:** los robots de Claude, Gemini y OpenAI llegan al núcleo de IA. | **Home:** proyectos, agentes, IAs, gasto, tokens, tiempo y los modelos más usados. |
+| ![La oficina](docs/screenshots/03-oficina.png) | ![Pizarra Scrum](docs/screenshots/05-pizarra.png) |
+| **Oficina:** cada robot en su escritorio, con su estado, y lo que espera tu respuesta. | **Pizarra:** las tareas por columna, con el robot, el modelo y el coste. |
+| ![Panel de un robot](docs/screenshots/04-robot.png) | ![Ajustes](docs/screenshots/06-ajustes.png) |
+| **Panel del robot:** chat, tareas, métricas, perfil y registro. | **Ajustes:** general, trabajo, IAs, skills, Gerente, avisos, móvil, datos y actualizaciones. |
+
+Las capturas usan los datos de demostración (`npm run dev` y abrir `http://localhost:1436/?demo=1`).
+
 ## Qué hace
 
 - **Oficina viva:** cada robot muestra en la escena lo que está haciendo (pensando, escribiendo, te necesita, error,
