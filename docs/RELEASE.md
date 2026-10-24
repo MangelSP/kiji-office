@@ -52,8 +52,8 @@ npx tauri signer generate -w ~/.tauri/kiji.key
 
 ## 3. Repositorio público en GitHub
 
-1. Crea el repo público (Actions gratis e ilimitadas; en privado los minutos de macOS cuentan ×10). Antes de abrir el
-   código, decide la licencia (hoy no hay `LICENSE`).
+1. Crea el repo público (Actions gratis e ilimitadas; en privado los minutos de macOS cuentan ×10). El código es MIT
+   (`LICENSE`); los assets tienen todos los derechos reservados (`ASSETS-LICENSE.md`).
 2. En `src-tauri/tauri.conf.json` sustituye `REEMPLAZAR_OWNER` y `REEMPLAZAR_REPO` en `plugins.updater.endpoints`.
    Mientras quede algún `REEMPLAZAR_` la app no comprueba actualizaciones.
 3. Añade los secretos de la tabla. `git remote add origin …` y sube `main`; el workflow `CI` debe quedar en verde.

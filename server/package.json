@@ -1,6 +1,8 @@
 {
   "name": "kiji-server",
   "private": true,
+  "license": "MIT",
+  "author": "Miguel Ángel Sánchez Peralta",
   "version": "0.1.0",
   "type": "module",
   "engines": { "node": ">=22.18" },

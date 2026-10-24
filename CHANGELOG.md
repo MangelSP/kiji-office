@@ -17,7 +17,8 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). L
 - Ajustes completos (0.4b), Tus IAs y Modelos más usados en el Home, y un panel de métricas estilo monitor.
 - Gestión de MCP y skills (globales, por proyecto y de plugins), con copia de seguridad y papelera al desinstalar.
 - Panel del agente enfocado: avatares reales, tarjetas plegables y el chat dentro del panel.
-- `README.md`.
+- `README.md` con capturas, y la licencia: el código es MIT (`LICENSE`) y los assets tienen todos los derechos
+  reservados (`ASSETS-LICENSE.md`). Autor: Miguel Ángel Sánchez Peralta.
 - Empaquetado para macOS, Windows y Linux: Node 24 LTS oficial como sidecar (`tools/fetch-node.mjs`, con
   verificación sha256 contra `SHASUMS256.txt`).
 - Pantalla «Acerca de» con la versión, el enlace a este registro, la licencia y la política de datos.

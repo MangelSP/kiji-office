@@ -26,6 +26,8 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Miguel Ángel Sánchez Peralta",
+    "copyright": "© 2026 Miguel Ángel Sánchez Peralta. Código MIT; assets con todos los derechos reservados.",
     "createUpdaterArtifacts": false,
     "targets": [
       "app",

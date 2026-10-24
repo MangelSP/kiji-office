@@ -84,7 +84,12 @@ export default function AboutScreen({ onClose }: { onClose?: () => void }) {
 
       <section>
         <h2>Licencia</h2>
-        <p>Licencia: pendiente</p>
+        <p>Creado por Miguel Ángel Sánchez Peralta.</p>
+        <p>Código: licencia MIT.</p>
+        <p className="ab-muted">
+          Los assets (sprites, pixel art, la oficina, el icono y el logo) tienen todos los derechos reservados: no se
+          pueden usar en otros proyectos sin permiso.
+        </p>
         <p className="ab-muted">Los componentes de terceros que usa Kiji se listan en THIRD-PARTY.md.</p>
       </section>
 

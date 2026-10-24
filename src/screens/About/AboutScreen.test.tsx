@@ -18,10 +18,11 @@ afterEach(() => {
 });
 
 describe("AboutScreen", () => {
-  it("en el navegador enseña la versión de package.json, licencia pendiente y telemetría", () => {
+  it("en el navegador enseña la versión de package.json, autor, licencia MIT y telemetría", () => {
     render(<AboutScreen />);
     expect(screen.getByTestId("ab-version").textContent).toBe(pkg.version);
-    expect(screen.getByText("Licencia: pendiente")).toBeTruthy();
+    expect(screen.getByText("Creado por Miguel Ángel Sánchez Peralta.")).toBeTruthy();
+    expect(screen.getByText("Código: licencia MIT.")).toBeTruthy();
     expect(screen.getByText(TELEMETRY_TEXT)).toBeTruthy();
     expect(mocks.getVersion).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Buscar actualizaciones" }) as HTMLButtonElement).disabled).toBe(true);

@@ -1,6 +1,8 @@
 {
   "name": "kiji-core",
   "private": true,
+  "license": "MIT",
+  "author": "Miguel Ángel Sánchez Peralta",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",

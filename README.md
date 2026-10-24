@@ -4,6 +4,8 @@ App de escritorio en la que robots en pixel art (agentes de IA) trabajan en tus 
 agente de Claude, Gemini, OpenAI o una IA local, con su propia tarea, su rama y su chat. El **Gerente** coordina el
 trabajo, te avisa y te pide permiso para lo delicado.
 
+Creado por **Miguel Ángel Sánchez Peralta** ([@MangelSP](https://github.com/MangelSP)).
+
 > Estado: **beta**. macOS es la plataforma principal. Windows y Linux se compilan en CI, pero están menos probados.
 
 ![La oficina: robots trabajando y el panel de Ana con su chat](docs/screenshots/04-robot.png)
@@ -89,4 +91,8 @@ npm run tauri dev
 
 ## Licencia
 
-Por decidir antes de la versión 1.0. Las licencias de terceros están en [`THIRD-PARTY.md`](THIRD-PARTY.md).
+- **Código:** [MIT](LICENSE), © 2026 Miguel Ángel Sánchez Peralta.
+- **Assets** (sprites y pixel art, la oficina, el núcleo de IA, el icono y el logo, y las capturas): **todos los
+  derechos reservados**. No son MIT y no se pueden usar en otros proyectos sin permiso. Ver
+  [`ASSETS-LICENSE.md`](ASSETS-LICENSE.md).
+- Licencias de terceros: [`THIRD-PARTY.md`](THIRD-PARTY.md).
