@@ -5,12 +5,31 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). L
 ## [0.3.0] - Sin publicar
 
 ### Añadido
+- App móvil, fases M0 y M1 (`PLAN-movil.md`):
+  - `approval.list` y un puente remoto con lista blanca (`src-tauri/src/remote.rs`).
+  - Inicio de sesión con Google (PKCE), clave del Mac en el llavero y conexión de salida al relay.
+  - Emparejamiento por QR y cifrado de punta a punta con sesión y contador contra la reproducción.
+  - Ajustes › Móvil.
+  - `server/` (puerta y relay por usuario, con clave de firma derivada por usuario y provisión en Coolify).
+  - Móvil simulado para la prueba de punta a punta.
+- Pantalla de inicio animada (robots y un núcleo de IA dibujado en Pixelorama) y la marca **BETA**.
+- Pizarra Scrum (0.4a): 10 columnas automáticas por estado, arrastrar y soltar, y robots que caminan a la pizarra.
+- Ajustes completos (0.4b), Tus IAs y Modelos más usados en el Home, y un panel de métricas estilo monitor.
+- Gestión de MCP y skills (globales, por proyecto y de plugins), con copia de seguridad y papelera al desinstalar.
+- Panel del agente enfocado: avatares reales, tarjetas plegables y el chat dentro del panel.
+- `README.md`.
 - Empaquetado para macOS, Windows y Linux: Node 24 LTS oficial como sidecar (`tools/fetch-node.mjs`, con
   verificación sha256 contra `SHASUMS256.txt`).
 - Pantalla «Acerca de» con la versión, el enlace a este registro, la licencia y la política de datos.
 - `tools/bump-version.mjs`: una sola orden sincroniza la versión en `package.json`, `core/package.json`,
   `src-tauri/Cargo.toml` y `src-tauri/tauri.conf.json`.
 - `THIRD-PARTY.md` con las licencias de las dependencias de ejecución.
+
+### Corregido
+- Gemini 3: se conservan los campos extra de `tool_calls` (`thought_signature`). Antes daba HTTP 400.
+- Reintentos automáticos ante saturación o cortes (5xx, 408, 429 puntual, red), con espera creciente.
+- La pantalla dejaba de actualizarse al remontar la app: la suscripción a los eventos ahora vive lo que la página.
+- En macOS (desarrollo), el llavero ya no vuelve a pedir la contraseña tras cada compilación.
 
 ## [0.2d] - 2026-10-23
 
